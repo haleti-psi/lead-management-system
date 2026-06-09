@@ -1,0 +1,76 @@
+{
+  "project": "Lead_Management_System",
+  "current_stage": 5,
+  "stage_name": "Contracts",
+  "next_stage": 6,
+  "artefacts": {
+    "brd": "docs/brd.md",
+    "brd_source": "docs/requirements/Lead_Management_System_BRD_Version_5.md",
+    "brd_version": "5.2",
+    "data_model_amendment": "v5.2 (2026-06-08): added BusinessCalendar entity (§5.2.46) — Stage-3/ADR-6 follow-up, folded into initial schema pre-deployment, re-validated; Gate B remains satisfied (47 tables).",
+    "data_model": "docs/data-model/schema.sql",
+    "data_model_doc": "docs/data-model/DATA_MODEL.md",
+    "data_model_migration": "docs/data-model/migrations/V1__initial_schema.sql",
+    "architecture": "docs/architecture.md",
+    "project_claude_md": "CLAUDE.md",
+    "guidelines": ["docs/guidelines/coding.md", "docs/guidelines/security.md", "docs/guidelines/ui.md", "docs/guidelines/performance.md"],
+    "contracts": ["docs/contracts/api-contract.yaml", "docs/contracts/auth-matrix.json", "docs/contracts/error-taxonomy.md", "docs/contracts/state-machines.md", "docs/contracts/integration-map.md", "docs/contracts/environment-contract.md", "docs/contracts/shared-utilities.md", "docs/contracts/dependency-register.md", "docs/contracts/nfr-thresholds.md", "docs/contracts/testing-contract.md"]
+  },
+  "gates": {
+    "A": {
+      "signed_off": true,
+      "verdict": "PASS",
+      "by": "quality-gate-checker (independently re-audited via wf_374b0102-567)",
+      "at": "2026-06-08T12:15:11+05:30",
+      "score": "10/10",
+      "artefact": "docs/brd.md",
+      "report": "docs/reviews/gate-A-2026-06-08.md",
+      "unblocks": "Stage 2 (Data Model)",
+      "history": [
+        { "run": 1, "version": "5.0", "verdict": "BLOCKED", "note": "Item 4 FAIL: FRs referenced undefined entities StageHistory/Note/ImportJob." },
+        { "run": 2, "version": "5.1", "verdict": "CONDITIONAL", "note": "Blocker cleared by v5.1; independent audit 7P/3W/0F (role aliases + glossary WARNs)." },
+        { "run": 3, "version": "5.1", "verdict": "PASS", "note": "Role-alias note + 6 glossary terms added; all WARNs closed; 10/10." }
+      ],
+      "caveats": [
+        "Tracked open decisions (do not block Gate A; required before integration build): OD-08 select PAN/CKYC/DigiLocker/comms/CTI vendors; OD-17 complete TRAI-DLT + WhatsApp-WABA messaging registration.",
+        "Council pre-dispatch hardening follow-ups (Stage 3+/architecture+contracts, not Gate-A items): LeadService mutator interface, unit-of-work/transaction-propagation pattern, versioned LOS mock contract, BusinessCalendar entity, DPDPA-erasure-vs-immutable-audit design. See docs/evaluations/lms-brd-v5-council-report-2026-06-05.md."
+      ],
+      "blocked_by": []
+    },
+    "B": {
+      "signed_off": true,
+      "verdict": "PASS",
+      "by": "quality-gate-checker",
+      "at": "2026-06-08T18:04:53+05:30",
+      "score": "10/10",
+      "artefacts": ["docs/data-model/schema.sql", "docs/data-model/DATA_MODEL.md", "docs/data-model/migrations/V1__initial_schema.sql"],
+      "report": "docs/reviews/gate-B-2026-06-08.md",
+      "unblocks": "Stage 3 (Architecture)",
+      "live_validation": "Loaded clean on PostgreSQL 18 (ON_ERROR_STOP exit 0); live in local lms_dev DB. 46 tables, 69 enums, 194 FKs.",
+      "caveats": [
+        "Business confirmations (not blockers): #1 single-tenant MVP, #3 leads.product_code+product_config_id, #5 migration channel out of scope.",
+        "Legal/DPO required before customer self-service go-live: #6 consent-bootstrap lawful basis.",
+        "Stage 3 (architecture) follow-ups flagged by council: audit hash-chain single-writer serialization (#9); BusinessCalendar/WorkingHours source for SLA/TAT (#10).",
+        "See docs/data-model/DATA_MODEL.md Assumptions & Gaps (14 items) and docs/evaluations/lms-brd-v5-council-report-2026-06-05.md."
+      ],
+      "blocked_by": []
+    },
+    "C": {
+      "signed_off": true,
+      "verdict": "PASS",
+      "by": "quality-gate-checker",
+      "at": "2026-06-09T18:08:22+05:30",
+      "score": "10/10",
+      "artefacts": ["docs/contracts/ (10 files)"],
+      "report": "docs/reviews/gate-C-2026-06-09.md",
+      "unblocks": "Stage 6 (LLD generation)",
+      "validation": "api-contract.yaml parsed valid via npx js-yaml (Node v24, exit 0, 62 paths); auth-matrix.json valid JSON (9 roles, 47 resources, 14 public). FR coverage 49/49; status-enum coverage 22/22. A real YAML defect (flow-sequence braces in x-fr-coverage) was caught and fixed during the gate.",
+      "fixes_during_gate": ["x-fr-coverage flow sequences -> quoted strings (YAML validity)", "added partners to auth-matrix _meta.resources", "added delivery/scan/validation/attribution status enums to state-machines.md"],
+      "caveats": [
+        "OD-08/OD-17: PAN/CKYC/comms/CTI vendor selection + TRAI-DLT/WhatsApp-WABA registration open (adapters built against ports regardless).",
+        "OD-06 (Legal/DPO): consent-bootstrap lawful basis for first outbound message — resolve before customer self-service go-live."
+      ],
+      "blocked_by": []
+    }
+  }
+}

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Dev Pipeline Checklist</title>
+<style>
+  @page { margin: 16mm; }
+  * { box-sizing: border-box; }
+  body{ font:14px/1.55 Arial, Helvetica, sans-serif; color:#000;
+        max-width:720px; margin:0 auto; padding:26px 22px 48px; }
+
+  h1{ font-size:19px; margin:0 0 4px; }
+  .hint{ font-size:12.5px; color:#444; margin:0 0 18px; }
+
+  .field{ margin:0 0 14px; font-size:15px; }
+  .field .ln{ display:inline-block; border-bottom:1px solid #000;
+              min-width:300px; height:1.1em; }
+  .field.row2{ display:flex; gap:30px; }
+  .field.row2 .ln{ min-width:150px; }
+
+  .zone{ font-size:12px; letter-spacing:.06em; font-weight:700; text-transform:uppercase;
+         margin:26px 0 6px; border-bottom:2px solid #000; padding-bottom:3px; }
+
+  .stage{ margin:14px 0 8px; break-inside:avoid; }
+  .stage h2{ font-size:14px; margin:0; display:flex; justify-content:space-between;
+             gap:12px; border-bottom:1px solid #999; padding-bottom:2px; }
+  .stage h2 .path{ font-weight:400; font-size:12px; color:#555; white-space:nowrap; }
+
+  .item{ margin:9px 0 0; }
+  .item .row{ display:flex; align-items:flex-start; gap:9px; }
+  .box{ flex:0 0 auto; width:16px; height:16px; border:1.5px solid #000;
+        border-radius:2px; margin-top:1px; }
+  .task{ flex:1; }
+  .gate .task{ font-weight:700; }
+  code{ font-family:Consolas,"Courier New",monospace; font-size:13px; }
+
+  .write{ border-bottom:1px solid #bbb; height:22px; margin:5px 0 0 25px; }
+
+  .lines .write{ margin-left:0; }
+
+  @media print{ body{ padding:0; } }
+</style>
+</head>
+<body>
+
+  <h1>AI Dev Pipeline Checklist</h1>
+  <p class="hint">Tick each box when the step is done and write the date / notes on the line beneath it. Gates A, B and C must pass before continuing to the next stage.</p>
+
+  <div class="field"><b>Project Name:</b> <span class="ln" style="min-width:380px"></span></div>
+  <div class="field row2">
+    <span><b>Started:</b> <span class="ln"></span></span>
+    <span><b>Owner:</b> <span class="ln"></span></span>
+  </div>
+
+  <!-- PRE-FLIGHT -->
+  <div class="zone">Pre-flight setup (one-time)</div>
+  <div class="stage">
+    <div class="item"><div class="row"><span class="box"></span><span class="task">Copy hooks into <code>.claude/hooks/</code></span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">Choose the canonical BRD and place it at <code>docs/brd.md</code></span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>git init</code> + first commit (required before Stage 7)</span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">Fix <code>python3</code> &rarr; <code>python</code> in the hook commands (Windows)</span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">(optional) Wire hooks into <code>.claude/settings.json</code></span></div><div class="write"></div></div>
+  </div>
+
+  <!-- SPECIFICATION ZONE -->
+  <div class="zone">Specification Zone &mdash; produced once</div>
+
+  <div class="stage">
+    <h2><span>Stage 1 &mdash; BRD</span><span class="path">&rarr; docs/brd.md</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">Author the BRD &mdash; <code>/brd-generator</code></span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">(optional) Stress-test the idea &mdash; <code>/adversarial-idea-evaluator</code></span></div><div class="write"></div></div>
+    <div class="item gate"><div class="row"><span class="box"></span><span class="task">GATE A &mdash; <code>/quality-gate-checker A</code></span></div><div class="write"></div></div>
+  </div>
+
+  <div class="stage">
+    <h2><span>Stage 2 &mdash; Data Model</span><span class="path">&rarr; docs/data-model/</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">Generate schema &mdash; <code>/brd-data-modeler</code></span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">(optional) QA test plan from BRD &mdash; <code>/test-case-generator</code></span></div><div class="write"></div></div>
+    <div class="item gate"><div class="row"><span class="box"></span><span class="task">GATE B &mdash; <code>/quality-gate-checker B</code></span></div><div class="write"></div></div>
+  </div>
+
+  <div class="stage">
+    <h2><span>Stage 3 &mdash; Architecture</span><span class="path">&rarr; docs/architecture.md</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/architecture-doc-generator</code></span></div><div class="write"></div></div>
+  </div>
+
+  <div class="stage">
+    <h2><span>Stage 4 &mdash; Guidelines</span><span class="path">&rarr; docs/guidelines/</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/guidelines-generator</code> &mdash; Coding &middot; UI &middot; Security &middot; Performance</span></div><div class="write"></div></div>
+  </div>
+
+  <div class="stage">
+    <h2><span>Stage 5 &mdash; Contracts</span><span class="path">&rarr; docs/contracts/</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/contracts-generator</code> &mdash; 10 files</span></div><div class="write"></div></div>
+    <div class="item gate"><div class="row"><span class="box"></span><span class="task">GATE C &mdash; <code>/quality-gate-checker C</code></span></div><div class="write"></div></div>
+  </div>
+
+  <!-- GENERATION ZONE -->
+  <div class="zone">Generation Zone &mdash; per-FR</div>
+
+  <div class="stage">
+    <h2><span>Stage 6 &mdash; LLD + Test Specs</span><span class="path">&rarr; docs/lld/</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/lld-generator</code></span></div><div class="write"></div></div>
+  </div>
+
+  <div class="stage">
+    <h2><span>Stage 7 &mdash; Code Generation</span><span class="path">&rarr; src/</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">Confirm <code>git init</code> done (see pre-flight)</span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/phase-executor</code></span></div><div class="write"></div></div>
+  </div>
+
+  <!-- VERIFICATION ZONE -->
+  <div class="zone">Verification Zone</div>
+
+  <div class="stage">
+    <h2><span>Stage 8 &mdash; Individual FR Review</span><span class="path">&rarr; docs/reviews/</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/full-review</code></span></div><div class="write"></div></div>
+  </div>
+
+  <div class="stage">
+    <h2><span>Stage 9 &mdash; Cross-FR Integration Review</span><span class="path">&rarr; docs/reviews/</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/cross-fr-review</code></span></div><div class="write"></div></div>
+  </div>
+
+  <div class="stage">
+    <h2><span>Deploy</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/project-config-init</code> (once)</span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/local-deployment</code></span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/deploy-app</code></span></div><div class="write"></div></div>
+  </div>
+
+  <div class="stage">
+    <h2><span>Stage 10 &mdash; Production Feedback Loop</span><span class="path">ongoing</span></h2>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">Feed prod signals back into upstream artefacts; re-run the affected stage</span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task">Periodic maintenance &mdash; <code>/codebase-sweep</code> &middot; <code>/simplify</code> &middot; <code>/security-review</code></span></div><div class="write"></div></div>
+  </div>
+
+  <!-- OPTIONAL -->
+  <div class="zone">Optional inserts &mdash; run any time</div>
+  <div class="stage">
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/adversarial-idea-evaluator</code> &mdash; before a big decision</span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/test-case-generator</code> &mdash; acceptance tests from the BRD</span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/demo-readiness-evaluation</code> &mdash; before a client demo</span></div><div class="write"></div></div>
+    <div class="item"><div class="row"><span class="box"></span><span class="task"><code>/security-review</code> &middot; <code>/ui-review</code> &middot; <code>/quality-review</code> &middot; <code>/infra-review</code></span></div><div class="write"></div></div>
+  </div>
+
+  <!-- GENERAL NOTES -->
+  <div class="zone">Notes</div>
+  <div class="stage lines">
+    <div class="write"></div>
+    <div class="write"></div>
+    <div class="write"></div>
+    <div class="write"></div>
+    <div class="write"></div>
+  </div>
+
+</body>
+</html>

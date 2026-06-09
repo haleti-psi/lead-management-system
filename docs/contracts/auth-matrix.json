@@ -1,0 +1,91 @@
+{
+  "_meta": {
+    "generated_from": "docs/brd.md §3 (roles, permissions matrix), §8.6 (public endpoints)",
+    "version": 1,
+    "model": "App-level RBAC + ABAC. Authoritative input to EntitlementService.can(user, capability, resource). Authorisation = role capability (capability_matrix) intersect data scope intersect attributes (branch/team/region/product/source/partner/data_classification). NOT Postgres RLS.",
+    "roles": ["RM", "BM", "SM", "HEAD", "KYC", "DPO", "PARTNER", "ADMIN", "CUSTOMER"],
+    "capabilities": ["create_lead", "view_lead", "edit_lead", "upload_doc", "verify_doc", "kyc_signoff", "move_stage", "hand_off", "allocate", "bulk_action", "customer_comm", "reports", "export", "consent_ledger", "audit_trail", "user_mgmt", "configuration", "break_glass"],
+    "scopes": {
+      "O": "own assigned leads", "T": "team", "B": "branch", "R": "region", "A": "all org",
+      "P": "partner's own submissions", "C": "customer's own lead (tokenised)", "M": "masked compliance view", "X": "no lead-data access"
+    },
+    "resources": [
+      "users", "roles", "role_permissions", "branches", "teams", "regions", "break_glass_grants",
+      "leads", "lead_identities", "customer_profiles", "source_attributions", "stage_history", "import_jobs",
+      "duplicate_matches", "allocation_rules", "product_configs", "lead_product_details", "schemes", "partners",
+      "saved_views", "notes", "customer_links", "documents", "kyc_verifications", "tasks",
+      "communication_templates", "communication_logs", "notifications", "notification_preferences",
+      "consent_records", "data_sharing_logs", "grievances", "data_rights_requests", "dla_registry", "retention_policies",
+      "eligibility_snapshots", "los_application_mirrors", "audit_logs", "export_jobs",
+      "rejection_reasons", "sla_policies", "business_calendars", "configuration_versions",
+      "integration_logs", "webhook_subscriptions", "event_outbox", "orgs"
+    ]
+  },
+  "capability_matrix": {
+    "RM":      { "create_lead": "O", "view_lead": "O", "edit_lead": "O", "upload_doc": "O", "verify_doc": "O", "move_stage": "O", "hand_off": "O", "customer_comm": "O", "reports": "O", "export": "O", "consent_ledger": "O", "audit_trail": "O" },
+    "BM":      { "create_lead": "B", "view_lead": "B", "edit_lead": "B", "upload_doc": "B", "verify_doc": "B", "kyc_signoff": "B", "move_stage": "B", "hand_off": "B", "allocate": "B", "bulk_action": "B", "customer_comm": "B", "reports": "B", "export": "B", "consent_ledger": "B", "audit_trail": "B", "configuration": "B" },
+    "SM":      { "create_lead": "T", "view_lead": "T", "edit_lead": "T", "move_stage": "T", "allocate": "T", "bulk_action": "T", "customer_comm": "T", "reports": "T", "export": "T", "consent_ledger": "T", "audit_trail": "T" },
+    "HEAD":    { "create_lead": "A", "view_lead": "A", "allocate": "A", "bulk_action": "A", "reports": "A", "export": "A", "consent_ledger": "A", "audit_trail": "A", "configuration": "A" },
+    "KYC":     { "view_lead": "B", "edit_lead": "B", "upload_doc": "B", "verify_doc": "B", "kyc_signoff": "B", "move_stage": "B", "hand_off": "B", "bulk_action": "B", "customer_comm": "B", "reports": "B", "export": "B", "consent_ledger": "B", "audit_trail": "B", "configuration": "B" },
+    "DPO":     { "view_lead": "M", "kyc_signoff": "M", "hand_off": "M", "reports": "M", "export": "M", "consent_ledger": "A", "audit_trail": "A", "configuration": "B", "break_glass": "M" },
+    "PARTNER": { "create_lead": "P", "view_lead": "P", "edit_lead": "P", "upload_doc": "P", "move_stage": "P", "customer_comm": "P", "reports": "P", "export": "P", "consent_ledger": "P", "audit_trail": "P" },
+    "ADMIN":   { "user_mgmt": "A", "configuration": "A", "audit_trail": "A", "export": "A", "consent_ledger": "A", "customer_comm": "A", "break_glass": "A" },
+    "CUSTOMER":{ "create_lead": "C", "view_lead": "C", "edit_lead": "C", "upload_doc": "C", "customer_comm": "C", "consent_ledger": "C", "audit_trail": "C", "export": "C" }
+  },
+  "capability_conditions": {
+    "DPO.view_lead": "masked (M) unless break-glass unmask approved + audited",
+    "ADMIN.*": "NO standing lead-content access; lead data only via break_glass (FR-003). reports = system/config metrics only.",
+    "KYC.edit_lead": "KYC fields only; view/act on branch KYC queue",
+    "RM.hand_off / KYC.hand_off": "configurable delegation within limits (OD-03); BM default",
+    "*.export": "applies strictest masking for the actor's scope; >threshold or unmasked PII -> EXPORT_APPROVAL_REQUIRED (FR-122)",
+    "DPO.break_glass / ADMIN.break_glass": "time-bound, four-eyes approved, reason-bound, every access audited (FR-003)",
+    "PARTNER.*": "P = only the partner's own submitted leads; never another partner's"
+  },
+  "resource_governance": {
+    "_note": "Maps each data-model resource to the governing capability and its writing module. system_managed = no direct user CRUD (written by services/jobs).",
+    "leads": { "governed_by": ["create_lead", "view_lead", "edit_lead", "move_stage", "hand_off"], "writer": "LeadService (M2, sole writer)", "scoped": true },
+    "lead_identities|customer_profiles|source_attributions|lead_product_details": { "governed_by": ["view_lead", "edit_lead"], "writer": "M2/M5", "scoped": true },
+    "documents": { "governed_by": ["upload_doc", "verify_doc"], "writer": "M8", "scoped": true },
+    "kyc_verifications": { "governed_by": ["verify_doc", "kyc_signoff"], "writer": "M8", "scoped": true },
+    "tasks|notes|saved_views": { "governed_by": ["view_lead", "edit_lead"], "writer": "M11/M6", "scoped": true },
+    "consent_records": { "governed_by": ["consent_ledger"], "writer": "M12 (append-only)", "scoped": true },
+    "grievances|data_rights_requests": { "governed_by": ["consent_ledger", "reports"], "writer": "M12", "scoped": true },
+    "partners": { "governed_by": ["configuration", "allocate"], "writer": "M10/M14", "scoped": false },
+    "customer_links": { "governed_by": ["customer_comm"], "writer": "M7", "scoped": true },
+    "reports|export_jobs": { "governed_by": ["reports", "export"], "writer": "M13", "scoped": true },
+    "users|roles|role_permissions|branches|teams|regions": { "governed_by": ["user_mgmt"], "writer": "M1/M14 (ADMIN)", "scoped": false },
+    "product_configs|schemes|sla_policies|business_calendars|rejection_reasons|communication_templates|dla_registry|retention_policies|allocation_rules|configuration_versions": { "governed_by": ["configuration"], "writer": "M14 (maker-checker)", "scoped": false },
+    "break_glass_grants": { "governed_by": ["break_glass"], "writer": "M1", "scoped": false },
+    "audit_logs": { "governed_by": ["audit_trail"], "writer": "AuditChainConsumer (single-writer)", "system_managed": true },
+    "stage_history|event_outbox|integration_logs|data_sharing_logs|notifications|los_application_mirrors|eligibility_snapshots|duplicate_matches|import_jobs|webhook_subscriptions|notification_preferences|communication_logs|orgs": { "governed_by": ["system"], "writer": "owning service/jobs", "system_managed": true }
+  },
+  "public_endpoints": [
+    "POST /api/v1/auth/login",
+    "POST /api/v1/auth/mfa",
+    "POST /api/v1/auth/refresh",
+    "POST /api/v1/auth/reset",
+    "POST /api/v1/public/leads",
+    "GET /api/v1/c/{token}",
+    "POST /api/v1/c/{token}/otp",
+    "GET /api/v1/c/{token}/status",
+    "POST /api/v1/c/{token}/documents",
+    "POST /api/v1/c/{token}/consent",
+    "POST /api/v1/c/{token}/callback",
+    "POST /api/v1/c/{token}/grievance",
+    "GET /api/v1/health",
+    "GET /api/v1/ready"
+  ],
+  "service_to_service_only": [
+    "POST /api/v1/los/webhooks/status"
+  ],
+  "endpoint_auth_notes": {
+    "/api/v1/public/leads": "captcha + per-IP rate limit",
+    "/api/v1/c/{token}/*": "opaque token + OTP step-up (CustomerLinkGuard); scoped to one lead; never a JWT",
+    "/api/v1/los/webhooks/status": "HMAC-signature verified (no user session)"
+  },
+  "http_status_rules": {
+    "unauthenticated": 401,
+    "unauthorised": 403,
+    "existence_hidden": "404 where the BRD §8.4 hides existence (e.g. cross-partner); otherwise 403"
+  }
+}

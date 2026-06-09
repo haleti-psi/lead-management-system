@@ -1,0 +1,472 @@
+openapi: "3.0.3"
+info:
+  title: "Lead Management System (NBFC) API"
+  version: "1.0.0"
+  description: >
+    REST API. Uniform envelope {data, meta, error}. Error codes ONLY from docs/contracts/error-taxonomy.md
+    (BRD §8.4; VALIDATION_ERROR=400). AuthN: JwtAuthGuard (global); AuthZ: AbacGuard + EntitlementService
+    (docs/contracts/auth-matrix.json). Pagination: page (default 1) + limit (default 25, max 100).
+    State-creating POSTs accept an Idempotency-Key header. Every endpoint tags the FRs it serves (x-frs).
+
+servers:
+  - url: /api/v1
+
+security:
+  - bearerAuth: []   # global default; @Public() endpoints override with security: []
+
+# ---- FR coverage map (every FR has >=1 entry; cross-cutting/internal FRs noted) ----
+x-fr-coverage:
+  FR-001: "POST /auth/login, POST /auth/mfa, POST /auth/refresh, POST /auth/reset"
+  FR-002: "cross-cutting: AbacGuard + EntitlementService on every protected operation"
+  FR-003: "POST /admin/break-glass, POST /admin/break-glass/{id}/approve"
+  FR-010: "POST /leads, POST /leads/import, POST /public/leads"
+  FR-011: "POST /leads, PATCH /leads/{id} (scoring at capture/update)"
+  FR-020: "POST /leads/{id}/duplicate-check"
+  FR-021: "POST /leads/{id}/merge"
+  FR-030: "POST /leads/{id}/reassign, GET/POST /admin/allocation-rules"
+  FR-031: "POST /leads, PATCH /leads/{id} (hot flag / score)"
+  FR-040: "GET/POST/PATCH /admin/products"
+  FR-041: "GET /admin/products (seeded 7 products)"
+  FR-042: "GET/POST /admin/schemes"
+  FR-050: "GET /leads, GET/POST /saved-views"
+  FR-051: "GET /leads/{id}"
+  FR-052: "PATCH /leads/{id}/stage"
+  FR-053: "GET /dashboard"
+  FR-054: "GET /search"
+  FR-060: "POST /leads/{id}/customer-link, GET /c/{token}, POST /c/{token}/otp, POST /c/{token}/documents, POST /c/{token}/consent"
+  FR-061: "POST /c/{token}/grievance"
+  FR-062: "GET /c/{token}/status, POST /c/{token}/callback"
+  FR-070: "GET/POST /leads/{id}/documents"
+  FR-071: "POST /leads/{id}/kyc/{type}"
+  FR-072: "PATCH /leads/{id}/kyc/{kid}/resolve"
+  FR-080: "POST /leads/{id}/eligibility"
+  FR-081: "POST /leads/{id}/handoff"
+  FR-082: "POST /los/webhooks/status"
+  FR-090: "GET/POST /partners, PATCH /partners/{id}"
+  FR-091: "GET/POST /partners/leads"
+  FR-092: "GET /partners/{id}/quality"
+  FR-100: "GET/POST /tasks, PATCH /tasks/{id}"
+  FR-101: "GET/POST /admin/templates, POST /leads/{id}/communications"
+  FR-102: "PATCH /tasks/{id} (visit/call disposition)"
+  FR-103: "PUT /preferences"
+  FR-104: "GET/POST /admin/sla-policies"
+  FR-110: "GET/POST /leads/{id}/consents"
+  FR-111: "cross-cutting: data minimisation in services + data_sharing_logs (consents, eligibility, handoff)"
+  FR-112: "GET/POST /data-rights, PATCH /data-rights/{id}"
+  FR-113: "GET/POST/PATCH /compliance/dla"
+  FR-114: "GET/POST /grievances, PATCH /grievances/{id}"
+  FR-115: "GET/POST /admin/retention-policies, POST /admin/retention/run"
+  FR-120: "GET /reports/{code}"
+  FR-121: "GET /reports/{code}"
+  FR-122: "GET/POST /exports, GET /exports/{id}"
+  FR-123: "GET /audit"
+  FR-130: "GET/POST /admin/users, PATCH /admin/users/{id}"
+  FR-131: "GET/POST/PATCH /admin/{masterResource}"
+  FR-132: "POST /admin/config/{id}/approve, POST /admin/config/{id}/rollback"
+  FR-140: "GET /admin/integrations, GET/POST /admin/webhooks"
+  FR-141: "internal: transactional outbox (EventOutbox) published to Pub/Sub; no public endpoint"
+
+paths:
+  # ---------- M1 Identity & Access ----------
+  /auth/login:
+    post:
+      summary: "Authenticate (password or SSO), may require MFA"
+      operationId: authLogin
+      tags: [Auth]
+      security: []
+      x-frs: [FR-001]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } } }
+      responses:
+        "200": { $ref: '#/components/responses/AuthTokens' }
+        "400": { $ref: '#/components/responses/ValidationError' }
+        "401": { $ref: '#/components/responses/Unauthenticated' }
+        "429": { $ref: '#/components/responses/RateLimited' }
+  /auth/mfa:
+    post: { summary: "Verify MFA challenge", operationId: authMfa, tags: [Auth], security: [], x-frs: [FR-001], responses: { "200": { $ref: '#/components/responses/AuthTokens' }, "401": { $ref: '#/components/responses/Unauthenticated' }, "429": { $ref: '#/components/responses/RateLimited' } } }
+  /auth/refresh:
+    post: { summary: "Rotate refresh token", operationId: authRefresh, tags: [Auth], security: [], x-frs: [FR-001], responses: { "200": { $ref: '#/components/responses/AuthTokens' }, "401": { $ref: '#/components/responses/Unauthenticated' } } }
+  /auth/reset:
+    post: { summary: "Password reset request", operationId: authReset, tags: [Auth], security: [], x-frs: [FR-001], responses: { "200": { $ref: '#/components/responses/Empty' }, "429": { $ref: '#/components/responses/RateLimited' } } }
+  /admin/break-glass:
+    post: { summary: "Request break-glass grant (DPO/ADMIN)", operationId: breakGlassRequest, tags: [Admin], x-frs: [FR-003], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /admin/break-glass/{id}/approve:
+    post: { summary: "Approve break-glass grant (four-eyes)", operationId: breakGlassApprove, tags: [Admin], x-frs: [FR-003], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+
+  # ---------- M2/M3 Capture, Workspace, Identity resolution ----------
+  /leads:
+    get:
+      summary: "List leads (scope-filtered, paginated)"
+      operationId: listLeads
+      tags: [Leads]
+      x-frs: [FR-050, FR-054]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { name: filter, in: query, required: false, schema: { type: object, additionalProperties: true } }
+        - { name: sort, in: query, required: false, schema: { type: string } }
+      responses:
+        "200": { $ref: '#/components/responses/LeadList' }
+        "401": { $ref: '#/components/responses/Unauthenticated' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: "Create lead (manual/api), runs duplicate + scoring"
+      operationId: createLead
+      tags: [Leads]
+      x-frs: [FR-010, FR-011, FR-031]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LeadCreate' } } } }
+      responses:
+        "201": { description: "Created", content: { application/json: { schema: { $ref: '#/components/schemas/LeadEnvelope' } } } }
+        "400": { $ref: '#/components/responses/ValidationError' }
+        "401": { $ref: '#/components/responses/Unauthenticated' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }   # DUPLICATE_BLOCKED / IDEMPOTENT_REPLAY
+  /leads/import:
+    post: { summary: "Bulk import leads (CSV/Excel)", operationId: importLeads, tags: [Leads], x-frs: [FR-010], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { "202": { description: "Import job accepted", content: { application/json: { schema: { $ref: '#/components/schemas/ImportJobEnvelope' } } } }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /public/leads:
+    post: { summary: "Public lead capture (QR/website; captcha + rate-limited)", operationId: publicCreateLead, tags: [Leads], security: [], x-frs: [FR-010], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' }, "429": { $ref: '#/components/responses/RateLimited' } } }
+  /leads/{id}:
+    get:
+      summary: "Lead 360 (masked aggregate)"
+      operationId: getLead
+      tags: [Leads]
+      x-frs: [FR-051]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        "200": { $ref: '#/components/responses/LeadOne' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: "Update lead profile (scope/role limited); rescore"
+      operationId: updateLead
+      tags: [Leads]
+      x-frs: [FR-050, FR-011, FR-031]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      responses:
+        "200": { $ref: '#/components/responses/LeadOne' }
+        "400": { $ref: '#/components/responses/ValidationError' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+  /leads/{id}/stage:
+    patch:
+      summary: "Move lead stage (guarded; §10.3)"
+      operationId: transitionStage
+      tags: [Leads]
+      x-frs: [FR-052]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StageChange' } } } }
+      responses:
+        "200": { $ref: '#/components/responses/LeadOne' }
+        "400": { $ref: '#/components/responses/ValidationError' }   # STAGE_GUARD_FAILED
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }          # optimistic lock
+  /leads/{id}/duplicate-check:
+    post: { summary: "Run duplicate detection", operationId: duplicateCheck, tags: [Leads], x-frs: [FR-020], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /leads/{id}/merge:
+    post: { summary: "Merge duplicate into master (BM/SM)", operationId: mergeLead, tags: [Leads], x-frs: [FR-021], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /leads/{id}/reassign:
+    post: { summary: "Reassign owner (reason, audited)", operationId: reassignLead, tags: [Leads], x-frs: [FR-030], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /saved-views:
+    get: { summary: "List saved views", operationId: listSavedViews, tags: [Workspace], x-frs: [FR-050], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create saved view", operationId: createSavedView, tags: [Workspace], x-frs: [FR-050], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' } } }
+  /dashboard:
+    get: { summary: "Role-scoped dashboard widgets", operationId: getDashboard, tags: [Workspace], x-frs: [FR-053], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /search:
+    get: { summary: "Global masked search (scope-filtered, top-N)", operationId: globalSearch, tags: [Workspace], x-frs: [FR-054], parameters: [{ name: q, in: query, required: true, schema: { type: string, minLength: 2 } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "429": { $ref: '#/components/responses/RateLimited' } } }
+
+  # ---------- M7 Customer self-service (public, token + OTP) ----------
+  /leads/{id}/customer-link:
+    post: { summary: "Create/send tokenised customer link", operationId: createCustomerLink, tags: [SelfService], x-frs: [FR-060], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "201": { $ref: '#/components/responses/Created' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /c/{token}:
+    get: { summary: "Open customer micro-site", operationId: customerOpen, tags: [SelfService], security: [], x-frs: [FR-060], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "404": { $ref: '#/components/responses/NotFound' } } }
+  /c/{token}/otp:
+    post: { summary: "Verify OTP step-up", operationId: customerOtp, tags: [SelfService], security: [], x-frs: [FR-060], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "429": { $ref: '#/components/responses/RateLimited' } } }
+  /c/{token}/documents:
+    post: { summary: "Customer uploads document (scanned)", operationId: customerUpload, tags: [SelfService], security: [], x-frs: [FR-060, FR-070], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' }, "413": { $ref: '#/components/responses/PayloadTooLarge' }, "415": { $ref: '#/components/responses/UnsupportedMedia' } } }
+  /c/{token}/consent:
+    post: { summary: "Customer grants/confirms consent", operationId: customerConsent, tags: [SelfService], security: [], x-frs: [FR-060, FR-110], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "201": { $ref: '#/components/responses/Created' } } }
+  /c/{token}/status:
+    get: { summary: "Customer-safe status", operationId: customerStatus, tags: [SelfService], security: [], x-frs: [FR-062], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "404": { $ref: '#/components/responses/NotFound' } } }
+  /c/{token}/callback:
+    post: { summary: "Customer requests callback slot", operationId: customerCallback, tags: [SelfService], security: [], x-frs: [FR-062], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "201": { $ref: '#/components/responses/Created' } } }
+  /c/{token}/grievance:
+    post: { summary: "Customer raises grievance", operationId: customerGrievance, tags: [SelfService], security: [], x-frs: [FR-061], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "201": { $ref: '#/components/responses/Created' } } }
+
+  # ---------- M8 KYC & Documents ----------
+  /leads/{id}/documents:
+    get: { summary: "List lead documents/checklist", operationId: listDocuments, tags: [KYC], x-frs: [FR-070], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+    post: { summary: "Upload document", operationId: uploadDocument, tags: [KYC], x-frs: [FR-070], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' }, "413": { $ref: '#/components/responses/PayloadTooLarge' }, "415": { $ref: '#/components/responses/UnsupportedMedia' } } }
+  /leads/{id}/kyc/{type}:
+    post: { summary: "Run KYC verification (pan/ckyc/...)", operationId: runKyc, tags: [KYC], x-frs: [FR-071], parameters: [{ $ref: '#/components/parameters/PathId' }, { name: type, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "503": { $ref: '#/components/responses/UpstreamUnavailable' } } }
+  /leads/{id}/kyc/{kid}/resolve:
+    patch: { summary: "Resolve KYC exception", operationId: resolveKycException, tags: [KYC], x-frs: [FR-072], parameters: [{ $ref: '#/components/parameters/PathId' }, { name: kid, in: path, required: true, schema: { type: string, format: uuid } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+
+  # ---------- M9 LOS ----------
+  /leads/{id}/eligibility:
+    post: { summary: "Request LOS eligibility (read-only snapshot)", operationId: requestEligibility, tags: [LOS], x-frs: [FR-080], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' }, "503": { $ref: '#/components/responses/UpstreamUnavailable' } } }
+  /leads/{id}/handoff:
+    post:
+      summary: "Hand off to LOS (guarded, idempotent)"
+      operationId: handoffToLos
+      tags: [LOS]
+      x-frs: [FR-081]
+      parameters: [{ $ref: '#/components/parameters/PathId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        "200": { $ref: '#/components/responses/Ok' }
+        "400": { $ref: '#/components/responses/ValidationError' }   # STAGE_GUARD_FAILED
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }          # KYC_EXCEPTION_OPEN / replay
+        "503": { $ref: '#/components/responses/UpstreamUnavailable' }
+  /los/webhooks/status:
+    post: { summary: "Receive LOS application status (HMAC-signed)", operationId: losStatusWebhook, tags: [LOS], security: [], x-frs: [FR-082], responses: { "200": { $ref: '#/components/responses/Empty' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+
+  # ---------- M10 Partner ----------
+  /partners:
+    get: { summary: "List partners", operationId: listPartners, tags: [Partner], x-frs: [FR-090], parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create partner (governed)", operationId: createPartner, tags: [Partner], x-frs: [FR-090], responses: { "201": { $ref: '#/components/responses/Created' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /partners/{id}:
+    patch: { summary: "Update partner / status", operationId: updatePartner, tags: [Partner], x-frs: [FR-090], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+  /partners/leads:
+    get: { summary: "Partner views own submitted leads", operationId: partnerListLeads, tags: [Partner], x-frs: [FR-091], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+    post: { summary: "Partner submits lead (P scope)", operationId: partnerCreateLead, tags: [Partner], x-frs: [FR-091], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { "201": { $ref: '#/components/responses/Created' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /partners/{id}/quality:
+    get: { summary: "Partner quality score (own / mgmt)", operationId: partnerQuality, tags: [Partner], x-frs: [FR-092], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+
+  # ---------- M11 Tasks & Communication ----------
+  /tasks:
+    get: { summary: "List tasks", operationId: listTasks, tags: [Tasks], x-frs: [FR-100], parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create task", operationId: createTask, tags: [Tasks], x-frs: [FR-100], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' } } }
+  /tasks/{id}:
+    patch: { summary: "Update/complete task (disposition, visit geo)", operationId: updateTask, tags: [Tasks], x-frs: [FR-100, FR-102], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /leads/{id}/communications:
+    post: { summary: "Send templated, consent-gated message", operationId: sendCommunication, tags: [Communication], x-frs: [FR-101], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "202": { description: "Queued" }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /admin/templates:
+    get: { summary: "List communication templates", operationId: listTemplates, tags: [Admin], x-frs: [FR-101], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create/version template", operationId: createTemplate, tags: [Admin], x-frs: [FR-101], responses: { "201": { $ref: '#/components/responses/Created' } } }
+  /preferences:
+    put: { summary: "Upsert notification preferences", operationId: putPreferences, tags: [Communication], x-frs: [FR-103], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+  /admin/sla-policies:
+    get: { summary: "List SLA policies", operationId: listSla, tags: [Admin], x-frs: [FR-104], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create/update SLA policy", operationId: createSla, tags: [Admin], x-frs: [FR-104], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' } } }
+
+  # ---------- M12 Compliance ----------
+  /leads/{id}/consents:
+    get: { summary: "Consent history (append-only)", operationId: listConsents, tags: [Compliance], x-frs: [FR-110], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Capture consent (append-only)", operationId: captureConsent, tags: [Compliance], x-frs: [FR-110, FR-111], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' } } }
+  /data-rights:
+    get: { summary: "List data-rights requests (DPO)", operationId: listDataRights, tags: [Compliance], x-frs: [FR-112], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Raise data-rights request", operationId: createDataRights, tags: [Compliance], x-frs: [FR-112], responses: { "201": { $ref: '#/components/responses/Created' } } }
+  /data-rights/{id}:
+    patch: { summary: "Process data-rights request", operationId: processDataRights, tags: [Compliance], x-frs: [FR-112], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "409": { $ref: '#/components/responses/Conflict' } } }   # LEGAL_HOLD
+  /compliance/dla:
+    get: { summary: "DLA/LSP registry", operationId: listDla, tags: [Compliance], x-frs: [FR-113], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create DLA/LSP entry", operationId: createDla, tags: [Compliance], x-frs: [FR-113], responses: { "201": { $ref: '#/components/responses/Created' } } }
+    patch: { summary: "Update DLA/LSP entry", operationId: updateDla, tags: [Compliance], x-frs: [FR-113], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+  /grievances:
+    get: { summary: "List grievances", operationId: listGrievances, tags: [Compliance], x-frs: [FR-114], parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create grievance (internal intake)", operationId: createGrievance, tags: [Compliance], x-frs: [FR-114], responses: { "201": { $ref: '#/components/responses/Created' } } }
+  /grievances/{id}:
+    patch: { summary: "Update/resolve/close grievance", operationId: updateGrievance, tags: [Compliance], x-frs: [FR-114], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' } } }
+  /admin/retention-policies:
+    get: { summary: "List retention policies", operationId: listRetention, tags: [Admin], x-frs: [FR-115], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create/update retention policy", operationId: createRetention, tags: [Admin], x-frs: [FR-115], responses: { "201": { $ref: '#/components/responses/Created' } } }
+  /admin/retention/run:
+    post: { summary: "Trigger retention run (dry-run/apply, DPO/system)", operationId: runRetention, tags: [Admin], x-frs: [FR-115], responses: { "202": { description: "Run started" }, "403": { $ref: '#/components/responses/Forbidden' } } }
+
+  # ---------- M13 Reporting & MIS ----------
+  /reports/{code}:
+    get: { summary: "Run a report (core + differentiator)", operationId: getReport, tags: [Reports], x-frs: [FR-120, FR-121], parameters: [{ name: code, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /exports:
+    get: { summary: "List export jobs", operationId: listExports, tags: [Reports], x-frs: [FR-122], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create governed export (masked/watermarked)", operationId: createExport, tags: [Reports], x-frs: [FR-122], responses: { "202": { description: "Export queued" }, "409": { $ref: '#/components/responses/Conflict' } } }   # EXPORT_APPROVAL_REQUIRED
+  /exports/{id}:
+    get: { summary: "Export job status/artefact", operationId: getExport, tags: [Reports], x-frs: [FR-122], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /audit:
+    get: { summary: "Audit explorer (DPO/ADMIN; integrity-verified)", operationId: searchAudit, tags: [Reports], x-frs: [FR-123], parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+
+  # ---------- M14 Administration ----------
+  /admin/users:
+    get: { summary: "List users", operationId: listUsers, tags: [Admin], x-frs: [FR-130], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create user", operationId: createUser, tags: [Admin], x-frs: [FR-130], responses: { "201": { $ref: '#/components/responses/Created' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /admin/users/{id}:
+    patch: { summary: "Update/deactivate user (reassign gate)", operationId: updateUser, tags: [Admin], x-frs: [FR-130], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /admin/{masterResource}:
+    get: { summary: "List a master/config resource (branches/teams/regions/sources/products/schemes/rejection-reasons/business-calendars/...)", operationId: listMaster, tags: [Admin], x-frs: [FR-131], parameters: [{ name: masterResource, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create a master/config resource (versioned)", operationId: createMaster, tags: [Admin], x-frs: [FR-131, FR-040, FR-042], parameters: [{ name: masterResource, in: path, required: true, schema: { type: string } }], responses: { "201": { $ref: '#/components/responses/Created' }, "409": { $ref: '#/components/responses/Conflict' } } }
+    patch: { summary: "Update a master/config resource (versioned)", operationId: updateMaster, tags: [Admin], x-frs: [FR-131, FR-040], parameters: [{ name: masterResource, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+  /admin/config/{id}/approve:
+    post: { summary: "Approve config change (maker-checker)", operationId: approveConfig, tags: [Admin], x-frs: [FR-132], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /admin/config/{id}/rollback:
+    post: { summary: "Roll back config version", operationId: rollbackConfig, tags: [Admin], x-frs: [FR-132], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+
+  # ---------- M15 Integration & Events ----------
+  /admin/integrations:
+    get: { summary: "Integration monitor (logs/queues/retries)", operationId: integrationMonitor, tags: [Admin], x-frs: [FR-140], parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /admin/webhooks:
+    get: { summary: "List webhook subscriptions", operationId: listWebhooks, tags: [Admin], x-frs: [FR-140], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    post: { summary: "Create webhook subscription", operationId: createWebhook, tags: [Admin], x-frs: [FR-140], responses: { "201": { $ref: '#/components/responses/Created' } } }
+
+  # ---------- Health (public) ----------
+  /health:
+    get: { summary: "Liveness", operationId: health, tags: [Health], security: [], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+  /ready:
+    get: { summary: "Readiness (DB+Redis)", operationId: ready, tags: [Health], security: [], responses: { "200": { $ref: '#/components/responses/Ok' }, "503": { $ref: '#/components/responses/UpstreamUnavailable' } } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT access token (also accepted via httpOnly cookie). Authorisation by AbacGuard/EntitlementService (FR-002)."
+
+  parameters:
+    Page: { name: page, in: query, required: false, schema: { type: integer, default: 1, minimum: 1 } }
+    Limit: { name: limit, in: query, required: false, schema: { type: integer, default: 25, maximum: 100, minimum: 1 } }
+    PathId: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    Token: { name: token, in: path, required: true, schema: { type: string } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: false, schema: { type: string } }
+
+  schemas:
+    Meta:
+      type: object
+      properties:
+        correlation_id: { type: string }
+        pagination:
+          type: object
+          properties:
+            page: { type: integer }
+            limit: { type: integer }
+            total: { type: integer }
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, description: "From error-taxonomy.md (§8.4)" }
+        message: { type: string }
+        retryable: { type: boolean }
+        fields:
+          type: array
+          items: { type: object, properties: { field: { type: string }, issue: { type: string } } }
+        detail: { type: object, additionalProperties: true }
+    ErrorEnvelope:
+      type: object
+      required: [data, error]
+      properties:
+        data: { type: object, nullable: true, example: null }
+        meta: { $ref: '#/components/schemas/Meta' }
+        error: { $ref: '#/components/schemas/ApiError' }
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, format: password }
+    Lead:
+      type: object
+      properties:
+        lead_id: { type: string, format: uuid }
+        lead_code: { type: string }
+        stage: { type: string }
+        product_code: { type: string }
+        is_hot: { type: boolean }
+        score: { type: integer, minimum: 0, maximum: 100 }
+        consent_status: { type: string }
+        kyc_status: { type: string }
+        name_masked: { type: string }
+        mobile_masked: { type: string }
+    LeadEnvelope:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/Lead' }
+        meta: { $ref: '#/components/schemas/Meta' }
+        error: { type: object, nullable: true }
+    LeadCreate:
+      type: object
+      required: [product_code, identity, source]
+      properties:
+        product_code: { type: string, enum: [CV, CAR, TRACTOR, CE, TW, SBL, HRM] }
+        identity:
+          type: object
+          required: [name, mobile]
+          properties:
+            name: { type: string }
+            mobile: { type: string, pattern: '^[6-9][0-9]{9}$' }
+            preferred_language: { type: string }
+        source:
+          type: object
+          required: [source]
+          properties:
+            source: { type: string }
+            sub_source: { type: string }
+            partner_code: { type: string }
+        branch_code: { type: string }
+        pin_code: { type: string, pattern: '^[0-9]{6}$' }
+        requested_amount: { type: number }
+        product_detail: { type: object, additionalProperties: true }
+        consents:
+          type: array
+          items:
+            type: object
+            properties:
+              purpose: { type: string }
+              state: { type: string }
+              actor: { type: string }
+              notice_version: { type: string }
+    StageChange:
+      type: object
+      required: [to]
+      properties:
+        to: { type: string }
+        reason: { type: string }
+        expected_version: { type: integer }
+    ImportJobEnvelope:
+      type: object
+      properties:
+        data: { type: object, properties: { import_job_id: { type: string, format: uuid }, status: { type: string } } }
+
+  responses:
+    Ok:
+      description: "Success"
+      content: { application/json: { schema: { type: object, properties: { data: {}, meta: { $ref: '#/components/schemas/Meta' }, error: { type: object, nullable: true } } } } }
+    Empty:
+      description: "Success, no body of interest"
+    Created:
+      description: "Created"
+      content: { application/json: { schema: { type: object, properties: { data: {}, meta: { $ref: '#/components/schemas/Meta' }, error: { type: object, nullable: true } } } } }
+    LeadList:
+      description: "Paginated leads"
+      content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/Lead' } }, meta: { $ref: '#/components/schemas/Meta' }, error: { type: object, nullable: true } } } } }
+    LeadOne:
+      description: "Single lead"
+      content: { application/json: { schema: { $ref: '#/components/schemas/LeadEnvelope' } } }
+    AuthTokens:
+      description: "Auth result (tokens set as httpOnly cookies)"
+      content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { mfa_required: { type: boolean } } }, meta: { $ref: '#/components/schemas/Meta' } } } } }
+    ValidationError:
+      description: "400 VALIDATION_ERROR (may carry detail.reason=STAGE_GUARD_FAILED)"
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Unauthenticated:
+      description: "401 AUTH_REQUIRED"
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Forbidden:
+      description: "403 FORBIDDEN (incl. CONSENT_MISSING)"
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    NotFound:
+      description: "404 NOT_FOUND"
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Conflict:
+      description: "409 CONFLICT (DUPLICATE_BLOCKED / KYC_EXCEPTION_OPEN / EXPORT_APPROVAL_REQUIRED / LEGAL_HOLD / optimistic lock)"
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    PayloadTooLarge:
+      description: "413 PAYLOAD_TOO_LARGE"
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    UnsupportedMedia:
+      description: "415 UNSUPPORTED_MEDIA"
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    RateLimited:
+      description: "429 RATE_LIMITED (Retry-After)"
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    UpstreamUnavailable:
+      description: "503 UPSTREAM_UNAVAILABLE"
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
