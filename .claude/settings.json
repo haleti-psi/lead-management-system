@@ -4,7 +4,7 @@
       {
         "matcher": "Write|Edit",
         "hooks": [
-          { "type": "command", "command": "python .claude/hooks/check_gate.py", "timeout": 5000 }
+          { "type": "command", "command": "py .claude/hooks/check_gate.py", "timeout": 5000 }
         ]
       }
     ],
@@ -12,21 +12,21 @@
       {
         "matcher": "Write|Edit",
         "hooks": [
-          { "type": "command", "command": "python .claude/hooks/validate_sql.py", "timeout": 10000 },
-          { "type": "command", "command": "python .claude/hooks/capture_ambiguities.py", "timeout": 5000 }
+          { "type": "command", "command": "py .claude/hooks/validate_sql.py", "timeout": 10000 },
+          { "type": "command", "command": "py .claude/hooks/capture_ambiguities.py", "timeout": 5000 }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "python .claude/hooks/run_tests_if_changed.py", "timeout": 130000, "async": true }
+          { "type": "command", "command": "py .claude/hooks/run_tests_if_changed.py", "timeout": 130000, "async": true }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "python .claude/hooks/lint_changed.py", "timeout": 70000, "async": true }
+          { "type": "command", "command": "py .claude/hooks/lint_changed.py", "timeout": 70000, "async": true }
         ]
       }
     ]
