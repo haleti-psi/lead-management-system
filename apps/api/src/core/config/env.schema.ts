@@ -62,6 +62,16 @@ export const envSchema = z.object({
   MAX_PAGE_LIMIT: intFrom(100, { min: 1 }),
   BREAK_GLASS_MAX_WINDOW_HOURS: intFrom(48, { min: 1 }),
   MERGE_UNMERGE_WINDOW_HOURS: intFrom(24, { min: 1 }),
+
+  // ── Provider variables (environment-contract.md §Provider variables) ──
+  // Optional in the schema: required only where the real provider/inbound
+  // webhook is enabled (prod). Dev/test run with mock adapters (LOS_MOCK=true)
+  // and never read the HMAC secret. FR-140 IntegrationGateway / LosWebhookGuard.
+  LOS_MOCK: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  LOS_WEBHOOK_HMAC_SECRET: z.string().min(1).optional(),
 });
 
 /** Fully-typed, validated environment. `ALLOWED_ORIGINS` is parsed to `string[]`. */
