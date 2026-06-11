@@ -7,7 +7,7 @@ Derived from `docs/architecture.md` (§2, ADRs). Versions are minimums; pin exac
 | Concern | Library | Version | Notes |
 |---|---|---|---|
 | Framework | `@nestjs/core`, `@nestjs/common`, `@nestjs/platform-express` | ^10 | modular monolith |
-| Config | `@nestjs/config` + `zod` | ^10 / ^3.23 | env validated at startup |
+| Config | `@nestjs/config` + `zod` | ^3 / ^3.23 | env validated at startup (@nestjs/config is versioned independently of Nest core) |
 | DB query layer | `kysely` | ^0.27 | typed SQL builder (ADR-2) — **not** an ORM |
 | DB types | `kysely-codegen` (dev) | latest | generate types from schema |
 | DB driver | `pg` | ^8 | PostgreSQL |
@@ -33,7 +33,7 @@ Derived from `docs/architecture.md` (§2, ADRs). Versions are minimums; pin exac
 | Concern | Library | Version | Notes |
 |---|---|---|---|
 | UI runtime | `react`, `react-dom` | ^18 | |
-| Build | `vite`, `@vitejs/plugin-react` | ^5 | |
+| Build | `vite`, `@vitejs/plugin-react` | ^5 / ^4 | plugin-react is on its own 4.x line |
 | Styling | `tailwindcss` | ^3 | |
 | Components | `shadcn/ui` (Radix primitives) | latest | |
 | Icons | `lucide-react` | latest | |
