@@ -1,4 +1,5 @@
 import type { DbTransaction } from '../../../core/db';
+import { ProductConfigActivator } from '../../product-config/product-config.activator';
 import { ConfigActivatorRegistry } from './config-activator.registry';
 import type { ConfigActivatorPort, ConfigurationVersionRow } from './config-activator.port';
 import { SlaPolicyActivator } from './sla-policy.activator';
@@ -20,24 +21,26 @@ function stubActivator(configType: string): ConfigActivatorPort {
 describe('ConfigActivatorRegistry', () => {
   it('resolves a registered activator by config_type', () => {
     const sla = stubActivator('sla_policy');
-    const registry = new ConfigActivatorRegistry([sla]);
+    const registry = new ConfigActivatorRegistry();
+    registry.register(sla);
     expect(registry.resolve('sla_policy')).toBe(sla);
   });
 
   it('returns undefined for an unregistered config_type', () => {
-    const registry = new ConfigActivatorRegistry([stubActivator('sla_policy')]);
+    const registry = new ConfigActivatorRegistry();
+    registry.register(stubActivator('sla_policy'));
     expect(registry.resolve('product_config')).toBeUndefined();
   });
 
-  it('tolerates a null injection (no activators bound yet)', () => {
-    const registry = new ConfigActivatorRegistry(null);
+  it('returns undefined when nothing is registered yet', () => {
+    const registry = new ConfigActivatorRegistry();
     expect(registry.resolve('sla_policy')).toBeUndefined();
   });
 
   it('throws on a duplicate config_type registration', () => {
-    expect(() => new ConfigActivatorRegistry([stubActivator('sla_policy'), stubActivator('sla_policy')])).toThrow(
-      /Duplicate ConfigActivatorPort/,
-    );
+    const registry = new ConfigActivatorRegistry();
+    registry.register(stubActivator('sla_policy'));
+    expect(() => registry.register(stubActivator('sla_policy'))).toThrow(/Duplicate ConfigActivatorPort/);
   });
 });
 
@@ -81,13 +84,15 @@ function slaRow(overrides: Partial<ConfigurationVersionRow> = {}): Configuration
 }
 
 describe('SlaPolicyActivator', () => {
+  const make = (): SlaPolicyActivator => new SlaPolicyActivator(new ConfigActivatorRegistry());
+
   it('handles config_type sla_policy', () => {
-    expect(new SlaPolicyActivator().configType).toBe('sla_policy');
+    expect(make().configType).toBe('sla_policy');
   });
 
   it('activate sets sla_policies.is_active=true scoped to the policy', async () => {
     const { tx, updateTable, chain } = txSpy();
-    await new SlaPolicyActivator().activate(slaRow(), tx);
+    await make().activate(slaRow(), tx);
     expect(updateTable).toHaveBeenCalledWith('sla_policies');
     expect(chain.set).toHaveBeenCalledWith(expect.objectContaining({ is_active: true }));
     expect(chain.where).toHaveBeenCalledWith('sla_policy_id', '=', 'pol-1');
@@ -95,13 +100,43 @@ describe('SlaPolicyActivator', () => {
 
   it('deactivate sets sla_policies.is_active=false', async () => {
     const { tx, chain } = txSpy();
-    await new SlaPolicyActivator().deactivate(slaRow(), tx);
+    await make().deactivate(slaRow(), tx);
     expect(chain.set).toHaveBeenCalledWith(expect.objectContaining({ is_active: false }));
   });
 
   it('is a no-op when config_ref is null', async () => {
     const { tx, updateTable } = txSpy();
-    await new SlaPolicyActivator().activate(slaRow({ config_ref: null }), tx);
+    await make().activate(slaRow({ config_ref: null }), tx);
     expect(updateTable).not.toHaveBeenCalled();
+  });
+
+  it('self-registers with the shared registry on init', () => {
+    const registry = new ConfigActivatorRegistry();
+    const activator = new SlaPolicyActivator(registry);
+    activator.onModuleInit();
+    expect(registry.resolve('sla_policy')).toBe(activator);
+  });
+});
+
+/**
+ * Cross-module wiring (Batch-2 integration): the `sla_policy` (M14) and
+ * `product_config` (M5) activators live in different Nest modules but MUST
+ * converge on the SAME shared registry. After both modules initialise, the
+ * governance engine must resolve BOTH — proving multi-module registration no
+ * longer relies on a per-module multi-provider token (which does not aggregate
+ * across module scopes). Regression guard for the silent product_config no-op.
+ */
+describe('ConfigActivatorRegistry — cross-module registration', () => {
+  it('resolves both activators after each self-registers on the shared instance', () => {
+    const registry = new ConfigActivatorRegistry();
+    const sla = new SlaPolicyActivator(registry);
+    const product = new ProductConfigActivator(registry);
+
+    // Each module's onModuleInit runs independently against the one registry.
+    sla.onModuleInit();
+    product.onModuleInit();
+
+    expect(registry.resolve('sla_policy')).toBe(sla);
+    expect(registry.resolve('product_config')).toBe(product);
   });
 });

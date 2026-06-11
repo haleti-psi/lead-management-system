@@ -36,6 +36,3 @@ export interface ConfigActivatorPort {
    */
   deactivate(cv: ConfigurationVersionRow, tx: DbTransaction): Promise<void>;
 }
-
-/** Multi-provider DI token: every module contributing an activator binds to this. */
-export const CONFIG_ACTIVATORS = Symbol('CONFIG_ACTIVATORS');

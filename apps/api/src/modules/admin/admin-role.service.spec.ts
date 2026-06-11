@@ -48,6 +48,7 @@ function fakeRepo(overrides: Partial<RepoMock> = {}): RoleRepository {
     updateRole: jest.fn().mockResolvedValue(1),
     replacePermissions: jest.fn().mockResolvedValue(undefined),
     listUserIdsForRole: jest.fn().mockResolvedValue(['user-a', 'user-b']),
+    listAllUserIdsForRole: jest.fn().mockResolvedValue(['user-a', 'user-b']),
   };
   return { ...base, ...overrides } as unknown as RoleRepository;
 }

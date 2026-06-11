@@ -24,6 +24,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { IntegrationModule } from './modules/integration/integration.module';
+import { ProductConfigModule } from './modules/product-config/product-config.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { HealthController } from './health.controller';
 
@@ -64,6 +65,9 @@ import { HealthController } from './health.controller';
     }),
     IdentityModule,
     EngagementModule,
+    // FR-040 (M5 product configuration). Owns the `product_config` activator,
+    // which self-registers with the shared FR-132 ConfigActivatorRegistry.
+    ProductConfigModule,
     // FR-132 (M14 config governance), FR-140 (M15 integration admin surface),
     // FR-123 (M13 audit explorer). Each depends only on the global core modules
     // registered above (owner-writes §11; cross-module access via services).

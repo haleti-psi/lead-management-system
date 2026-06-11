@@ -1,16 +1,17 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, type OnModuleInit } from '@nestjs/common';
 
 import type {
   ConfigActivatorPort,
   ConfigurationVersionRow,
 } from '../admin/activators/config-activator.port';
+import { ConfigActivatorRegistry } from '../admin/activators/config-activator.registry';
 import type { DbTransaction } from '../../core/db';
 import { ORG_ID_DEFAULT } from '../../core/outbox/outbox.constants';
 import { PRODUCT_CONFIG_CONFIG_TYPE } from './product-config.constants';
 
 /**
- * FR-040 — activator for `config_type = 'product_config'`, registered against the
- * FR-132 {@link CONFIG_ACTIVATORS} multi-provider token. The create/edit path
+ * FR-040 — activator for `config_type = 'product_config'`, which self-registers
+ * with the shared FR-132 {@link ConfigActivatorRegistry} on init. The create/edit path
  * (this module's service) writes the `product_configs` row as `draft` and the
  * paired `configuration_versions(status='pending')`; FR-132's generic governance
  * engine then drives approve/rollback and, when the version becomes `active`,
@@ -26,8 +27,15 @@ import { PRODUCT_CONFIG_CONFIG_TYPE } from './product-config.constants';
  * to `status='retired'`. All writes are parameterised and org-scoped.
  */
 @Injectable()
-export class ProductConfigActivator implements ConfigActivatorPort {
+export class ProductConfigActivator implements ConfigActivatorPort, OnModuleInit {
   readonly configType = PRODUCT_CONFIG_CONFIG_TYPE;
+
+  constructor(private readonly registry: ConfigActivatorRegistry) {}
+
+  /** Self-register with the shared activation seam (FR-132 cross-module wiring). */
+  onModuleInit(): void {
+    this.registry.register(this);
+  }
 
   /**
    * Make the referenced draft config live. Idempotent: re-running on an

@@ -1,7 +1,6 @@
-import { Module, type FactoryProvider } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 
-import { CONFIG_ACTIVATORS, type ConfigActivatorPort } from './activators/config-activator.port';
-import { ConfigActivatorRegistry } from './activators/config-activator.registry';
+import { ConfigActivatorModule } from './activators/config-activator.module';
 import { SlaPolicyActivator } from './activators/sla-policy.activator';
 import { ConfigGovernanceController } from './config-governance.controller';
 import { ConfigGovernanceRepository } from './config-governance.repository';
@@ -21,28 +20,17 @@ import { UserRepository } from './user.repository';
 
 /**
  * M14 Administration — FR-132 configuration governance (maker-checker). Depends
- * on the global core modules (DB, audit, outbox, auth-core, config).
+ * on the global core modules (DB, audit, outbox, auth-core, config) and the
+ * `@Global` {@link ConfigActivatorModule} that holds the shared
+ * {@link ConfigActivatorRegistry}.
  *
- * The activation seam ({@link ConfigActivatorRegistry}) is populated via the
- * {@link CONFIG_ACTIVATORS} multi-provider token. This slice wires the
- * `sla_policy` activator ({@link SlaPolicyActivator}); other `config_type`s
- * (product_config, scheme, …) register their own activators against the same
- * token as those modules are built — no change to the governance engine.
+ * This slice owns the `sla_policy` activator ({@link SlaPolicyActivator}), which
+ * self-registers with the shared registry on init. Other `config_type`s
+ * (product_config, scheme, …) own and self-register their own activators from
+ * their modules — no change to the governance engine.
  */
-/**
- * Multi-provider registration for the `sla_policy` activator. The installed
- * `@nestjs/common` typings omit `multi` from the provider interfaces (it is a
- * supported runtime option), so we declare it as a `FactoryProvider` extended
- * with `multi` and resolve the instance through Nest DI.
- */
-const slaPolicyActivatorProvider: FactoryProvider<ConfigActivatorPort> & { multi: true } = {
-  provide: CONFIG_ACTIVATORS,
-  useFactory: (activator: SlaPolicyActivator): ConfigActivatorPort => activator,
-  inject: [SlaPolicyActivator],
-  multi: true,
-};
-
 @Module({
+  imports: [ConfigActivatorModule],
   controllers: [
     ConfigGovernanceController,
     AdminUsersController,
@@ -52,9 +40,7 @@ const slaPolicyActivatorProvider: FactoryProvider<ConfigActivatorPort> & { multi
   providers: [
     ConfigGovernanceService,
     ConfigGovernanceRepository,
-    ConfigActivatorRegistry,
     SlaPolicyActivator,
-    slaPolicyActivatorProvider,
     // FR-130 — user / role / team administration.
     AdminUserService,
     AdminRoleService,

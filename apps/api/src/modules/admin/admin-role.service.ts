@@ -93,9 +93,11 @@ export class AdminRoleService {
       let userIds: string[] = [];
       const permsChanged = dto.permissions !== undefined;
       if (dto.permissions !== undefined) {
-        // Capture affected users BEFORE the change (the assignment set is unchanged
-        // by a permission edit, but reading inside the tx keeps it consistent).
-        userIds = await this.roles.listUserIdsForRole(actor.orgId, roleId, tx);
+        // Capture ALL affected users BEFORE the change (the assignment set is
+        // unchanged by a permission edit, but reading inside the tx keeps it
+        // consistent). Paginated so a role with > MAX_PAGE_LIMIT holders still
+        // has every cached entitlement evicted (no stale grant survives).
+        userIds = await this.roles.listAllUserIdsForRole(actor.orgId, roleId, tx);
         await this.roles.replacePermissions(
           actor.orgId,
           roleId,

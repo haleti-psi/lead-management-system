@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, type OnModuleInit } from '@nestjs/common';
 
 import type { DbTransaction } from '../../../core/db';
 import { ORG_ID_DEFAULT } from '../../../core/outbox/outbox.constants';
 import { SLA_POLICY_CONFIG_TYPE } from '../admin.constants';
+import { ConfigActivatorRegistry } from './config-activator.registry';
 import type { ConfigActivatorPort, ConfigurationVersionRow } from './config-activator.port';
 
 /**
@@ -23,8 +24,15 @@ import type { ConfigActivatorPort, ConfigurationVersionRow } from './config-acti
  * exposes an owner mutator this class is the one place to delegate it.
  */
 @Injectable()
-export class SlaPolicyActivator implements ConfigActivatorPort {
+export class SlaPolicyActivator implements ConfigActivatorPort, OnModuleInit {
   readonly configType = SLA_POLICY_CONFIG_TYPE;
+
+  constructor(private readonly registry: ConfigActivatorRegistry) {}
+
+  /** Self-register with the shared activation seam (FR-132 cross-module wiring). */
+  onModuleInit(): void {
+    this.registry.register(this);
+  }
 
   async activate(cv: ConfigurationVersionRow, tx: DbTransaction): Promise<void> {
     await this.setActive(cv, tx, true);

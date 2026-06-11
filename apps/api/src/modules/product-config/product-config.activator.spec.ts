@@ -1,4 +1,5 @@
 import type { DbTransaction } from '../../core/db';
+import { ConfigActivatorRegistry } from '../admin/activators/config-activator.registry';
 import type { ConfigurationVersionRow } from '../admin/activators/config-activator.port';
 import { ProductConfigActivator } from './product-config.activator';
 
@@ -82,14 +83,23 @@ function cvRow(overrides: Partial<ConfigurationVersionRow> = {}): ConfigurationV
 }
 
 describe('ProductConfigActivator', () => {
+  const make = (): ProductConfigActivator => new ProductConfigActivator(new ConfigActivatorRegistry());
+
   it('handles config_type product_config', () => {
-    expect(new ProductConfigActivator().configType).toBe('product_config');
+    expect(make().configType).toBe('product_config');
+  });
+
+  it('self-registers with the shared registry on init', () => {
+    const registry = new ConfigActivatorRegistry();
+    const activator = new ProductConfigActivator(registry);
+    activator.onModuleInit();
+    expect(registry.resolve('product_config')).toBe(activator);
   });
 
   it('activate promotes the referenced config to active and retires the prior active sibling', async () => {
     const { tx, updateCalls } = txSpy({ product_config_id: 'pc-new', product_code: 'CV' });
 
-    await new ProductConfigActivator().activate(cvRow(), tx);
+    await make().activate(cvRow(), tx);
 
     // Two UPDATEs: (1) retire siblings, (2) promote the new row.
     expect(updateCalls).toHaveLength(2);
@@ -111,21 +121,21 @@ describe('ProductConfigActivator', () => {
 
   it('activate is a no-op when config_ref is null', async () => {
     const { tx, selectFrom, updateTable } = txSpy(undefined);
-    await new ProductConfigActivator().activate(cvRow({ config_ref: null }), tx);
+    await make().activate(cvRow({ config_ref: null }), tx);
     expect(selectFrom).not.toHaveBeenCalled();
     expect(updateTable).not.toHaveBeenCalled();
   });
 
   it('activate is a no-op when the target row no longer exists', async () => {
     const { tx, updateTable } = txSpy(undefined);
-    await new ProductConfigActivator().activate(cvRow(), tx);
+    await make().activate(cvRow(), tx);
     expect(updateTable).not.toHaveBeenCalled();
   });
 
   it('deactivate retires the referenced config (rollback path)', async () => {
     const { tx, updateCalls } = txSpy({ product_config_id: 'pc-new', product_code: 'CV' });
 
-    await new ProductConfigActivator().deactivate(cvRow(), tx);
+    await make().deactivate(cvRow(), tx);
 
     expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0].set.status).toBe('retired');
@@ -134,7 +144,7 @@ describe('ProductConfigActivator', () => {
 
   it('deactivate is a no-op when config_ref is null', async () => {
     const { tx, updateTable } = txSpy(undefined);
-    await new ProductConfigActivator().deactivate(cvRow({ config_ref: null }), tx);
+    await make().deactivate(cvRow({ config_ref: null }), tx);
     expect(updateTable).not.toHaveBeenCalled();
   });
 });

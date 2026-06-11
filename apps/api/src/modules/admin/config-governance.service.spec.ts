@@ -76,7 +76,9 @@ function fakeActivator(): ConfigActivatorPort & {
 }
 
 function registryWith(activator?: ConfigActivatorPort): ConfigActivatorRegistry {
-  return new ConfigActivatorRegistry(activator ? [activator] : []);
+  const registry = new ConfigActivatorRegistry();
+  if (activator) registry.register(activator);
+  return registry;
 }
 
 describe('ConfigGovernanceService.approve', () => {

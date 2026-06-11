@@ -162,20 +162,44 @@ export class RoleRepository {
   }
 
   /**
-   * The active user ids in the org currently assigned this role (E1 cache
-   * invalidation: every cached actor with this role must be evicted after a
-   * permission change). `LIMIT`-bounded. Read-only.
+   * One bounded page of active user ids in the org assigned this role, ordered by
+   * `user_id` for a stable keyset. `LIMIT`-bounded. Read-only.
    */
-  async listUserIdsForRole(orgId: string, roleId: string, tx?: DbTransaction): Promise<string[]> {
+  async listUserIdsForRole(
+    orgId: string,
+    roleId: string,
+    tx?: DbTransaction,
+    afterUserId?: string,
+  ): Promise<string[]> {
     const executor = tx ?? this.db;
-    const rows = await executor
+    let q = executor
       .selectFrom('users')
       .select('user_id')
       .where('org_id', '=', orgId)
       .where('role_id', '=', roleId)
-      .where('status', '=', 'active')
-      .limit(MAX_PAGE_LIMIT)
-      .execute();
+      .where('status', '=', 'active');
+    if (afterUserId !== undefined) {
+      q = q.where('user_id', '>', afterUserId);
+    }
+    const rows = await q.orderBy('user_id', 'asc').limit(MAX_PAGE_LIMIT).execute();
     return rows.map((r) => r.user_id);
+  }
+
+  /**
+   * ALL active user ids in the org assigned this role (E1 cache invalidation:
+   * every cached actor with this role must be evicted after a permission change,
+   * including roles with > {@link MAX_PAGE_LIMIT} holders). Keyset-paginates
+   * {@link listUserIdsForRole} so each query stays `LIMIT`-bounded. Read-only.
+   */
+  async listAllUserIdsForRole(orgId: string, roleId: string, tx?: DbTransaction): Promise<string[]> {
+    const all: string[] = [];
+    let after: string | undefined;
+    for (;;) {
+      const page = await this.listUserIdsForRole(orgId, roleId, tx, after);
+      all.push(...page);
+      if (page.length < MAX_PAGE_LIMIT) break;
+      after = page[page.length - 1];
+    }
+    return all;
   }
 }
