@@ -99,6 +99,40 @@ export class ProductConfigRepository {
   }
 
   /**
+   * FR-041 — all ACTIVE configs for the org, ordered by `product_code`. Surfaces
+   * the seeded launch products to the lead-capture product-picker (FR-010 UI).
+   * LIMIT-bounded (NFR-17): the supported-product set is small (7 at launch) and
+   * is never expected to approach 100.
+   */
+  async findAllActive(): Promise<ProductConfigRow[]> {
+    return this.db
+      .selectFrom('product_configs')
+      .selectAll()
+      .where('org_id', '=', ORG_ID_DEFAULT)
+      .where('status', '=', 'active')
+      .orderBy('product_code', 'asc')
+      .limit(100)
+      .execute();
+  }
+
+  /**
+   * FR-041 — the single ACTIVE config for a `product_code` (highest version wins),
+   * or undefined when none is active. Consumed by FR-010 capture validation to
+   * resolve the config a new lead pins to. Parameterised + LIMIT 1.
+   */
+  async findActiveByProductCode(productCode: ProductCode): Promise<ProductConfigRow | undefined> {
+    return this.db
+      .selectFrom('product_configs')
+      .selectAll()
+      .where('org_id', '=', ORG_ID_DEFAULT)
+      .where('product_code', '=', productCode)
+      .where('status', '=', 'active')
+      .orderBy('version', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+  }
+
+  /**
    * Highest existing `version` for `(org, product_code)`, or 0 when none. Run
    * inside the create/edit transaction so the version assignment is consistent
    * with the unique constraint `uq_product_configs_version`.
