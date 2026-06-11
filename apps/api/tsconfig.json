@@ -9,8 +9,8 @@
     "emitDecoratorMetadata": true,
     "baseUrl": ".",
     "paths": {
-      "@lms/shared": ["../../packages/shared/src"],
-      "@lms/shared/*": ["../../packages/shared/src/*"]
+      "@lms/shared": ["../../packages/shared/dist"],
+      "@lms/shared/*": ["../../packages/shared/dist/*"]
     }
   },
   "include": ["src/**/*.ts"],
