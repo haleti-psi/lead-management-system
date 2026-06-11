@@ -17,6 +17,11 @@ import { UnimplementedLeadReassignAdapter } from './ports/unimplemented-lead-rea
 import { RoleRepository } from './role.repository';
 import { TeamRepository } from './team.repository';
 import { UserRepository } from './user.repository';
+// FR-131 — generic master/config CRUD (`/admin/{masterResource}`).
+import { AdminMasterController } from './master/admin-master.controller';
+import { AdminMasterRepository } from './master/admin-master.repository';
+import { AdminMasterService } from './master/admin-master.service';
+import { MasterResourceRegistry } from './master/master-resource.registry';
 
 /**
  * M14 Administration — FR-132 configuration governance (maker-checker). Depends
@@ -33,9 +38,13 @@ import { UserRepository } from './user.repository';
   imports: [ConfigActivatorModule],
   controllers: [
     ConfigGovernanceController,
+    // FR-130 — concrete `/admin/users|roles|teams` (registered before the FR-131
+    // generic `/admin/{masterResource}` so the static routes take precedence).
     AdminUsersController,
     AdminRolesController,
     AdminTeamsController,
+    // FR-131 — generic master/config CRUD (allow-list excludes all of the above).
+    AdminMasterController,
   ],
   providers: [
     ConfigGovernanceService,
@@ -48,6 +57,10 @@ import { UserRepository } from './user.repository';
     UserRepository,
     RoleRepository,
     TeamRepository,
+    // FR-131 — master configuration.
+    MasterResourceRegistry,
+    AdminMasterService,
+    AdminMasterRepository,
     // Owner-writes seam: bulk lead reassignment on deactivation. Wave 2
     // (FR-010/030) rebinds this token to `LeadService.bulkReassign`.
     { provide: LEAD_REASSIGN_PORT, useClass: UnimplementedLeadReassignAdapter },
