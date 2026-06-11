@@ -1,0 +1,25 @@
+{
+  "name": "lead-management-system",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lead Management System (NBFC) — monorepo. Source of truth lives in docs/.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:shared": "npm run build -w @lms/shared",
+    "build:api": "npm run build -w @lms/api",
+    "build:web": "npm run build -w @lms/web",
+    "build": "npm run build:shared && npm run build:api && npm run build:web",
+    "dev:api": "npm run start:dev -w @lms/api",
+    "dev:web": "npm run dev -w @lms/web",
+    "test": "npm run test -w @lms/api && npm run test -w @lms/web",
+    "lint": "echo \"configure eslint per apps/* in Stage 7\"",
+    "db:codegen": "kysely-codegen --out-file apps/api/src/core/db/types.generated.ts",
+    "migrate": "flyway -configFiles=flyway.conf migrate"
+  }
+}

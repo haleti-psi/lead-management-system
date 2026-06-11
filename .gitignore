@@ -28,3 +28,11 @@ reports/
 # OS / editor cruft
 .DS_Store
 Thumbs.db
+
+# Generated (regenerate via npm run db:codegen)
+apps/api/src/core/db/types.generated.ts
+
+# Test / build artefacts
+playwright-report/
+test-results/
+.vite/

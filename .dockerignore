@@ -1,0 +1,17 @@
+**/node_modules
+**/dist
+**/build
+**/coverage
+.git
+.gitignore
+.env
+.env.local
+.env.*.local
+**/*.spec.ts
+**/*.test.ts
+**/*.e2e-spec.ts
+docs
+.claude
+playwright-report
+test-results
+README.md

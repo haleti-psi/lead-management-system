@@ -1,0 +1,68 @@
+# Deployment config consumed by the deploy-app / local-deployment skills.
+# Architecture-known values are filled in. Values marked TODO are deployment-account
+# specifics — fill them before the first cloud deploy (or run /project-config-init).
+# Secrets live in Secret Manager; only their NAMES appear here, never values.
+
+project_name: lead-management-system
+project_type: monorepo
+
+# Friendly group → service dirs (deploy a whole stack with one target)
+app_groups:
+  lms: [apps/api, apps/web]
+
+services:
+  - app_dir: apps/api
+    type: api
+    framework: nestjs
+    dockerfile: apps/api/Dockerfile
+    cloud_run_service: lms-api
+    port: 8080
+    gcp_project: default
+    region: default
+    custom_domain: null
+    nginx_proxy: false
+    cloud_sql_instance: lms-pg            # → gcloud.cloud_sql.instances[].name
+    secrets:                              # ENV_NAME: secret-manager-name (TODO: confirm names)
+      DATABASE_URL: lms-database-url
+      JWT_ACCESS_SECRET: lms-jwt-access-secret
+      JWT_REFRESH_SECRET: lms-jwt-refresh-secret
+      TOKENIZATION_KMS_KEY: lms-tokenization-kms-key
+    env_vars:
+      NODE_ENV: production
+      GCP_REGION: asia-south1
+      CLOUD_TASKS_LOCATION: asia-south1
+
+  - app_dir: apps/web
+    type: ui
+    framework: vite-react
+    dockerfile: apps/web/Dockerfile
+    cloud_run_service: lms-web
+    port: 8080
+    gcp_project: default
+    region: default
+    custom_domain: null
+    nginx_proxy: false
+    cloud_sql_instance: null
+    secrets: {}
+    env_vars:
+      NODE_ENV: production
+
+gcloud:
+  projects:
+    default: TODO-gcp-project-id                       # gcloud config get-value project
+  region: asia-south1
+  artifact_registry:
+    default: TODO-asia-south1-docker.pkg.dev/PROJECT/lms   # region-docker.pkg.dev/project/repo
+  cloud_sql:
+    instances:
+      - name: lms-pg
+        connection_string: TODO-PROJECT:asia-south1:lms-pg
+  compute_service_account:
+    email: TODO-PROJECTNUMBER-compute@developer.gserviceaccount.com
+  cloud_build:
+    gcs_staging: TODO-gs://PROJECT_cloudbuild/source
+
+# Seed/test credentials for deploy sanity checks (fill from seed data, never real creds)
+test_credentials:
+  username: null
+  password: null

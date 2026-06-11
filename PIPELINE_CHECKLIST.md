@@ -1,7 +1,7 @@
 # Lead Management System — AI Dev Pipeline Checklist
 
-**Last updated:** 2026-06-08
-**Current position:** Gate B **PASS (10/10)** → **Stage 3 — Architecture (next action)**
+**Last updated:** 2026-06-11
+**Current position:** Stages 1–6 complete · Gates A/B/C **signed off** · monorepo scaffolded → **Stage 7 — Code Generation (`/phase-executor`) is the next action**
 
 > The machine source-of-truth for state is `manifest.json` (written by the gates).
 > This file is your human-readable tracker — tick `- [ ]` → `- [x]` as you finish each step.
@@ -14,9 +14,9 @@
 - [x] Hooks copied to `.claude/hooks/`
 - [x] Canonical BRD chosen: **V5 → v5.1** (amended in `docs/brd.md` during Gate A; supersedes V4. Source file in `docs/requirements/` is still v5.0 — don't re-copy from it)
 - [x] BRD placed at canonical path `docs/brd.md`
-- [ ] `git init` + first commit  ← **required before Stage 7** (`phase-executor` builds each FR in a git worktree; the lint/test hooks also use `git diff`)
-- [ ] Fix `python3` → `python` in the hook commands (Windows)
-- [ ] *(optional)* Wire hooks into `.claude/settings.json` — note `check_gate.py` will then block `src/` writes until Gate C passes
+- [x] `git init` + first commit  (repo live on `master`; pipeline artefacts + scaffold committed)
+- [x] Fix `python3` → `python` in the hook commands (Windows) — hooks invoke via the `py` launcher
+- [x] *(optional)* Wire hooks into `.claude/settings.json` — all 5 wired; `check_gate.py` `src/` block lifted now Gate C is signed
 
 ---
 
@@ -33,25 +33,25 @@
 - [x] **◈ Gate B** — `/quality-gate-checker B`  → **PASS 10/10** · unblocks Stage 3
 
 ### Stage 3 — Architecture  → `docs/architecture.md`
-- [ ] `/architecture-doc-generator`
+- [x] `/architecture-doc-generator`  (+ BusinessCalendar entity, ADR-6)
 
 ### Stage 4 — Guidelines  → `docs/guidelines/`
-- [ ] `/guidelines-generator`  (Coding · UI · Security · Performance)
+- [x] `/guidelines-generator`  (Coding · UI · Security · Performance)
 
 ### Stage 5 — Contracts  → `docs/contracts/`
-- [ ] `/contracts-generator`  (10 files)
-- [ ] **◈ Gate C** — `/quality-gate-checker C`  → unblocks Stage 6 (also lifts the `check_gate.py` write-block on `src/`)
+- [x] `/contracts-generator`  (10 files)
+- [x] **◈ Gate C** — `/quality-gate-checker C`  → **PASS 10/10** · unblocks Stage 6 (lifts the `check_gate.py` `src/` write-block)
 
 ---
 
 ## GENERATION ZONE  (per-FR, runs in parallel)
 
 ### Stage 6 — LLD + Test Specs per FR  → `docs/lld/FR-NNN.md` (+ `-tests.md`)
-- [ ] `/lld-generator`
+- [x] `/lld-generator`  → 49 FRs (98 files) + `AMBIGUITIES.md` / `CORRECTIONS.md`; v5.3 spec-hardening
 
-### Stage 7 — Code Generation  → `src/`
-- [ ] Confirm `git init` done (see pre-flight)
-- [ ] `/phase-executor`
+### Stage 7 — Code Generation  → `apps/*/src`, `packages/shared/src`
+- [x] Confirm `git init` done (see pre-flight) · monorepo scaffold committed (foundation for worktrees)
+- [ ] `/phase-executor`   ← **next action**
 
 ---
 
