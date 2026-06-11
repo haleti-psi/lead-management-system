@@ -18,6 +18,8 @@ import { LoggingModule } from './core/logging';
 import { MaskingInterceptor, MaskingModule } from './core/masking';
 import { OutboxModule } from './core/outbox';
 import { RedisModule } from './core/redis';
+import { SlaModule } from './core/sla';
+import { EngagementModule } from './modules/engagement/engagement.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { HealthController } from './health.controller';
 
@@ -39,6 +41,9 @@ import { HealthController } from './health.controller';
     AuthCoreModule,
     MaskingModule,
     OutboxModule,
+    // FR-104 — business-time clock + SLA engine (ADR-6). Global; engagement binds
+    // the policy-reader port, M2/KYC/M12 bind the writer ports later.
+    SlaModule,
     // Redis-backed throttler (security.md). Default tier = auth rate (10/min per
     // IP); endpoints needing other tiers override with @Throttle/@SkipThrottle.
     ThrottlerModule.forRootAsync({
@@ -50,6 +55,7 @@ import { HealthController } from './health.controller';
       }),
     }),
     IdentityModule,
+    EngagementModule,
   ],
   controllers: [HealthController],
   providers: [

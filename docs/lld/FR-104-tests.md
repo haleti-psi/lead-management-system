@@ -3,6 +3,11 @@
 
 Every scenario must have a passing test before FR-104 can be merged. Codes are from `docs/contracts/error-taxonomy.md` (VALIDATION_ERROR=400, FORBIDDEN=403, CONFLICT=409, AUTH_REQUIRED=401). Stack per `testing-contract.md`: Jest+supertest (API), Jest (unit), Vitest+Testing-Library (UI), Playwright (e2e), Testcontainers-Postgres.
 
+> **Test-tier status (reviewer-tracked deferral).** The **Integration/e2e tier (Jest+supertest + Testcontainers-Postgres)** for this FR is **DEFERRED to the dedicated integration-test wave**, run after the domain FRs are merged — several scenarios exercise callers/modules not yet built (LeadService owner-writes, FR-132 maker-checker approve, the sweep worker/Cloud-Tasks path, KYC/grievance writers, the Pub/Sub publisher). This is a tracked decision, not a gap.
+>
+> - **Deferred (Integration-typed):** TC-001, TC-002, TC-003, TC-004, TC-005, TC-006, TC-007, TC-008, TC-009, TC-010, TC-011, TC-012, TC-013, TC-016, TC-017, TC-018, TC-019, TC-020, TC-021, TC-022, TC-023, TC-024, TC-025, TC-026, TC-027, TC-028, and the SQL Invariant Queries (require a live Postgres).
+> - **Covered now (unit/component, this FR):** TC-014, TC-015 (engine Unit); the `CreateSlaPolicyDto` validation suite (covers the TC-007/008/009/010/011 logic at the Zod layer); the `SlaPolicyService` unit suite (scope-A create / config-version+audit ordering / duplicate-active CONFLICT / list — the unit-level coverage of TC-001/002/006/012); the `SlaPolicyRepository` and `InternalTaskGuard` unit suites; and the `SlaPolicyController` `@Requires`-metadata unit test (ABAC `resourceType: 'sla_policies'`). UI scenarios TC-UI-001..007 are the Vitest+Testing-Library component tier.
+
 ## Test Cases
 
 | TC | Scenario | Type | Input | Expected Outcome |
