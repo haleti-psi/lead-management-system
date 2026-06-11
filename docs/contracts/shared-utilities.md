@@ -7,8 +7,9 @@
 | `EntitlementService.can(user, capability, resource)` | `core/auth/` | Single ABAC decision point (auth-matrix.json) | every protected endpoint |
 | `UnitOfWork.run(fn(tx))` | `core/db/` | Request-scoped ambient transaction (nestjs-cls); owners enlist | every multi-entity write (§11) |
 | `Db` (Kysely instance) + generated types | `core/db/` | Typed parameterised queries | all repositories |
-| `AuditAppender` + `AuditChainConsumer` | `core/audit/` | Emit audit intent; single-writer hash chain | all sensitive actions |
-| `OutboxService.emit(event, tx)` | `core/outbox/` | Transactional outbox write | all state-changing FRs |
+| `AuditAppender.append(entry, tx)` + `AuditChainConsumer` | `core/audit/` | Append audit intent — **method is `append` (never `emit`)**. `entry = { action (audit_action enum), entity_type, entity_id, actor_id, lead_id?, detail? }`; single-writer hash chain | all sensitive actions |
+| `OutboxService.emit(event, tx)` | `core/outbox/` | Transactional outbox write — **`event` is an OBJECT `{ event_code, aggregate_type, aggregate_id, payload }`** (object form, not positional args) | all state-changing FRs |
+| `CaptchaService.verify(token)` | `core/integration/` | Verifies public-capture captcha (reCAPTCHA v3; vendor per OD-08/17) | FR-010 `/public/leads` |
 | `IntegrationGateway.call(port, req, {idempotencyKey})` | `core/integration/` | Idempotency, retry, circuit breaker, IntegrationLog | all external calls (FR-140) |
 | Ports: `LosPort`, `KycPort`, `NotificationChannelPort`, `TelephonyPort`, `AaPort`, `GstPort`, `AssetVerificationPort` | `core/integration/ports/` | External boundaries (+ mock adapters) | M8/M9/M11 |
 | `BusinessCalendarService.resolve(branch?,region?)` + `SlaEngine` | `core/sla/` | One business-time clock; SLA due/breach | FR-104 + all timers |
@@ -18,7 +19,7 @@
 ## Domain services (sole writers of their entities — owner-writes §11)
 | Service | Module | Mutators / purpose |
 |---|---|---|
-| `LeadService` | M2 | **sole writer of `leads`**: `create / transitionStage / assignOwner / setScore / setHotFlag / setKycStatus / setConsentStatus / recordEligibility / markHandedOff / merge` (each `expectedVersion`) |
+| `LeadService` | M2 | **sole writer of `leads`** (no other module/service may UPDATE/INSERT `leads`): `create / transitionStage / assignOwner / bulkReassign / setScore / setHotFlag / setKycStatus / setConsentStatus / setSlaDueAt / recordEligibility / markHandedOff / merge`. Single-row mutators take `expectedVersion` (stale → `CONFLICT`); `bulkReassign(leadIds, ownerId, reason, tx)` is the LIMIT-bounded admin path (FR-130) — bumps `version` per row, writes one `audit_logs(reassign)` per lead, no per-row `expectedVersion` |
 | `StageGuardService` | M2 | evaluates §10.3 transition guards (single owner of the matrix) |
 | `DuplicateService` | M3 | match rules + confidence (FR-020) |
 | `ScoringService` | M4 | explainable lead score + hot rules (FR-011/031) |

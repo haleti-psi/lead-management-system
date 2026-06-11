@@ -17,8 +17,8 @@ security:
 # ---- FR coverage map (every FR has >=1 entry; cross-cutting/internal FRs noted) ----
 x-fr-coverage:
   FR-001: "POST /auth/login, POST /auth/mfa, POST /auth/refresh, POST /auth/reset"
-  FR-002: "cross-cutting: AbacGuard + EntitlementService on every protected operation"
-  FR-003: "POST /admin/break-glass, POST /admin/break-glass/{id}/approve"
+  FR-002: "cross-cutting: AbacGuard + EntitlementService on every protected operation; POST /audit/unmask"
+  FR-003: "POST /admin/break-glass, POST /admin/break-glass/{id}/approve, POST /admin/break-glass/{id}/revoke"
   FR-010: "POST /leads, POST /leads/import, POST /public/leads"
   FR-011: "POST /leads, PATCH /leads/{id} (scoring at capture/update)"
   FR-020: "POST /leads/{id}/duplicate-check"
@@ -28,7 +28,7 @@ x-fr-coverage:
   FR-040: "GET/POST/PATCH /admin/products"
   FR-041: "GET /admin/products (seeded 7 products)"
   FR-042: "GET/POST /admin/schemes"
-  FR-050: "GET /leads, GET/POST /saved-views"
+  FR-050: "GET /leads (+q search), POST /leads/bulk-action, GET/POST /saved-views"
   FR-051: "GET /leads/{id}"
   FR-052: "PATCH /leads/{id}/stage"
   FR-053: "GET /dashboard"
@@ -91,6 +91,8 @@ paths:
     post: { summary: "Request break-glass grant (DPO/ADMIN)", operationId: breakGlassRequest, tags: [Admin], x-frs: [FR-003], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' } } }
   /admin/break-glass/{id}/approve:
     post: { summary: "Approve break-glass grant (four-eyes)", operationId: breakGlassApprove, tags: [Admin], x-frs: [FR-003], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /admin/break-glass/{id}/revoke:
+    post: { summary: "Revoke a break-glass grant early", operationId: breakGlassRevoke, tags: [Admin], x-frs: [FR-003], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "404": { $ref: '#/components/responses/NotFound' } } }
 
   # ---------- M2/M3 Capture, Workspace, Identity resolution ----------
   /leads:
@@ -102,6 +104,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/Limit' }
+        - { name: q, in: query, required: false, schema: { type: string }, description: "free-text search: name/mobile/lead_code/masked-PAN/partner/GSTIN/LOS-app-id" }
         - { name: filter, in: query, required: false, schema: { type: object, additionalProperties: true } }
         - { name: sort, in: query, required: false, schema: { type: string } }
       responses:
@@ -166,6 +169,8 @@ paths:
     post: { summary: "Merge duplicate into master (BM/SM)", operationId: mergeLead, tags: [Leads], x-frs: [FR-021], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
   /leads/{id}/reassign:
     post: { summary: "Reassign owner (reason, audited)", operationId: reassignLead, tags: [Leads], x-frs: [FR-030], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /leads/bulk-action:
+    post: { summary: "Bulk action over scoped leads (reassign/stage/tag); one audit per lead", operationId: leadsBulkAction, tags: [Leads], x-frs: [FR-050], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
   /saved-views:
     get: { summary: "List saved views", operationId: listSavedViews, tags: [Workspace], x-frs: [FR-050], responses: { "200": { $ref: '#/components/responses/Ok' } } }
     post: { summary: "Create saved view", operationId: createSavedView, tags: [Workspace], x-frs: [FR-050], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' } } }
@@ -283,6 +288,8 @@ paths:
     get: { summary: "Export job status/artefact", operationId: getExport, tags: [Reports], x-frs: [FR-122], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
   /audit:
     get: { summary: "Audit explorer (DPO/ADMIN; integrity-verified)", operationId: searchAudit, tags: [Reports], x-frs: [FR-123], parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /audit/unmask:
+    post: { summary: "Privileged unmask of a PII field (DPO/ADMIN; reason + audited)", operationId: auditUnmask, tags: [Reports], x-frs: [FR-002, FR-003], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' } } }
 
   # ---------- M14 Administration ----------
   /admin/users:

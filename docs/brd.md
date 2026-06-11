@@ -1,6 +1,6 @@
 # Lead Management System for NBFCs in India — Business Requirements Document
 
-**Version:** 5.2
+**Version:** 5.3
 **Document type:** Business Requirements Document (BRD) / AI-buildable build contract
 **Product/System:** Lead Management System (LMS) for NBFC originations and pre-origination sales
 **Market focus:** Indian NBFCs across asset finance, mortgage-backed lending, secured business lending, and branch/DSA/dealer-led distribution
@@ -88,6 +88,8 @@ LOS boundary, omnichannel/partner positioning, consent-first design, configurabl
 > **v5.1 (2026-06-08) — Gate-A remediation.** Added three previously-referenced-but-undefined entities to §5: `StageHistory` (§5.2.43, a first-class stage-transition read-model now backing §12 funnel/TAT and FR-052/053/120/121, and supplying `from_stage` for the `rejected → prior active` reopen), `Note` (§5.2.44, FR-051), and `ImportJob` (§5.2.45, FR-010). Wired `StageHistory` into the §10.3 transition (written in the same transaction as `AuditLog` + `EventOutbox`) and §12.5/§12.6 reporting. Added glossary terms and open decision OD-17 (India messaging registration). FRs affected: FR-010, FR-051, FR-052, FR-053, FR-120, FR-121. No enum, API, or error-code changes. Also (post Gate-A re-run) added a §3.1 role-alias note (Product Ops / Sales Ops / IT → ADMIN; approver/checker, management, internal, system) and six glossary terms (UTM, QR lead form, geotag, missed-call capture, circuit breaker, round-robin) to close the remaining Gate-A WARNs.
 >
 > **v5.2 (2026-06-08) — Stage-3 architecture follow-up.** Added the `BusinessCalendar` entity (§5.2.46) as the single business-hours/holiday source for SLA/TAT timers — resolves the council "no business-calendar" blind spot and architecture ADR-6. Owner M14, consumed by the M11 SLA engine (FR-104). Folded into the initial data-model schema (pre-deployment) and re-validated by DB load; Gate B remains satisfied. FRs affected: FR-104 (and §12 business-hours metrics). No enum, API, or error-code changes.
+>
+> **v5.3 (2026-06-09) — Stage-6 LLD follow-up.** Closed contract/schema gaps the per-FR LLDs surfaced (see `docs/lld/AMBIGUITIES.md` + `docs/lld/CORRECTIONS.md`). **Schema (§5):** `grant_status` += `pending` (FR-003 break-glass two-step), `event_code` += `DUPLICATE_FLAGGED` (FR-020), `audit_action` += `abac_deny` (FR-002), `User.totp_secret_enc` (FR-001 MFA). **Contracts:** added endpoints `POST /leads/bulk-action` (FR-050), `POST /admin/break-glass/{id}/revoke` (FR-003), `POST /audit/unmask` (FR-002/003), `GET /leads ?q`; env vars `BREAK_GLASS_MAX_WINDOW_HOURS`, `MERGE_UNMERGE_WINDOW_HOURS`; pinned `AuditAppender.append`/`OutboxService.emit` signatures + added `LeadService.bulkReassign` and `CaptchaService` to shared-utilities. Folded into the initial schema (pre-deployment) and re-validated by DB load (`LOAD_EXIT=0`) + YAML parse. Business/legal seed decisions (scoring weights D1–D3, vendor selection OD-08/17, consent-bootstrap OD-06) remain open by design — config/sign-off before go-live, not blockers for code generation. FRs affected: FR-001, FR-002, FR-003, FR-010, FR-020, FR-021, FR-052, FR-071, FR-081, FR-130, FR-140.
 
 ---
 
@@ -479,6 +481,7 @@ This is the single canonical source of truth for every table. FR LLDs (§6) refe
 | full_name | VARCHAR(150) | N | | |
 | mobile | VARCHAR(10) | Y | `^[6-9]\d{9}$` | |
 | password_hash | VARCHAR(255) | Y | argon2/bcrypt; null for SSO/PARTNER-OTP | never logged |
+| totp_secret_enc | VARCHAR(255) | Y | app-layer encrypted; null until MFA enrolled | MFA (FR-001); never logged |
 | role_id | UUID | N | FK → Role | primary role |
 | branch_id | UUID | Y | FK → Branch | scope attr |
 | team_id | UUID | Y | FK → Team | |
@@ -1376,7 +1379,7 @@ The single source of truth for controlled values. No FR may define enum values l
 | data_scope | O, T, B, R, A, P, C, M, X |
 | capability | create_lead, view_lead, edit_lead, upload_doc, verify_doc, kyc_signoff, move_stage, hand_off, allocate, bulk_action, customer_comm, reports, export, consent_ledger, audit_trail, user_mgmt, configuration, break_glass |
 | user_status | active, inactive, locked |
-| grant_status | active, expired, revoked |
+| grant_status | pending, active, expired, revoked |
 | lead_stage | captured, consent_pending, assigned, first_contact_pending, contacted, qualified, documents_pending, kyc_in_progress, eligibility_requested, ready_for_handoff, handed_off, rejected, dormant |
 | priority | low, normal, high |
 | creation_channel | manual, bulk, api, qr, partner, website, telecalling, missed_call |
@@ -1439,8 +1442,8 @@ The single source of truth for controlled values. No FR may define enum values l
 | subject_type | user, customer |
 | customer_type | individual, business |
 | language | English, Hindi, Marathi, Tamil, Telugu, Kannada, Gujarati, Bengali |
-| event_code | LEAD_CREATED, LEAD_ASSIGNED, HOT_LEAD, FIRST_CONTACT_DUE, FIRST_CONTACT_BREACH, DOC_REQUEST, DOC_UPLOADED, DOC_MISMATCH, CONSENT_PENDING, CONSENT_WITHDRAWN, KYC_EXCEPTION, ELIGIBILITY_RECEIVED, HANDOFF_READY, HANDOFF_FAILED, LEAD_HANDED_OFF, LEAD_STAGE_CHANGED, GRIEVANCE_CREATED, DATA_RIGHT_REQUEST, EXPORT_COMPLETED, CONFIG_CHANGED |
-| audit_action | login, logout, login_failed, mfa_failed, lead_create, lead_update, lead_merge, lead_override, attribution_change, consent_grant, consent_withdraw, consent_expire, doc_upload, doc_view, doc_download, doc_verify, doc_waive, doc_delete, kyc_request, kyc_response, kyc_exception, stage_transition, rejection, reopen, nurture, allocate, reassign, link_create, link_open, link_revoke, comm_send, eligibility_request, handoff_attempt, handoff_success, handoff_failure, export_generate, export_download, config_change, user_change, role_change, break_glass_access |
+| event_code | LEAD_CREATED, LEAD_ASSIGNED, HOT_LEAD, FIRST_CONTACT_DUE, FIRST_CONTACT_BREACH, DOC_REQUEST, DOC_UPLOADED, DOC_MISMATCH, CONSENT_PENDING, CONSENT_WITHDRAWN, KYC_EXCEPTION, ELIGIBILITY_RECEIVED, HANDOFF_READY, HANDOFF_FAILED, LEAD_HANDED_OFF, LEAD_STAGE_CHANGED, GRIEVANCE_CREATED, DATA_RIGHT_REQUEST, EXPORT_COMPLETED, CONFIG_CHANGED, DUPLICATE_FLAGGED |
+| audit_action | login, logout, login_failed, mfa_failed, lead_create, lead_update, lead_merge, lead_override, attribution_change, consent_grant, consent_withdraw, consent_expire, doc_upload, doc_view, doc_download, doc_verify, doc_waive, doc_delete, kyc_request, kyc_response, kyc_exception, stage_transition, rejection, reopen, nurture, allocate, reassign, link_create, link_open, link_revoke, comm_send, eligibility_request, handoff_attempt, handoff_success, handoff_failure, export_generate, export_download, config_change, user_change, role_change, break_glass_access, abac_deny |
 
 ### 5.6 Data-integrity rules
 

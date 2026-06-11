@@ -1,30 +1,30 @@
-﻿-- Flyway / Cloud SQL migration
+-- Flyway / Cloud SQL migration
 -- V1__initial_schema.sql
--- Created: 2026-06-08
--- Generated from docs/brd.md (BRD v5.2). Identical DDL to ../schema.sql.
+-- Created: 2026-06-08 (amended v5.3 2026-06-09)
+-- Generated from docs/brd.md. Identical DDL to ../schema.sql.
 
 -- =============================================================
--- Lead Management System for NBFCs (India) â€” PostgreSQL Schema
--- Generated from: docs/brd.md (BRD v5.1, Gate A PASS) â€” Â§5 Holistic Data Model
+-- Lead Management System for NBFCs (India) — PostgreSQL Schema
+-- Generated from: docs/brd.md (BRD v5.1, Gate A PASS) — §5 Holistic Data Model
 -- Target: PostgreSQL 15+ / Google Cloud SQL
 -- Generated: 2026-06-08
--- Auth model: application-level RBAC/ABAC (NestJS EntitlementService, Â§4.7) â€” NOT Postgres RLS.
--- Conventions (Â§5.1): every business table has org_id, created_at, updated_at, created_by, updated_by;
---   mutable lead/config rows carry version (optimistic lock). All enums come from Â§5.5.
+-- Auth model: application-level RBAC/ABAC (NestJS EntitlementService, §4.7) — NOT Postgres RLS.
+-- Conventions (§5.1): every business table has org_id, created_at, updated_at, created_by, updated_by;
+--   mutable lead/config rows carry version (optimistic lock). All enums come from §5.5.
 -- =============================================================
 
--- â”€â”€ 0. Extensions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+-- ── 0. Extensions ─────────────────────────────────────────────
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";    -- gen_random_uuid()
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";     -- fuzzy name match for duplicate detection (FR-020)
 CREATE EXTENSION IF NOT EXISTS "btree_gin";   -- composite/JSONB GIN indexes
 
--- â”€â”€ 1. Custom Types / Enumerations (Â§5.5 catalog) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+-- ── 1. Custom Types / Enumerations (§5.5 catalog) ─────────────
 -- Identity & access
 CREATE TYPE role_code            AS ENUM ('RM','BM','SM','HEAD','KYC','DPO','PARTNER','ADMIN','CUSTOMER');
 CREATE TYPE data_scope           AS ENUM ('O','T','B','R','A','P','C','M','X');
 CREATE TYPE capability           AS ENUM ('create_lead','view_lead','edit_lead','upload_doc','verify_doc','kyc_signoff','move_stage','hand_off','allocate','bulk_action','customer_comm','reports','export','consent_ledger','audit_trail','user_mgmt','configuration','break_glass');
 CREATE TYPE user_status          AS ENUM ('active','inactive','locked');
-CREATE TYPE grant_status         AS ENUM ('active','expired','revoked');
+CREATE TYPE grant_status         AS ENUM ('pending','active','expired','revoked');
 
 -- Lead lifecycle & capture
 CREATE TYPE lead_stage           AS ENUM ('captured','consent_pending','assigned','first_contact_pending','contacted','qualified','documents_pending','kyc_in_progress','eligibility_requested','ready_for_handoff','handed_off','rejected','dormant');
@@ -40,7 +40,7 @@ CREATE TYPE dup_action           AS ENUM ('blocked','warned','queued','linked','
 CREATE TYPE dup_record_status    AS ENUM ('open','resolved');
 
 -- Product / config
-CREATE TYPE product_code         AS ENUM ('CV','CAR','TRACTOR','CE','TW','SBL','HRM');   -- Â§5.5 "product"
+CREATE TYPE product_code         AS ENUM ('CV','CAR','TRACTOR','CE','TW','SBL','HRM');   -- §5.5 "product"
 CREATE TYPE pan_timing           AS ENUM ('at_capture','before_kyc','before_handoff');
 CREATE TYPE config_status        AS ENUM ('draft','active','retired');
 CREATE TYPE validation_status    AS ENUM ('incomplete','valid','invalid');
@@ -53,7 +53,7 @@ CREATE TYPE allocation_method    AS ENUM ('round_robin','capacity','specialist',
 CREATE TYPE partner_type         AS ENUM ('DSA','Dealer','Connector','OEM','Aggregator','Referral');
 CREATE TYPE partner_status       AS ENUM ('active','suspended','expired');
 CREATE TYPE risk_band            AS ENUM ('low','medium','high');
-CREATE TYPE lead_source          AS ENUM ('DSA','Dealer','Branch','Website','Referral','Telecalling','Field');  -- Â§5.5 "source"
+CREATE TYPE lead_source          AS ENUM ('DSA','Dealer','Branch','Website','Referral','Telecalling','Field');  -- §5.5 "source"
 CREATE TYPE attribution_status   AS ENUM ('original','reassigned','merged_into');
 
 -- Customer self-service
@@ -73,7 +73,7 @@ CREATE TYPE kyc_exception        AS ENUM ('pan_mismatch','name_mismatch','expire
 CREATE TYPE task_type            AS ENUM ('call','visit','doc_request','kyc_appt','dealer_followup','callback','approval','handoff_retry','nurture');
 CREATE TYPE task_status          AS ENUM ('open','in_progress','done','overdue','cancelled');
 CREATE TYPE disposition          AS ENUM ('connected','no_answer','wrong_number','not_interested','visited','rescheduled','callback_requested','docs_promised');
-CREATE TYPE comm_channel         AS ENUM ('in_app','email','sms','whatsapp');   -- Â§5.5 "channel"
+CREATE TYPE comm_channel         AS ENUM ('in_app','email','sms','whatsapp');   -- §5.5 "channel"
 CREATE TYPE comm_category        AS ENUM ('transactional','marketing');
 CREATE TYPE delivery_status      AS ENUM ('queued','sent','delivered','failed');
 CREATE TYPE subject_type         AS ENUM ('user','customer');
@@ -105,18 +105,18 @@ CREATE TYPE rejection_primary    AS ENUM ('no_response','not_interested','duplic
 CREATE TYPE sla_target           AS ENUM ('first_contact','document','kyc_exception','grievance','handoff_retry');
 
 -- Integration & events
-CREATE TYPE integration_kind     AS ENUM ('los_eligibility','los_handoff','los_status','pan','ckyc','digilocker','aadhaar','vcip','comm','cti','aa','gst','asset','bureau_via_los','campaign');  -- Â§5.5 "integration"
-CREATE TYPE integration_direction AS ENUM ('outbound','inbound');   -- Â§5.5 "direction"
+CREATE TYPE integration_kind     AS ENUM ('los_eligibility','los_handoff','los_status','pan','ckyc','digilocker','aadhaar','vcip','comm','cti','aa','gst','asset','bureau_via_los','campaign');  -- §5.5 "integration"
+CREATE TYPE integration_direction AS ENUM ('outbound','inbound');   -- §5.5 "direction"
 CREATE TYPE integration_status   AS ENUM ('pending','success','failed','retrying');
 CREATE TYPE outbox_status        AS ENUM ('pending','published','failed');
 
 -- Misc reference
 CREATE TYPE customer_type        AS ENUM ('individual','business');
-CREATE TYPE lang                 AS ENUM ('English','Hindi','Marathi','Tamil','Telugu','Kannada','Gujarati','Bengali');  -- Â§5.5 "language"
-CREATE TYPE event_code           AS ENUM ('LEAD_CREATED','LEAD_ASSIGNED','HOT_LEAD','FIRST_CONTACT_DUE','FIRST_CONTACT_BREACH','DOC_REQUEST','DOC_UPLOADED','DOC_MISMATCH','CONSENT_PENDING','CONSENT_WITHDRAWN','KYC_EXCEPTION','ELIGIBILITY_RECEIVED','HANDOFF_READY','HANDOFF_FAILED','LEAD_HANDED_OFF','LEAD_STAGE_CHANGED','GRIEVANCE_CREATED','DATA_RIGHT_REQUEST','EXPORT_COMPLETED','CONFIG_CHANGED');
-CREATE TYPE audit_action         AS ENUM ('login','logout','login_failed','mfa_failed','lead_create','lead_update','lead_merge','lead_override','attribution_change','consent_grant','consent_withdraw','consent_expire','doc_upload','doc_view','doc_download','doc_verify','doc_waive','doc_delete','kyc_request','kyc_response','kyc_exception','stage_transition','rejection','reopen','nurture','allocate','reassign','link_create','link_open','link_revoke','comm_send','eligibility_request','handoff_attempt','handoff_success','handoff_failure','export_generate','export_download','config_change','user_change','role_change','break_glass_access');
+CREATE TYPE lang                 AS ENUM ('English','Hindi','Marathi','Tamil','Telugu','Kannada','Gujarati','Bengali');  -- §5.5 "language"
+CREATE TYPE event_code           AS ENUM ('LEAD_CREATED','LEAD_ASSIGNED','HOT_LEAD','FIRST_CONTACT_DUE','FIRST_CONTACT_BREACH','DOC_REQUEST','DOC_UPLOADED','DOC_MISMATCH','CONSENT_PENDING','CONSENT_WITHDRAWN','KYC_EXCEPTION','ELIGIBILITY_RECEIVED','HANDOFF_READY','HANDOFF_FAILED','LEAD_HANDED_OFF','LEAD_STAGE_CHANGED','GRIEVANCE_CREATED','DATA_RIGHT_REQUEST','EXPORT_COMPLETED','CONFIG_CHANGED','DUPLICATE_FLAGGED');
+CREATE TYPE audit_action         AS ENUM ('login','logout','login_failed','mfa_failed','lead_create','lead_update','lead_merge','lead_override','attribution_change','consent_grant','consent_withdraw','consent_expire','doc_upload','doc_view','doc_download','doc_verify','doc_waive','doc_delete','kyc_request','kyc_response','kyc_exception','stage_transition','rejection','reopen','nurture','allocate','reassign','link_create','link_open','link_revoke','comm_send','eligibility_request','handoff_attempt','handoff_success','handoff_failure','export_generate','export_download','config_change','user_change','role_change','break_glass_access','abac_deny');
 
--- â”€â”€ 2. Shared trigger function â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+-- ── 2. Shared trigger function ────────────────────────────────
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
@@ -129,12 +129,12 @@ $$;
 --   System actor user_id : 00000000-0000-0000-0000-000000000000
 --   Default org_id       : 00000000-0000-0000-0000-000000000001
 
--- â”€â”€ 3. Tables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+-- ── 3. Tables ─────────────────────────────────────────────────
 -- Convention: org_id and audit-column (created_by/updated_by) FKs are inline (auto-named) to keep a
 -- 45-table schema readable; primary business-relationship FKs are explicitly named fk_<table>_<column>.
 -- Audit FKs are DEFERRABLE INITIALLY DEFERRED to permit the BRD's atomic multi-entity writes and seed bootstrap.
 
--- 3.0 orgs â€” single-tenant seam (Â§4.3 reserved org_id). Infra table; not a BRD entity.
+-- 3.0 orgs — single-tenant seam (§4.3 reserved org_id). Infra table; not a BRD entity.
 CREATE TABLE orgs (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   code        VARCHAR(40) NOT NULL UNIQUE,
@@ -143,7 +143,7 @@ CREATE TABLE orgs (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 3.1 regions (M1) â€” source_fr: FR-130/131
+-- 3.1 regions (M1) — source_fr: FR-130/131
 CREATE TABLE regions (
   region_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -156,7 +156,7 @@ CREATE TABLE regions (
   CONSTRAINT uq_regions_code UNIQUE (org_id, code)
 );
 
--- 3.2 roles (M1) â€” source_fr: FR-130
+-- 3.2 roles (M1) — source_fr: FR-130
 CREATE TABLE roles (
   role_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id        UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -171,7 +171,7 @@ CREATE TABLE roles (
   CONSTRAINT uq_roles_code UNIQUE (org_id, code)
 );
 
--- 3.3 branches (M1) â€” source_fr: FR-130/131
+-- 3.3 branches (M1) — source_fr: FR-130/131
 CREATE TABLE branches (
   branch_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -189,7 +189,7 @@ CREATE TABLE branches (
   CONSTRAINT fk_branches_region_id FOREIGN KEY (region_id) REFERENCES regions(region_id) ON DELETE RESTRICT
 );
 
--- 3.4 users (M1) â€” source_fr: FR-001/002/003/130
+-- 3.4 users (M1) — source_fr: FR-001/002/003/130
 CREATE TABLE users (
   user_id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id               UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -198,6 +198,7 @@ CREATE TABLE users (
   full_name            VARCHAR(150) NOT NULL,
   mobile               VARCHAR(10),
   password_hash        VARCHAR(255),
+  totp_secret_enc      VARCHAR(255),
   role_id              UUID NOT NULL,
   branch_id            UUID,
   team_id              UUID,
@@ -229,7 +230,7 @@ ALTER TABLE roles    ADD CONSTRAINT fk_roles_created_by    FOREIGN KEY (created_
 ALTER TABLE branches ADD CONSTRAINT fk_branches_created_by FOREIGN KEY (created_by) REFERENCES users(user_id) DEFERRABLE INITIALLY DEFERRED,
                      ADD CONSTRAINT fk_branches_updated_by FOREIGN KEY (updated_by) REFERENCES users(user_id) DEFERRABLE INITIALLY DEFERRED;
 
--- 3.5 role_permissions (M1) â€” source_fr: FR-002/130
+-- 3.5 role_permissions (M1) — source_fr: FR-002/130
 CREATE TABLE role_permissions (
   role_permission_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -245,7 +246,7 @@ CREATE TABLE role_permissions (
   CONSTRAINT fk_role_permissions_role_id FOREIGN KEY (role_id) REFERENCES roles(role_id) ON DELETE CASCADE
 );
 
--- 3.6 teams (M1) â€” source_fr: FR-130
+-- 3.6 teams (M1) — source_fr: FR-130
 CREATE TABLE teams (
   team_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -264,7 +265,7 @@ CREATE TABLE teams (
 -- Resolve users -> teams cycle
 ALTER TABLE users ADD CONSTRAINT fk_users_team_id FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE SET NULL;
 
--- 3.7 partners (M10) â€” source_fr: FR-090/091/092
+-- 3.7 partners (M10) — source_fr: FR-090/091/092
 CREATE TABLE partners (
   partner_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id         UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -295,7 +296,7 @@ CREATE TABLE partners (
 -- Resolve users -> partners cycle (PARTNER users)
 ALTER TABLE users ADD CONSTRAINT fk_users_partner_id FOREIGN KEY (partner_id) REFERENCES partners(partner_id) ON DELETE SET NULL;
 
--- 3.8 break_glass_grants (M1) â€” source_fr: FR-003
+-- 3.8 break_glass_grants (M1) — source_fr: FR-003
 CREATE TABLE break_glass_grants (
   grant_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -318,7 +319,7 @@ CREATE TABLE break_glass_grants (
   CONSTRAINT fk_bgg_scope_type CHECK (scope_type IN ('lead','branch','all'))
 );
 
--- 3.9 customer_profiles (M2) â€” source_fr: FR-010/051/062/112
+-- 3.9 customer_profiles (M2) — source_fr: FR-010/051/062/112
 CREATE TABLE customer_profiles (
   customer_profile_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id               UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -337,7 +338,7 @@ CREATE TABLE customer_profiles (
   CONSTRAINT ck_customer_profiles_mobile CHECK (primary_mobile ~ '^[6-9][0-9]{9}$')
 );
 
--- 3.10 lead_identities (M2) â€” source_fr: FR-010/020/071. PII; raw Aadhaar never stored (Â§5.6.9)
+-- 3.10 lead_identities (M2) — source_fr: FR-010/020/071. PII; raw Aadhaar never stored (§5.6.9)
 CREATE TABLE lead_identities (
   lead_identity_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id             UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -361,7 +362,7 @@ CREATE TABLE lead_identities (
   CONSTRAINT ck_lead_identities_gstin CHECK (gstin IS NULL OR gstin ~ '^[0-9A-Z]{15}$')
 );
 
--- 3.11 product_configs (M5) â€” source_fr: FR-040/041/132
+-- 3.11 product_configs (M5) — source_fr: FR-040/041/132
 CREATE TABLE product_configs (
   product_config_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id             UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -381,7 +382,7 @@ CREATE TABLE product_configs (
   CONSTRAINT uq_product_configs_version UNIQUE (org_id, product_code, version)
 );
 
--- 3.12 schemes (M5) â€” source_fr: FR-042/131
+-- 3.12 schemes (M5) — source_fr: FR-042/131
 CREATE TABLE schemes (
   scheme_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id          UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -400,7 +401,7 @@ CREATE TABLE schemes (
   CONSTRAINT ck_schemes_validity CHECK (valid_to >= valid_from)
 );
 
--- 3.13 rejection_reasons (M14) â€” source_fr: FR-131
+-- 3.13 rejection_reasons (M14) — source_fr: FR-131
 CREATE TABLE rejection_reasons (
   rejection_reason_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id           UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -414,7 +415,7 @@ CREATE TABLE rejection_reasons (
   updated_by       UUID NOT NULL REFERENCES users(user_id) DEFERRABLE INITIALLY DEFERRED
 );
 
--- 3.14 allocation_rules (M4) â€” source_fr: FR-030/131
+-- 3.14 allocation_rules (M4) — source_fr: FR-030/131
 CREATE TABLE allocation_rules (
   allocation_rule_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id         UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -432,7 +433,7 @@ CREATE TABLE allocation_rules (
   CONSTRAINT uq_allocation_rules_order UNIQUE (org_id, priority_order)
 );
 
--- 3.15 sla_policies (M14) â€” source_fr: FR-104/131
+-- 3.15 sla_policies (M14) — source_fr: FR-104/131
 CREATE TABLE sla_policies (
   sla_policy_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id            UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -449,7 +450,7 @@ CREATE TABLE sla_policies (
   CONSTRAINT ck_sla_threshold CHECK (threshold_minutes > 0)
 );
 
--- 3.15b business_calendars (M14) â€” source_fr: FR-104 (SLA/TAT business-time source); resolves ADR-6 / DATA_MODEL #10
+-- 3.15b business_calendars (M14) — source_fr: FR-104 (SLA/TAT business-time source); resolves ADR-6 / DATA_MODEL #10
 CREATE TABLE business_calendars (
   business_calendar_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id        UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -471,7 +472,7 @@ CREATE TABLE business_calendars (
   CONSTRAINT fk_business_calendars_region_id FOREIGN KEY (region_id) REFERENCES regions(region_id) ON DELETE SET NULL
 );
 
--- 3.16 communication_templates (M11) â€” source_fr: FR-101/131
+-- 3.16 communication_templates (M11) — source_fr: FR-101/131
 CREATE TABLE communication_templates (
   template_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id       UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -490,7 +491,7 @@ CREATE TABLE communication_templates (
   CONSTRAINT uq_comm_templates UNIQUE (org_id, code, channel, language, version)
 );
 
--- 3.17 dla_registry (M12) â€” source_fr: FR-113
+-- 3.17 dla_registry (M12) — source_fr: FR-113
 CREATE TABLE dla_registry (
   dla_registry_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id            UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -509,7 +510,7 @@ CREATE TABLE dla_registry (
   updated_by        UUID NOT NULL REFERENCES users(user_id) DEFERRABLE INITIALLY DEFERRED
 );
 
--- 3.18 retention_policies (M12) â€” source_fr: FR-115/131
+-- 3.18 retention_policies (M12) — source_fr: FR-115/131
 CREATE TABLE retention_policies (
   retention_policy_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id        UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -526,7 +527,7 @@ CREATE TABLE retention_policies (
   CONSTRAINT ck_retention_days CHECK (retain_days >= 0)
 );
 
--- 3.19 webhook_subscriptions (M15) â€” source_fr: FR-140
+-- 3.19 webhook_subscriptions (M15) — source_fr: FR-140
 CREATE TABLE webhook_subscriptions (
   webhook_subscription_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -542,7 +543,7 @@ CREATE TABLE webhook_subscriptions (
   CONSTRAINT ck_webhook_https CHECK (target_url LIKE 'https://%')
 );
 
--- 3.20 source_attributions (M2) â€” source_fr: FR-010/021
+-- 3.20 source_attributions (M2) — source_fr: FR-010/021
 CREATE TABLE source_attributions (
   source_attribution_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id             UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -561,7 +562,7 @@ CREATE TABLE source_attributions (
   CONSTRAINT ck_source_attr_partner CHECK (source NOT IN ('DSA','Dealer') OR partner_id IS NOT NULL)
 );
 
--- 3.21 leads (M2) â€” central entity â€” source_fr: FR-010..082 (see Â§5.4)
+-- 3.21 leads (M2) — central entity — source_fr: FR-010..082 (see §5.4)
 -- Design note: product_code (denormalized enum, fast filter/report) + product_config_id (FK to pinned
 -- version row) resolve the BRD product_id/product_config_version ambiguity flagged by the council.
 CREATE TABLE leads (
@@ -615,7 +616,7 @@ CREATE TABLE leads (
   CONSTRAINT fk_leads_rejection_reason_id FOREIGN KEY (rejection_reason_id) REFERENCES rejection_reasons(rejection_reason_id) ON DELETE SET NULL
 );
 
--- 3.22 integration_logs (M15) â€” source_fr: FR-140 (created before kyc_verifications which reference it)
+-- 3.22 integration_logs (M15) — source_fr: FR-140 (created before kyc_verifications which reference it)
 CREATE TABLE integration_logs (
   integration_log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id          UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -636,9 +637,9 @@ CREATE TABLE integration_logs (
   updated_by      UUID NOT NULL REFERENCES users(user_id) DEFERRABLE INITIALLY DEFERRED,
   CONSTRAINT fk_integration_logs_lead_id FOREIGN KEY (lead_id) REFERENCES leads(lead_id) ON DELETE SET NULL
 );
--- Idempotency uniqueness (where a key is present) enforced via partial unique index in Â§4.
+-- Idempotency uniqueness (where a key is present) enforced via partial unique index in §4.
 
--- 3.23 lead_product_details (M5) â€” source_fr: FR-040/051/080
+-- 3.23 lead_product_details (M5) — source_fr: FR-040/051/080
 CREATE TABLE lead_product_details (
   lead_product_detail_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id            UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -655,7 +656,7 @@ CREATE TABLE lead_product_details (
   CONSTRAINT fk_lpd_product_config_id FOREIGN KEY (product_config_id) REFERENCES product_configs(product_config_id) ON DELETE RESTRICT
 );
 
--- 3.24 duplicate_matches (M3) â€” Lead<->Lead junction â€” source_fr: FR-020/021
+-- 3.24 duplicate_matches (M3) — Lead<->Lead junction — source_fr: FR-020/021
 CREATE TABLE duplicate_matches (
   duplicate_match_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id          UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -678,7 +679,7 @@ CREATE TABLE duplicate_matches (
   CONSTRAINT fk_dup_action_by FOREIGN KEY (action_by) REFERENCES users(user_id) ON DELETE SET NULL
 );
 
--- 3.25 documents (M8) â€” source_fr: FR-070/060
+-- 3.25 documents (M8) — source_fr: FR-070/060
 CREATE TABLE documents (
   document_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id           UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -705,7 +706,7 @@ CREATE TABLE documents (
   CONSTRAINT fk_documents_verified_by FOREIGN KEY (verified_by) REFERENCES users(user_id) ON DELETE SET NULL
 );
 
--- 3.26 customer_links (M7) â€” source_fr: FR-060/062
+-- 3.26 customer_links (M7) — source_fr: FR-060/062
 CREATE TABLE customer_links (
   customer_link_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id          UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -726,7 +727,7 @@ CREATE TABLE customer_links (
   CONSTRAINT fk_customer_links_revoked_by FOREIGN KEY (revoked_by) REFERENCES users(user_id) ON DELETE SET NULL
 );
 
--- 3.27 kyc_verifications (M8) â€” source_fr: FR-071/072. masked_response only; no raw Aadhaar (Â§5.6.9)
+-- 3.27 kyc_verifications (M8) — source_fr: FR-071/072. masked_response only; no raw Aadhaar (§5.6.9)
 CREATE TABLE kyc_verifications (
   kyc_verification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id              UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -750,7 +751,7 @@ CREATE TABLE kyc_verifications (
   CONSTRAINT fk_kyc_integration_log_id FOREIGN KEY (integration_log_id) REFERENCES integration_logs(integration_log_id) ON DELETE SET NULL
 );
 
--- 3.28 tasks (M11) â€” source_fr: FR-100/102
+-- 3.28 tasks (M11) — source_fr: FR-100/102
 CREATE TABLE tasks (
   task_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id         UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -774,7 +775,7 @@ CREATE TABLE tasks (
   CONSTRAINT fk_tasks_sla_policy_id FOREIGN KEY (sla_policy_id) REFERENCES sla_policies(sla_policy_id) ON DELETE SET NULL
 );
 
--- 3.29 consent_records (M12) â€” APPEND-ONLY (Â§5.6.3) â€” source_fr: FR-110
+-- 3.29 consent_records (M12) — APPEND-ONLY (§5.6.3) — source_fr: FR-110
 CREATE TABLE consent_records (
   consent_id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id               UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -798,7 +799,7 @@ CREATE TABLE consent_records (
   CONSTRAINT fk_consent_superseded_by FOREIGN KEY (superseded_by) REFERENCES consent_records(consent_id) ON DELETE SET NULL
 );
 
--- 3.30 data_sharing_logs (M12) â€” source_fr: FR-080/081/111
+-- 3.30 data_sharing_logs (M12) — source_fr: FR-080/081/111
 CREATE TABLE data_sharing_logs (
   data_sharing_log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id        UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -817,7 +818,7 @@ CREATE TABLE data_sharing_logs (
   CONSTRAINT fk_dsl_consent_id FOREIGN KEY (consent_id) REFERENCES consent_records(consent_id) ON DELETE SET NULL
 );
 
--- 3.31 communication_logs (M11) â€” source_fr: FR-101
+-- 3.31 communication_logs (M11) — source_fr: FR-101
 CREATE TABLE communication_logs (
   communication_log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id         UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -838,7 +839,7 @@ CREATE TABLE communication_logs (
   CONSTRAINT fk_comm_logs_template_id FOREIGN KEY (template_id) REFERENCES communication_templates(template_id) ON DELETE SET NULL
 );
 
--- 3.32 notifications (M11) â€” source_fr: FR-053 + all dispatch
+-- 3.32 notifications (M11) — source_fr: FR-053 + all dispatch
 CREATE TABLE notifications (
   notification_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id             UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -854,7 +855,7 @@ CREATE TABLE notifications (
   CONSTRAINT fk_notifications_lead_id FOREIGN KEY (lead_id) REFERENCES leads(lead_id) ON DELETE CASCADE
 );
 
--- 3.33 notification_preferences (M11) â€” source_fr: FR-103. subject_ref is polymorphic (user|customer); no FK.
+-- 3.33 notification_preferences (M11) — source_fr: FR-103. subject_ref is polymorphic (user|customer); no FK.
 CREATE TABLE notification_preferences (
   notification_preference_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id       UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -870,7 +871,7 @@ CREATE TABLE notification_preferences (
   CONSTRAINT uq_notif_pref UNIQUE (subject_type, subject_ref, channel, purpose)
 );
 
--- 3.34 grievances (M12) â€” source_fr: FR-061/114
+-- 3.34 grievances (M12) — source_fr: FR-061/114
 CREATE TABLE grievances (
   grievance_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id            UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -893,7 +894,7 @@ CREATE TABLE grievances (
   CONSTRAINT fk_grievances_owner_id FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE SET NULL
 );
 
--- 3.35 data_rights_requests (M12) â€” source_fr: FR-112
+-- 3.35 data_rights_requests (M12) — source_fr: FR-112
 CREATE TABLE data_rights_requests (
   data_rights_request_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id              UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -913,7 +914,7 @@ CREATE TABLE data_rights_requests (
   CONSTRAINT fk_drr_owner_id FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE SET NULL
 );
 
--- 3.36 eligibility_snapshots (M9) â€” read-only LOS response â€” source_fr: FR-080
+-- 3.36 eligibility_snapshots (M9) — read-only LOS response — source_fr: FR-080
 CREATE TABLE eligibility_snapshots (
   eligibility_snapshot_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id           UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -933,7 +934,7 @@ CREATE TABLE eligibility_snapshots (
   CONSTRAINT fk_elig_lead_id FOREIGN KEY (lead_id) REFERENCES leads(lead_id) ON DELETE CASCADE
 );
 
--- 3.37 los_application_mirrors (M9) â€” read-only LOS status â€” source_fr: FR-082
+-- 3.37 los_application_mirrors (M9) — read-only LOS status — source_fr: FR-082
 CREATE TABLE los_application_mirrors (
   los_mirror_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id             UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -951,7 +952,7 @@ CREATE TABLE los_application_mirrors (
   CONSTRAINT fk_los_mirror_lead_id FOREIGN KEY (lead_id) REFERENCES leads(lead_id) ON DELETE CASCADE
 );
 
--- 3.38 saved_views (M6) â€” source_fr: FR-050
+-- 3.38 saved_views (M6) — source_fr: FR-050
 CREATE TABLE saved_views (
   saved_view_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -967,7 +968,7 @@ CREATE TABLE saved_views (
   CONSTRAINT fk_saved_views_owner_id FOREIGN KEY (owner_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
--- 3.39 stage_history (M2) â€” APPEND-ONLY reporting read-model â€” source_fr: FR-052 + Â§10.3
+-- 3.39 stage_history (M2) — APPEND-ONLY reporting read-model — source_fr: FR-052 + §10.3
 CREATE TABLE stage_history (
   stage_history_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -983,7 +984,7 @@ CREATE TABLE stage_history (
   CONSTRAINT fk_stage_history_actor_id FOREIGN KEY (actor_id) REFERENCES users(user_id) ON DELETE RESTRICT
 );
 
--- 3.40 notes (M6) â€” source_fr: FR-051
+-- 3.40 notes (M6) — source_fr: FR-051
 CREATE TABLE notes (
   note_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -999,7 +1000,7 @@ CREATE TABLE notes (
   CONSTRAINT fk_notes_author_id FOREIGN KEY (author_id) REFERENCES users(user_id) ON DELETE RESTRICT
 );
 
--- 3.41 import_jobs (M2) â€” source_fr: FR-010
+-- 3.41 import_jobs (M2) — source_fr: FR-010
 CREATE TABLE import_jobs (
   import_job_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id         UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -1015,10 +1016,10 @@ CREATE TABLE import_jobs (
   updated_by     UUID NOT NULL REFERENCES users(user_id) DEFERRABLE INITIALLY DEFERRED
 );
 
--- Realize ImportJob 1->* Lead (bulk-created) relationship (Â§5.3); data-model addition (see DATA_MODEL.md #13)
+-- Realize ImportJob 1->* Lead (bulk-created) relationship (§5.3); data-model addition (see DATA_MODEL.md #13)
 ALTER TABLE leads ADD CONSTRAINT fk_leads_import_job_id FOREIGN KEY (import_job_id) REFERENCES import_jobs(import_job_id) ON DELETE SET NULL;
 
--- 3.42 export_jobs (M13) â€” source_fr: FR-122
+-- 3.42 export_jobs (M13) — source_fr: FR-122
 CREATE TABLE export_jobs (
   export_job_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id        UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -1039,7 +1040,7 @@ CREATE TABLE export_jobs (
   CONSTRAINT fk_export_jobs_approver_id FOREIGN KEY (approver_id) REFERENCES users(user_id) ON DELETE SET NULL
 );
 
--- 3.43 configuration_versions (M14) â€” source_fr: FR-132. config_ref is polymorphic (any config row); no FK.
+-- 3.43 configuration_versions (M14) — source_fr: FR-132. config_ref is polymorphic (any config row); no FK.
 CREATE TABLE configuration_versions (
   configuration_version_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id        UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -1062,7 +1063,7 @@ CREATE TABLE configuration_versions (
   CONSTRAINT fk_config_rollback_ref FOREIGN KEY (rollback_ref) REFERENCES configuration_versions(configuration_version_id) ON DELETE SET NULL
 );
 
--- 3.44 audit_logs (M13) â€” source_fr: FR-123 (+ all FRs append audit events) â€” APPEND-ONLY, hash-chained (Â§5.2.35). entity_id is polymorphic; no FK.
+-- 3.44 audit_logs (M13) — source_fr: FR-123 (+ all FRs append audit events) — APPEND-ONLY, hash-chained (§5.2.35). entity_id is polymorphic; no FK.
 CREATE TABLE audit_logs (
   audit_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id          UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -1082,7 +1083,7 @@ CREATE TABLE audit_logs (
   CONSTRAINT fk_audit_lead_id FOREIGN KEY (lead_id) REFERENCES leads(lead_id) ON DELETE SET NULL
 );
 
--- 3.45 event_outbox (M15) â€” source_fr: FR-141 (+ all state-changing FRs emit events) â€” transactional outbox (Â§5.6.4). aggregate_id polymorphic; no FK.
+-- 3.45 event_outbox (M15) — source_fr: FR-141 (+ all state-changing FRs emit events) — transactional outbox (§5.6.4). aggregate_id polymorphic; no FK.
 CREATE TABLE event_outbox (
   event_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id         UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
@@ -1097,7 +1098,7 @@ CREATE TABLE event_outbox (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- â”€â”€ 4. Indexes (Â§5 index notes + FK/query/partial/GIN) â”€â”€â”€â”€â”€â”€â”€â”€
+-- ── 4. Indexes (§5 index notes + FK/query/partial/GIN) ────────
 -- Identity & access
 CREATE INDEX ix_users_scope            ON users (role_id, branch_id, team_id);
 CREATE INDEX ix_users_partner          ON users (partner_id);
@@ -1212,7 +1213,7 @@ CREATE INDEX ix_config_versions_maker  ON configuration_versions (maker_id);
 CREATE INDEX ix_partners_branch        ON partners (branch_id);
 CREATE INDEX ix_partners_mapped_rm     ON partners (mapped_rm_id);
 
--- â”€â”€ 5. updated_at triggers (one per table) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+-- ── 5. updated_at triggers (one per table) ────────────────────
 CREATE TRIGGER trg_orgs_updated_at BEFORE UPDATE ON orgs FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_regions_updated_at BEFORE UPDATE ON regions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_roles_updated_at BEFORE UPDATE ON roles FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -1257,9 +1258,9 @@ CREATE TRIGGER trg_import_jobs_updated_at BEFORE UPDATE ON import_jobs FOR EACH 
 CREATE TRIGGER trg_export_jobs_updated_at BEFORE UPDATE ON export_jobs FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_configuration_versions_updated_at BEFORE UPDATE ON configuration_versions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_event_outbox_updated_at BEFORE UPDATE ON event_outbox FOR EACH ROW EXECUTE FUNCTION set_updated_at();
--- Append-only tables (consent_records, stage_history, audit_logs): no updated_at trigger by design (INSERT-only, Â§5.6.3).
+-- Append-only tables (consent_records, stage_history, audit_logs): no updated_at trigger by design (INSERT-only, §5.6.3).
 
--- â”€â”€ 6. Seed / bootstrap reference data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+-- ── 6. Seed / bootstrap reference data ────────────────────────
 -- Deferred audit FKs let this bootstrap commit atomically (system user references itself; roles reference system user).
 BEGIN;
 SET CONSTRAINTS ALL DEFERRED;
@@ -1293,10 +1294,9 @@ COMMIT;
 
 -- =============================================================
 -- End of schema. 47 tables (46 BRD entities + orgs seam), 69 enums.
--- Apply downstream: role_permissions seed from Â§3.3, branches/teams/users, product_configs (7, FR-041),
--- sla_policies, rejection_reasons, communication_templates, retention_policies â€” loaded via FR-130/131.
+-- Apply downstream: role_permissions seed from §3.3, branches/teams/users, product_configs (7, FR-041),
+-- sla_policies, rejection_reasons, communication_templates, retention_policies — loaded via FR-130/131.
 -- =============================================================
-
 
 
 

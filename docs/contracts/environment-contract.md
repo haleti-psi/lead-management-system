@@ -38,6 +38,8 @@
 | `DB_POOL_MIN` / `DB_POOL_MAX` | `2` / `10` | Connection pool |
 | `RATE_LIMIT_AUTH` / `_MUTATION` / `_READ` | `10` / `60` / `300` per min | Throttler |
 | `DEFAULT_PAGE_LIMIT` / `MAX_PAGE_LIMIT` | `25` / `100` | Pagination |
+| `BREAK_GLASS_MAX_WINDOW_HOURS` | `48` | Max break-glass grant window (FR-003) |
+| `MERGE_UNMERGE_WINDOW_HOURS` | `24` | Lead unmerge window (FR-021) |
 
 ## Provider variables (production; vendors open per OD-08/OD-17; all calls go through ports/IntegrationGateway)
 | Variable | Required in | Description |

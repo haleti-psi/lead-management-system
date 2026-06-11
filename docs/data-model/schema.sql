@@ -19,7 +19,7 @@ CREATE TYPE role_code            AS ENUM ('RM','BM','SM','HEAD','KYC','DPO','PAR
 CREATE TYPE data_scope           AS ENUM ('O','T','B','R','A','P','C','M','X');
 CREATE TYPE capability           AS ENUM ('create_lead','view_lead','edit_lead','upload_doc','verify_doc','kyc_signoff','move_stage','hand_off','allocate','bulk_action','customer_comm','reports','export','consent_ledger','audit_trail','user_mgmt','configuration','break_glass');
 CREATE TYPE user_status          AS ENUM ('active','inactive','locked');
-CREATE TYPE grant_status         AS ENUM ('active','expired','revoked');
+CREATE TYPE grant_status         AS ENUM ('pending','active','expired','revoked');
 
 -- Lead lifecycle & capture
 CREATE TYPE lead_stage           AS ENUM ('captured','consent_pending','assigned','first_contact_pending','contacted','qualified','documents_pending','kyc_in_progress','eligibility_requested','ready_for_handoff','handed_off','rejected','dormant');
@@ -108,8 +108,8 @@ CREATE TYPE outbox_status        AS ENUM ('pending','published','failed');
 -- Misc reference
 CREATE TYPE customer_type        AS ENUM ('individual','business');
 CREATE TYPE lang                 AS ENUM ('English','Hindi','Marathi','Tamil','Telugu','Kannada','Gujarati','Bengali');  -- §5.5 "language"
-CREATE TYPE event_code           AS ENUM ('LEAD_CREATED','LEAD_ASSIGNED','HOT_LEAD','FIRST_CONTACT_DUE','FIRST_CONTACT_BREACH','DOC_REQUEST','DOC_UPLOADED','DOC_MISMATCH','CONSENT_PENDING','CONSENT_WITHDRAWN','KYC_EXCEPTION','ELIGIBILITY_RECEIVED','HANDOFF_READY','HANDOFF_FAILED','LEAD_HANDED_OFF','LEAD_STAGE_CHANGED','GRIEVANCE_CREATED','DATA_RIGHT_REQUEST','EXPORT_COMPLETED','CONFIG_CHANGED');
-CREATE TYPE audit_action         AS ENUM ('login','logout','login_failed','mfa_failed','lead_create','lead_update','lead_merge','lead_override','attribution_change','consent_grant','consent_withdraw','consent_expire','doc_upload','doc_view','doc_download','doc_verify','doc_waive','doc_delete','kyc_request','kyc_response','kyc_exception','stage_transition','rejection','reopen','nurture','allocate','reassign','link_create','link_open','link_revoke','comm_send','eligibility_request','handoff_attempt','handoff_success','handoff_failure','export_generate','export_download','config_change','user_change','role_change','break_glass_access');
+CREATE TYPE event_code           AS ENUM ('LEAD_CREATED','LEAD_ASSIGNED','HOT_LEAD','FIRST_CONTACT_DUE','FIRST_CONTACT_BREACH','DOC_REQUEST','DOC_UPLOADED','DOC_MISMATCH','CONSENT_PENDING','CONSENT_WITHDRAWN','KYC_EXCEPTION','ELIGIBILITY_RECEIVED','HANDOFF_READY','HANDOFF_FAILED','LEAD_HANDED_OFF','LEAD_STAGE_CHANGED','GRIEVANCE_CREATED','DATA_RIGHT_REQUEST','EXPORT_COMPLETED','CONFIG_CHANGED','DUPLICATE_FLAGGED');
+CREATE TYPE audit_action         AS ENUM ('login','logout','login_failed','mfa_failed','lead_create','lead_update','lead_merge','lead_override','attribution_change','consent_grant','consent_withdraw','consent_expire','doc_upload','doc_view','doc_download','doc_verify','doc_waive','doc_delete','kyc_request','kyc_response','kyc_exception','stage_transition','rejection','reopen','nurture','allocate','reassign','link_create','link_open','link_revoke','comm_send','eligibility_request','handoff_attempt','handoff_success','handoff_failure','export_generate','export_download','config_change','user_change','role_change','break_glass_access','abac_deny');
 
 -- ── 2. Shared trigger function ────────────────────────────────
 CREATE OR REPLACE FUNCTION set_updated_at()
@@ -193,6 +193,7 @@ CREATE TABLE users (
   full_name            VARCHAR(150) NOT NULL,
   mobile               VARCHAR(10),
   password_hash        VARCHAR(255),
+  totp_secret_enc      VARCHAR(255),
   role_id              UUID NOT NULL,
   branch_id            UUID,
   team_id              UUID,
