@@ -14,13 +14,17 @@ import {
 import { AppConfigModule, AppConfigService } from './core/config';
 import { DbModule } from './core/db';
 import { AllExceptionsFilter, CorrelationMiddleware, ResponseEnvelopeInterceptor } from './core/http';
+import { IntegrationCoreModule } from './core/integration/integration-core.module';
 import { LoggingModule } from './core/logging';
 import { MaskingInterceptor, MaskingModule } from './core/masking';
 import { OutboxModule } from './core/outbox';
 import { RedisModule } from './core/redis';
 import { SlaModule } from './core/sla';
+import { AdminModule } from './modules/admin/admin.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { IdentityModule } from './modules/identity/identity.module';
+import { IntegrationModule } from './modules/integration/integration.module';
+import { ReportingModule } from './modules/reporting/reporting.module';
 import { HealthController } from './health.controller';
 
 // Root module. Stage-7 foundation wave (architecture §12): cross-cutting core/
@@ -41,6 +45,10 @@ import { HealthController } from './health.controller';
     AuthCoreModule,
     MaskingModule,
     OutboxModule,
+    // FR-140 — integration framework. @Global IntegrationGateway + ports/circuit
+    // breaker/retry queue, imported once here so every feature module injects them
+    // without re-importing (architecture §3: shared infra under core/).
+    IntegrationCoreModule,
     // FR-104 — business-time clock + SLA engine (ADR-6). Global; engagement binds
     // the policy-reader port, M2/KYC/M12 bind the writer ports later.
     SlaModule,
@@ -56,6 +64,12 @@ import { HealthController } from './health.controller';
     }),
     IdentityModule,
     EngagementModule,
+    // FR-132 (M14 config governance), FR-140 (M15 integration admin surface),
+    // FR-123 (M13 audit explorer). Each depends only on the global core modules
+    // registered above (owner-writes §11; cross-module access via services).
+    AdminModule,
+    IntegrationModule,
+    ReportingModule,
   ],
   controllers: [HealthController],
   providers: [

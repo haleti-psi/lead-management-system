@@ -41,6 +41,10 @@ const DPO = user(RoleCode.DPO, DataScope.M);
 const ADMIN = user(RoleCode.ADMIN, DataScope.A);
 const RM = user(RoleCode.RM, DataScope.O);
 const BM = user(RoleCode.BM, DataScope.B);
+// HEAD holds the `audit_trail` capability at scope A in auth-matrix (so the ABAC
+// guard admits it) but is neither DPO nor ADMIN — the explorer surface must still
+// reject it at the service layer.
+const HEAD = user(RoleCode.HEAD, DataScope.A);
 
 const BASE_QUERY: AuditExplorerQueryDto = { page: 1, limit: 25 };
 
@@ -226,6 +230,15 @@ describe('AuditExplorerService.search — authorisation', () => {
     const { service } = build([]);
     const err = await service.search(BASE_QUERY, BM).catch((e: unknown) => e);
     expect(isDomainException(err) && err.code).toBe('FORBIDDEN');
+  });
+
+  it('rejects a HEAD user holding audit_trail at scope A with FORBIDDEN before any query', async () => {
+    // Negative-authz: the ABAC capability check alone would admit HEAD (it holds
+    // `audit_trail` at scope A), so the DPO/ADMIN-only gate must be enforced here.
+    const { service, mocks } = build([]);
+    await expect(service.search(BASE_QUERY, HEAD)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mocks.repo.search).not.toHaveBeenCalled();
+    expect(mocks.repo.count).not.toHaveBeenCalled();
   });
 });
 
