@@ -4,11 +4,18 @@ import { ThrottlerModule, ThrottlerStorage } from '@nestjs/throttler';
 import { ClsModule } from 'nestjs-cls';
 
 import { AuditModule } from './core/audit';
-import { AppThrottlerGuard, AuthCoreModule, JwtAuthGuard, RedisThrottlerStorage } from './core/auth';
+import {
+  AbacGuard,
+  AppThrottlerGuard,
+  AuthCoreModule,
+  JwtAuthGuard,
+  RedisThrottlerStorage,
+} from './core/auth';
 import { AppConfigModule, AppConfigService } from './core/config';
 import { DbModule } from './core/db';
 import { AllExceptionsFilter, CorrelationMiddleware, ResponseEnvelopeInterceptor } from './core/http';
 import { LoggingModule } from './core/logging';
+import { MaskingInterceptor, MaskingModule } from './core/masking';
 import { RedisModule } from './core/redis';
 import { IdentityModule } from './modules/identity/identity.module';
 import { HealthController } from './health.controller';
@@ -29,6 +36,7 @@ import { HealthController } from './health.controller';
     RedisModule,
     AuditModule,
     AuthCoreModule,
+    MaskingModule,
     // Redis-backed throttler (security.md). Default tier = auth rate (10/min per
     // IP); endpoints needing other tiers override with @Throttle/@SkipThrottle.
     ThrottlerModule.forRootAsync({
@@ -43,12 +51,19 @@ import { HealthController } from './health.controller';
   ],
   controllers: [HealthController],
   providers: [
+    // Interceptor order: on the response, Nest runs the LAST-registered interceptor
+    // first. MaskingInterceptor (FR-002) is registered after the envelope interceptor
+    // so it masks the raw handler payload before ResponseEnvelopeInterceptor wraps it
+    // in { data, meta, error }. Masking only acts when AbacGuard set a masking level.
     { provide: APP_INTERCEPTOR, useClass: ResponseEnvelopeInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: MaskingInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
-    // Guard order: throttle (per-IP, before auth) → JWT authn. ABAC (FR-002) is
-    // added later. Public routes opt out of JWT via @Public(); throttle still applies.
+    // Guard order: throttle (per-IP, before auth) → JWT authn (FR-001) → ABAC (FR-002).
+    // Public routes opt out of JWT via @Public(); throttle still applies. AbacGuard
+    // enforces only where @Requires is present, and runs after the user is bound.
     { provide: APP_GUARD, useClass: AppThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: AbacGuard },
   ],
 })
 export class AppModule implements NestModule {

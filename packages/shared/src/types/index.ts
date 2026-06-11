@@ -2,6 +2,14 @@
 // response interceptor and the web apiClient. Do not switch to a bare resource body.
 import type { ErrorCode } from '../errors';
 
+// ABAC (FR-002) decision/wire types — EntitlementResult, ScopePredicate, AbacResource.
+export type {
+  AbacResource,
+  EntitlementDenyReason,
+  EntitlementResult,
+  ScopePredicate,
+} from './abac.types';
+
 export interface PaginationMeta {
   page: number;
   limit: number;
