@@ -97,11 +97,23 @@
       "FR-001 authentication & sessions — 0e6e270",
       "FR-002 ABAC (EntitlementService / AbacGuard / masking) — 015bf97",
       "FR-141 transactional event outbox — fb805c5",
-      "FR-104 SLA engine + BusinessCalendar + policy admin — 58efab4"
+      "FR-104 SLA engine + BusinessCalendar + policy admin — 58efab4",
+      "FR-003 break-glass privileged access — 3697d2e",
+      "FR-132 config governance (maker-checker) — 7458778",
+      "FR-140 IntegrationGateway + LOS/KYC ports + webhooks — b782c1e",
+      "FR-123 audit explorer + single-writer chain consumer — 61d137a",
+      "FR-040 product configuration + governance activator — 4e6903f",
+      "FR-130 user/role/team/branch admin — d64f9ed",
+      "FR-041 initial supported products (seed + active-config reads) — 2937a56",
+      "FR-131 master configuration (generic /admin/{masterResource}) — c3f667a",
+      "FR-042 schemes & offers — 441876a"
     ],
-    "test_count": 221,
-    "wave_1_foundation": "in progress",
-    "remaining_foundation": ["FR-003 break-glass", "FR-140 integration gateway + LosMock", "FR-123 audit explorer + chain consumer", "FR-130/131/132 admin (M14)", "FR-040/041/042 product-config (M5)"],
+    "test_count": 546,
+    "wave_1_foundation": "COMPLETE — all core/ infra + M1 identity (FR-001/002/003) + M14 admin (FR-130/131/132) + M5 product-config (FR-040/041/042) + cross-cutting FR-104/123/140/141",
+    "parallel_execution": "Later FRs built in parallel batches in isolated git worktrees (junctioned node_modules), reviewed per-FR by sub-agents, cherry-picked to master, app.module wired centrally; 0 merge conflicts.",
+    "cross_fr_review_items": "master-resource ownership overlaps (FR-131 vs partners/M10, communication-templates/M11, allocation-rules/M4, retention-policies/M12); regions/branches capability (user_mgmt vs configuration); lead-attach endpoints (scheme attach, etc.) deferred to capture FRs (FR-010/011/050).",
+    "remaining_foundation": [],
+    "next_wave": "Wave 2 — core domain: M2 capture (incl. LeadService sole-writer + stage-history), M3 dedupe, M4 allocation+scoring",
     "later_waves": "Wave 2 core domain (capture/dedupe/allocation incl. LeadService), Wave 3 workflow (KYC/self-service/compliance/engagement), Wave 4 integration (LOS/partner), Wave 5 read models (workspace/reporting)"
   }
 }
