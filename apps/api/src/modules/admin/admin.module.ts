@@ -6,6 +6,18 @@ import { SlaPolicyActivator } from './activators/sla-policy.activator';
 import { ConfigGovernanceController } from './config-governance.controller';
 import { ConfigGovernanceRepository } from './config-governance.repository';
 import { ConfigGovernanceService } from './config-governance.service';
+// FR-130 — user / role / team administration.
+import { AdminRolesController } from './admin-roles.controller';
+import { AdminRoleService } from './admin-role.service';
+import { AdminTeamsController } from './admin-teams.controller';
+import { AdminTeamService } from './admin-team.service';
+import { AdminUsersController } from './admin-users.controller';
+import { AdminUserService } from './admin-user.service';
+import { LEAD_REASSIGN_PORT } from './ports/lead-reassign.port';
+import { UnimplementedLeadReassignAdapter } from './ports/unimplemented-lead-reassign.adapter';
+import { RoleRepository } from './role.repository';
+import { TeamRepository } from './team.repository';
+import { UserRepository } from './user.repository';
 
 /**
  * M14 Administration — FR-132 configuration governance (maker-checker). Depends
@@ -31,13 +43,28 @@ const slaPolicyActivatorProvider: FactoryProvider<ConfigActivatorPort> & { multi
 };
 
 @Module({
-  controllers: [ConfigGovernanceController],
+  controllers: [
+    ConfigGovernanceController,
+    AdminUsersController,
+    AdminRolesController,
+    AdminTeamsController,
+  ],
   providers: [
     ConfigGovernanceService,
     ConfigGovernanceRepository,
     ConfigActivatorRegistry,
     SlaPolicyActivator,
     slaPolicyActivatorProvider,
+    // FR-130 — user / role / team administration.
+    AdminUserService,
+    AdminRoleService,
+    AdminTeamService,
+    UserRepository,
+    RoleRepository,
+    TeamRepository,
+    // Owner-writes seam: bulk lead reassignment on deactivation. Wave 2
+    // (FR-010/030) rebinds this token to `LeadService.bulkReassign`.
+    { provide: LEAD_REASSIGN_PORT, useClass: UnimplementedLeadReassignAdapter },
   ],
   exports: [ConfigGovernanceService],
 })
