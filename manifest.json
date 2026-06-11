@@ -1,8 +1,8 @@
 {
   "project": "Lead_Management_System",
-  "current_stage": 6,
-  "stage_name": "LLD",
-  "next_stage": 7,
+  "current_stage": 7,
+  "stage_name": "Code Generation (phase-executor)",
+  "next_stage": 8,
   "artefacts": {
     "brd": "docs/brd.md",
     "brd_source": "docs/requirements/Lead_Management_System_BRD_Version_5.md",
@@ -85,5 +85,23 @@
       ],
       "blocked_by": []
     }
+  },
+  "stage7": {
+    "integration_branch": "master",
+    "started_at": "2026-06-11",
+    "cadence": "auto-merge within a wave after independent re-verify + reviewer agent; pause at wave boundaries",
+    "build_order": "architecture §12 (foundation -> core domain -> workflow -> integration-dependent -> read models)",
+    "test_strategy": "Per-FR unit + component coverage is REQUIRED and gated at merge (independent build/test re-verify + a reviewer sub-agent). The Testcontainers integration/e2e tier is DEFERRED to a dedicated integration-test wave run after the domain FRs are merged (many scenarios span multiple not-yet-built FRs and need the DB harness). Tracked per-FR in each FR-NNN-tests.md.",
+    "merged": [
+      "core-foundation (config, db/UnitOfWork, logging, http envelope/exception/correlation, @shared 69 enums, generated 47-table Kysely types) — 80f9741",
+      "FR-001 authentication & sessions — 0e6e270",
+      "FR-002 ABAC (EntitlementService / AbacGuard / masking) — 015bf97",
+      "FR-141 transactional event outbox — fb805c5",
+      "FR-104 SLA engine + BusinessCalendar + policy admin — 58efab4"
+    ],
+    "test_count": 221,
+    "wave_1_foundation": "in progress",
+    "remaining_foundation": ["FR-003 break-glass", "FR-140 integration gateway + LosMock", "FR-123 audit explorer + chain consumer", "FR-130/131/132 admin (M14)", "FR-040/041/042 product-config (M5)"],
+    "later_waves": "Wave 2 core domain (capture/dedupe/allocation incl. LeadService), Wave 3 workflow (KYC/self-service/compliance/engagement), Wave 4 integration (LOS/partner), Wave 5 read models (workspace/reporting)"
   }
 }
