@@ -10,6 +10,9 @@ module.exports = {
   testEnvironment: 'node',
   testRegex: '.*\\.spec\\.ts$',
   moduleFileExtensions: ['ts', 'js', 'json'],
+  // Populate required env (environment-contract.md) before modules that wire
+  // ConfigModule.forRoot({ validate }) are imported — that validation is eager.
+  setupFiles: ['<rootDir>/../test/setup-env.ts'],
   transform: {
     '^.+\\.ts$': [
       'ts-jest',
