@@ -1,4 +1,4 @@
-import { MaskingService } from './masking.service';
+import { MaskingService, REDACTED_TOKEN } from './masking.service';
 
 describe('MaskingService', () => {
   const svc = new MaskingService();
@@ -54,5 +54,73 @@ describe('MaskingService', () => {
     expect(svc.mask('pan', 'ABCDE1234F', { breakGlassActive: true })).toBe('ABCDE1234F');
     expect(svc.mask('email', 'abc@example.com', { breakGlassActive: true })).toBe('abc@example.com');
     expect(svc.mask('aadhaar', 'TOKEN_ABCD_1234', { breakGlassActive: true })).toBe('TOKEN_ABCD_1234');
+  });
+
+  // ── maskEventPayload (FR-141: PII masked before the outbox row is written) ──
+  describe('maskEventPayload', () => {
+    // T09 / INV-02 / INV-03
+    it('masks mobile and PAN in an event payload (raw values never survive)', () => {
+      const out = svc.maskEventPayload({ mobile: '9876543210', pan_masked: 'ABCDE1234F' });
+      expect(out['mobile']).toBe('98xxxxxx10');
+      expect(out['pan_masked']).toBe('ABCxxxx4F');
+      expect(JSON.stringify(out)).not.toContain('9876543210');
+      expect(JSON.stringify(out)).not.toContain('ABCDE1234F');
+    });
+
+    it('masks every known format-shaped PII alias (pan_token, aadhaar_ref_token, name, email)', () => {
+      const out = svc.maskEventPayload({
+        pan_token: 'ABCDE1234F',
+        aadhaar_ref_token: 'TOKEN_ABCD_1234',
+        name: 'Asha Verma',
+        email: 'abc@example.com',
+      });
+      expect(out['pan_token']).toBe('ABCxxxx4F');
+      expect(out['aadhaar_ref_token']).toBe('1234');
+      // outbox masking is always strict → full_name reduced to first name
+      expect(out['name']).toBe('Asha');
+      expect(out['email']).toBe('ab****@example.com');
+    });
+
+    it('redacts identifier PII with no partial mask (ckyc_id, dob, address)', () => {
+      const out = svc.maskEventPayload({
+        ckyc_id: '1234567890123456',
+        dob: '1990-04-01',
+        address: '12 MG Road, Pune',
+      });
+      expect(out['ckyc_id']).toBe(REDACTED_TOKEN);
+      expect(out['dob']).toBe(REDACTED_TOKEN);
+      expect(out['address']).toBe(REDACTED_TOKEN);
+      expect(JSON.stringify(out)).not.toContain('1990-04-01');
+      expect(JSON.stringify(out)).not.toContain('MG Road');
+    });
+
+    it('recurses into nested objects and arrays, masking PII at any depth', () => {
+      const out = svc.maskEventPayload({
+        lead: { mobile: '9876543210', meta: { dob: '1990-04-01' } },
+        applicants: [{ pan: 'ABCDE1234F' }, { name: 'Asha Verma' }],
+      });
+      const lead = out['lead'] as Record<string, unknown>;
+      expect(lead['mobile']).toBe('98xxxxxx10');
+      expect((lead['meta'] as Record<string, unknown>)['dob']).toBe(REDACTED_TOKEN);
+      const applicants = out['applicants'] as Array<Record<string, unknown>>;
+      expect(applicants[0]?.['pan']).toBe('ABCxxxx4F');
+      expect(applicants[1]?.['name']).toBe('Asha');
+    });
+
+    it('leaves non-PII fields untouched and does not mutate the input', () => {
+      const input = { lead_id: 'L-1', stage: 'assigned', score: 42, mobile: '9876543210' };
+      const out = svc.maskEventPayload(input);
+      expect(out['lead_id']).toBe('L-1');
+      expect(out['stage']).toBe('assigned');
+      expect(out['score']).toBe(42);
+      // original object is not mutated
+      expect(input.mobile).toBe('9876543210');
+    });
+
+    it('never honours break-glass — the outbox always gets masked PII', () => {
+      // maskEventPayload exposes no break-glass option; PII is always masked.
+      const out = svc.maskEventPayload({ mobile: '9876543210' });
+      expect(out['mobile']).toBe('98xxxxxx10');
+    });
   });
 });

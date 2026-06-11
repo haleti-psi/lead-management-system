@@ -16,6 +16,7 @@ import { DbModule } from './core/db';
 import { AllExceptionsFilter, CorrelationMiddleware, ResponseEnvelopeInterceptor } from './core/http';
 import { LoggingModule } from './core/logging';
 import { MaskingInterceptor, MaskingModule } from './core/masking';
+import { OutboxModule } from './core/outbox';
 import { RedisModule } from './core/redis';
 import { IdentityModule } from './modules/identity/identity.module';
 import { HealthController } from './health.controller';
@@ -37,6 +38,7 @@ import { HealthController } from './health.controller';
     AuditModule,
     AuthCoreModule,
     MaskingModule,
+    OutboxModule,
     // Redis-backed throttler (security.md). Default tier = auth rate (10/min per
     // IP); endpoints needing other tiers override with @Throttle/@SkipThrottle.
     ThrottlerModule.forRootAsync({
