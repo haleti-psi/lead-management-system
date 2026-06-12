@@ -3,7 +3,7 @@
 Project-level guidance, complementing the global guidelines in `~/.claude/CLAUDE.md` (pipeline discipline, security/data-integrity/code-quality non-negotiables). This file adds the project's concrete structural references.
 
 ## Pipeline state
-See `manifest.json`. Current: Stage 3 (Architecture) done; Gates A & B signed off. Do not start a stage whose prior gate is not signed off.
+See `manifest.json`. Current: Stage 7 (code generation) — Gates A/B/C signed off; Wave 1 (foundation) complete on `master`. Build state + team fan-out: `docs/STAGE7-CONTINUATION.md` (read it before starting any FR). Do not start a stage whose prior gate is not signed off.
 
 ## Stack (fixed — see docs/architecture.md §2; do not invent alternatives)
 React 18 + TS + Vite + Tailwind + shadcn/ui (PWA) · NestJS modular monolith (Node 20, TS strict) · PostgreSQL 15 (Cloud SQL) via **Kysely** + **Flyway** migrations · Redis · Cloud Tasks + Pub/Sub · GCS · Cloud Run (asia-south1).
