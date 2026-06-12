@@ -196,3 +196,96 @@ an `orgId` parameter, because the LLD's SQL is `WHERE lead_id = ? AND org_id = ?
 ## FR-110 — reviewer write-backs (minors, arbiter)
 1. state-machines.md says consent_records "no row is updated / any UPDATE invalid" while FR-110 LLD §301 sanctions the superseded_by pointer UPDATE (implemented, tested) — write the pointer exception back into state-machines.md.
 2. clientMeta records raw X-Forwarded-For (spoofable, multi-hop) per LLD §189 — standardise trusted-proxy-resolved client IP at the integration-test wave.
+
+---
+
+# AMBIGUITY — FR-050 (Lead List & Saved Work Queues)
+
+*None of these blocked completion; each was resolved with the narrowest spec-consistent choice and is listed for Dev-1/contract write-back (CLAUDE.md §9).*
+
+## FR-050-1. `audit_action` enum has no `bulk_action` value
+
+**The gap (precise):** FR-050 LLD §Backend Flow (bulk step 4) and FR-050-tests INV-3 reference an
+`audit_logs.action = 'bulk_action'` intent row, but the `audit_action` enum (schema.sql / BRD §5.5,
+`@lms/shared` `AuditAction`, generated DB types) has no such value.
+
+**Resolution applied:** the single bulk-action intent row is recorded as `action='reassign'` with
+`detail.sub_action='bulk_action'` (the AMBIGUITIES.md **A4 precedent** — map under an existing
+action + `detail.sub_action`). Per-lead audits remain the `reassign` rows written by
+`LeadService.bulkReassign` (one per lead, pinned in shared-utilities.md). See
+`apps/api/src/modules/workspace/bulk-action.service.ts`.
+
+**Needed decision:** add `bulk_action` to `audit_action` (schema + enum + Flyway) and switch the
+intent row, or ratify the `detail.sub_action` mapping in the LLD/tests (INV-3 query).
+
+## FR-050-2. `POST /leads/bulk-action` request/response shapes are not in the contract
+
+**The gap (precise):** api-contract.yaml v5.3 defines the path (summary "reassign/stage/tag; one
+audit per lead", optional `Idempotency-Key`, 200/400/403/409) but no requestBody/response schemas,
+and the FR-050 LLD §bulk predates the endpoint (it described a client-side fan-out).
+
+**Resolution applied:** body = `{ action: 'reassign', lead_ids: uuid[] (1..100, deduped), reason
+(1..500), params: { owner_id: uuid } }`; response `data` = `{ action, requested, succeeded, items:
+[{ lead_id, status: 'succeeded' | 'skipped_out_of_scope' | 'skipped_ineligible' }] }` (the LLD's
+"per-item result list"). `action: 'stage'/'tag'` are **rejected (400 VALIDATION_ERROR)**: `tag` has
+no LeadService mutator at all, and `transitionStage` lands with FR-052 (calling it today throws a
+typed INTERNAL_ERROR by Wave-1 convention — a 400 up front is strictly better).
+
+**Needed decision:** add `BulkAction`/`BulkActionResult` schemas to api-contract.yaml; extend the
+`action` enum when FR-052 lands.
+
+## FR-050-3. Bulk-action idempotency semantics unspecified
+
+**The gap:** the contract lists an optional `Idempotency-Key` header on `/leads/bulk-action`, but no
+artefact specifies replay semantics for bulk operations (FR-010's Redis idempotency service is
+capture-owned, keyed to lead creation).
+
+**Resolution applied:** header accepted but not interpreted (the operation is bounded and
+re-runnable; a replayed reassign to the same owner is an `owner_id` no-op, though it re-bumps
+`version` and re-audits). Nothing was invented.
+
+**Needed decision:** specify (or drop) bulk idempotency in the contract.
+
+## FR-050-4. Resolved in-code (record in LLD on write-back)
+
+- **`sla_state=due_soon` window** (LLD leaves the interval as "…"): reused FR-104's canonical
+  `APPROACHING_WINDOW_MINUTES` (= 30, `core/sla/sla.constants.ts`) so the list filter and the SLA
+  sweep agree on "approaching breach"; comparisons use DB `now()` (FR-050 only reads the stored
+  due-at, per LLD).
+- **`filter[date_from/date_to]` column** (not named in the LLD): applied to `leads.created_at`,
+  inclusive both ends.
+- **`applyScope` signature:** takes the AbacGuard-resolved `ScopePredicate` (not the raw user) —
+  the team scope needs the member ids only `EntitlementService` resolves (FR-002/CORRECTIONS:
+  `owner_id IN (team member user_ids)`, never `team_id`). Matches the FR-030 precedent.
+
+## FR-050-5. Saved-view shared-visibility predicate underspecified
+
+**The gap (precise):** LLD §Endpoint 2 says "own ∪ shared views whose scope the caller is inside",
+but `saved_views` has no branch/team anchor columns, and TC-17 requires a BM to see an SM's
+**team**-scoped share from the BM's branch (the BM is not *in* the team).
+
+**Resolution applied:** a shared view is visible when EITHER (a) the caller is inside the audience
+the owner shared into (`A` org-wide; `B`/`T`/`R` = caller in the same branch/team/region as the
+owner, anchored on the owner's `users` row), OR (b) the owner falls inside the caller's own
+`view_lead` scope (manager-over-subordinate containment — what TC-17 exercises). PARTNER/CUSTOMER
+predicates contribute no shared legs (own views only). See
+`apps/api/src/modules/workspace/saved-view.repository.ts`.
+
+**Needed decision:** ratify the dual-leg rule in the LLD before FR-051..054 build on it.
+
+## FR-050-6. Frontend slice deferred (not built here)
+
+**The gap:** the LLD lists `apps/web` files (lead-list page, saved-view chips, filter drawer) built
+on the shared web foundation (`AppShell`, `DataTable`, `apiClient` — BRD §4.5), which is Dev 2's
+queue (TEAM-PLAN) and does not exist yet (`apps/web` is the scaffold + `MaskedField` only); the
+dispatch scope for this FR was the backend module + registration.
+
+**Resolution:** backend complete; the UI slice ships when the web foundation lands (building it now
+would re-implement shared components, violating shared-utilities reuse).
+
+## FR-050 — reviewer write-backs (minors, arbiter)
+1. FR-050 LLD example shows name_masked="Ra***** K****" but FR-002 masking matrix governs (full name for internal roles, first-name for DPO/export) — amend LLD example.
+2. core masking FIELD_MAP maps wire key "name"→full_name rule: DPO listing saved-views gets view NAMES truncated (non-PII collision) — rename wire key or exempt; FR-002/FR-050 cross-note.
+3. bulk-action secondary denials (disallowed predicate type / target-owner out of scope) return FORBIDDEN without abac_deny audit — add audits (primary capability denial IS guard-audited).
+4. (pre-existing) LeadService.bulkReassign sets updated_by/audit actor_id to the NEW OWNER (pinned signature has no actor param) — same fix as the FR-010 actorId item.
+5. FR-050-tests INV-3 query (action='bulk_action') must be amended to the detail.sub_action mapping.
