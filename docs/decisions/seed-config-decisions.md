@@ -1,7 +1,7 @@
 # Seed & Config Decision Brief — AMBIGUITIES §D (D1–D4) gating FR-011 / FR-020 / FR-031
 
 2026-06-12
-Status: DRAFT — pending Dev 1 sign-off
+Status: **SIGNED OFF** — Dev 1 (haleti-psi), 2026-06-12. All four RECs approved: D1 seed via `V3__seed_default_scoring_rules.sql`; D2 home = `sla_config.hot_amount_threshold` (FR-031 amended); D3 placeholders PENDING-BUSINESS; D4 constants (shipped in FR-020). Score-model ownership: **FR-011 owns `leads.score`; FR-031 owns `is_hot` only** (both LLDs annotated).
 Resolves: `docs/lld/AMBIGUITIES.md` §D. All code claims verified against the built tree (Wave 1 + FR-010 + FR-030 + FR-040/041/042/130/131/132).
 
 ## D2 — `hot_amount_threshold` location
