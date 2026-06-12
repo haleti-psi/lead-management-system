@@ -83,6 +83,7 @@ fb805c5  feat(outbox): FR-141 outbox       — OutboxService.emit(event,tx) tran
 Wave 1 is done — resume at **Wave 2: FR-010 (capture + `LeadService`)**. Each agent prompt = the FR's LLD + tests + standard contracts + "use the foundation in §3 above; owner-writes; verify build/tsc/nest/jest before returning; write `AMBIGUITY.md` if genuinely blocked (e.g. the open business-seed FRs FR-011/FR-020)."
 
 ## 9. Team fan-out (3 developers, from Wave 2)
+*Summary only — the full plan (queues, deliverables, checkpoints) is `docs/TEAM-PLAN.md`.*
 | Dev | Owns (modules) | FR order |
 |---|---|---|
 | **Dev 1 — integrator** (merges ALL PRs; owns contract/schema changes; arbiter per BRD §14.6) | M1–M6 | FR-010/011 (LeadService — critical path) → 020/021 → 030/031 → 050–054 last |
