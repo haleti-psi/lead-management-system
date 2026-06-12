@@ -128,3 +128,71 @@ race. Rule for the team plan: **never use `git stash` in shared-repo worktrees**
 2. Zero-candidate early return reports duplicate_status='none' without recomputing — a previously-flagged lead with edited identity keeps stale 'flagged' in DB (LLD-literal); resolve in FR-021 resolution flow.
 3. LLD yaml lists HEAD under roles_with_edit_lead but auth-matrix gives HEAD no edit_lead — contracts win (HEAD→403); reconcile LLD.
 4. duplicate-check.port.ts:9 doc comment still links deleted NoopDuplicateCheckAdapter — fix comment in next touch.
+
+---
+
+# AMBIGUITY — FR-110 (Purpose-wise Consent Ledger)
+
+## FR-110-1. LLD audit action `CONSENT_CAPTURED` is not an `audit_action` enum value
+
+**The gap (precise):** `docs/lld/FR-110.md` §Backend Flow 4g and `FR-110-tests.md`
+T01/T32/INV-07 use audit `action = 'CONSENT_CAPTURED'`, but the `audit_action`
+enum (schema.sql §5.5 / `@lms/shared` `AuditAction`) has no such value — it has
+`consent_grant`, `consent_withdraw`, `consent_expire`. CORRECTIONS.md binds every
+FR to "action (audit_action enum)"; a literal `CONSENT_CAPTURED` would be
+rejected by the DB enum column.
+
+**Resolution applied (enum rule wins, per CORRECTIONS.md):**
+`granted`/`denied` captures audit as **`consent_grant`**, withdrawals as
+**`consent_withdraw`** (`detail = { purpose, state }` disambiguates denied).
+Tests assert the mapped values. INV-07's `al.action = 'CONSENT_CAPTURED'`
+should be read as `action IN ('consent_grant','consent_withdraw')`.
+
+**Needed decision (Dev 1):** ratify the mapping in FR-110.md/-tests.md, or add a
+`consent_denied` (and/or `consent_captured`) value to `audit_action` via the
+amendment process.
+
+## FR-110-2. `customer_links` has no `channel` (or `customer_profile_id`) column
+
+**The gap (precise):** FR-110.md §Endpoint 3 says the customer-path consent
+`channel` "is derived from the `customer_links.channel` column" and lead/profile
+are resolved "from the `customer_links` row", but schema.sql `customer_links`
+has neither a `channel` nor a `customer_profile_id` column (columns:
+customer_link_id, org_id, lead_id, token_hash, purpose, status, expires_at,
+opened_at, otp_verified_at, revoked_by, audit cols).
+
+**Resolution applied:** the FR-060 seam contract (`CustomerLinkPort.
+resolveForConsent → ResolvedCustomerLink { leadId, customerProfileId, orgId,
+channel }`) carries the channel, making its source the FR-060 adapter's
+decision; `customer_profile_id` falls back to `leads.customer_profile_id`.
+
+**Needed decision (Dev 1 / data-model owner):** add `channel` to
+`customer_links`, or ratify a fixed channel (e.g. `website`) for micro-site
+consents in FR-060/FR-110.
+
+## FR-110-3. Customer token machinery (FR-060) not yet built — endpoint live behind a port
+
+Not a spec gap — the recorded cross-wave dependency (STAGE7-CONTINUATION §3/§9:
+Dev 3 builds FR-110 before Dev 2's FR-060). `POST /c/{token}/consent` is
+implemented per contract, but token validation (status/expiry/**OTP step-up**)
+is `CustomerLinkGuard`/M7 territory, so resolution sits behind
+`CUSTOMER_LINK_PORT` (`modules/compliance/ports/customer-link.port.ts`). The
+bound `UnavailableCustomerLinkAdapter` resolves no token (every request → 404,
+existence hidden, loud warn log) until FR-060 rebinds the port in
+`compliance.module.ts`. T19–T24's full-HTTP assertions move to the deferred
+integration wave alongside FR-060.
+
+## FR-110-4. Dispatcher note vs LLD: `setConsentStatus` versioning
+
+The dispatch brief described `LeadService.setConsentStatus` as "same
+single-UPDATE + expectedVersion/version-bump pattern as the other mutators";
+FR-110.md §Data Operations explicitly specifies **no version bump** ("volatile
+system-managed field per architecture §11.2") and the §11.2 interface lists the
+mutator without `expectedVersion`. The LLD governs: implemented as one
+org-scoped UPDATE of `consent_status` + `updated_at` (no version bump, stage
+untouched, NOT_FOUND on zero rows). One signature extension vs the frozen stub:
+an `orgId` parameter, because the LLD's SQL is `WHERE lead_id = ? AND org_id = ?`.
+
+## FR-110 — reviewer write-backs (minors, arbiter)
+1. state-machines.md says consent_records "no row is updated / any UPDATE invalid" while FR-110 LLD §301 sanctions the superseded_by pointer UPDATE (implemented, tested) — write the pointer exception back into state-machines.md.
+2. clientMeta records raw X-Forwarded-For (spoofable, multi-hop) per LLD §189 — standardise trusted-proxy-resolved client IP at the integration-test wave.

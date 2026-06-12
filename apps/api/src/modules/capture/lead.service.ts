@@ -480,6 +480,36 @@ export class LeadService {
   }
 
   /**
+   * FR-110 — derived `consent_status` summary (state-machines.md §Lead:
+   * "recomputed on the relevant child change, never set directly"). One
+   * org-scoped UPDATE setting `consent_status` + `updated_at` only — NO
+   * version bump and no `expectedVersion`: this is a volatile system-managed
+   * field (FR-110 LLD §Data Operations; architecture §11.2 lists the mutator
+   * without `expectedVersion`), so a ledger-driven re-derivation never raises
+   * a false 409 against a concurrent RM edit. The stage is untouched. The
+   * calling ConsentService owns the derivation and emits audit + outbox in
+   * the SAME tx. Zero rows (lead absent/soft-deleted) → NOT_FOUND, never a
+   * silent no-op.
+   */
+  async setConsentStatus(
+    leadId: string,
+    status: ConsentStatus,
+    orgId: string,
+    tx: DbTransaction,
+  ): Promise<void> {
+    const result = await tx
+      .updateTable('leads')
+      .set({ consent_status: status, updated_at: new Date() })
+      .where('lead_id', '=', leadId)
+      .where('org_id', '=', orgId)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+    if (result.numUpdatedRows === 0n) {
+      throw new DomainException(ERROR_CODES.NOT_FOUND);
+    }
+  }
+
+  /**
    * FR-130 admin path (CORRECTIONS.md): reassign up to {@link BULK_REASSIGN_MAX_IDS}
    * leads to `ownerId` in one LIMIT-bounded statement — bumps `version` per row,
    * appends ONE `audit_logs(reassign)` per lead, no per-row expectedVersion.
@@ -551,11 +581,6 @@ export class LeadService {
   /** FR-070/072 — derived `kyc_status` summary. */
   setKycStatus(_leadId: string, _status: KycStatus, _tx: DbTransaction): Promise<void> {
     return Promise.reject(notYetWired('setKycStatus', 'FR-070'));
-  }
-
-  /** FR-110 — derived `consent_status` summary. */
-  setConsentStatus(_leadId: string, _status: ConsentStatus, _tx: DbTransaction): Promise<void> {
-    return Promise.reject(notYetWired('setConsentStatus', 'FR-110'));
   }
 
   /** FR-080 — eligibility snapshot reference. */

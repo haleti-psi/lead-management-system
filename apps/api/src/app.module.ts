@@ -23,6 +23,7 @@ import { SlaModule } from './core/sla';
 import { AdminModule } from './modules/admin/admin.module';
 import { AllocationModule } from './modules/allocation/allocation.module';
 import { CaptureModule } from './modules/capture/capture.module';
+import { ComplianceModule } from './modules/compliance/compliance.module';
 import { DedupeModule } from './modules/dedupe/dedupe.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { IdentityModule } from './modules/identity/identity.module';
@@ -82,6 +83,11 @@ import { HealthController } from './health.controller';
     // runs the sync strong-block gate inside the capture transaction and the
     // post-commit scan persists medium/weak flags.
     DedupeModule,
+    // FR-110 (M12 compliance). Owns the append-only `consent_records` ledger +
+    // the leads.consent_status derivation (via the @Global CaptureModule's
+    // LeadService.setConsentStatus). `/c/{token}/consent` is live behind the
+    // FR-060 CustomerLinkPort seam.
+    ComplianceModule,
     EngagementModule,
     // FR-040 (M5 product configuration). Owns the `product_config` activator,
     // which self-registers with the shared FR-132 ConfigActivatorRegistry.

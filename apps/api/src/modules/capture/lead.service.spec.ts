@@ -243,6 +243,33 @@ describe('LeadService.recomputeDuplicateStatus (FR-020)', () => {
   });
 });
 
+describe('LeadService.setConsentStatus (FR-110)', () => {
+  it('updates consent_status + updated_at only — org-scoped, no version bump, stage untouched', async () => {
+    const t = makeTx({ updatedRows: 1n });
+    const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await service.setConsentStatus(LEAD, 'withdrawn', ORG, t.tx);
+
+    const patch = t.updateSet.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(patch['consent_status']).toBe('withdrawn');
+    expect(patch['updated_at']).toBeInstanceOf(Date);
+    // Volatile system-managed field (FR-110 LLD): no version bump, no stage write.
+    expect(Object.keys(patch).sort()).toEqual(['consent_status', 'updated_at']);
+    expect(t.whereCalls).toHaveBeenCalledWith('lead_id', '=', LEAD);
+    expect(t.whereCalls).toHaveBeenCalledWith('org_id', '=', ORG);
+    expect(t.whereCalls).toHaveBeenCalledWith('deleted_at', 'is', null);
+    expect(t.whereCalls).not.toHaveBeenCalledWith('version', '=', expect.anything());
+  });
+
+  it('throws NOT_FOUND when the lead is absent or soft-deleted (never a silent no-op)', async () => {
+    const t = makeTx({ updatedRows: 0n });
+    const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+    await expect(service.setConsentStatus(LEAD, 'captured', ORG, t.tx)).rejects.toMatchObject({
+      code: ERROR_CODES.NOT_FOUND,
+    });
+  });
+});
+
 describe('LeadService.assignOwner', () => {
   const baseRow = {
     lead_id: LEAD,
@@ -554,7 +581,6 @@ describe('LeadService frozen-interface stubs', () => {
     ['transitionStage', (s: LeadService, tx: DbTransaction) => s.transitionStage(LEAD, 'assigned', {}, 1, tx)],
     ['setHotFlag', (s: LeadService, tx: DbTransaction) => s.setHotFlag(LEAD, true, [], tx)],
     ['setKycStatus', (s: LeadService, tx: DbTransaction) => s.setKycStatus(LEAD, 'verified', tx)],
-    ['setConsentStatus', (s: LeadService, tx: DbTransaction) => s.setConsentStatus(LEAD, 'captured', tx)],
     ['recordEligibility', (s: LeadService, tx: DbTransaction) => s.recordEligibility(LEAD, 'snap-1', tx)],
     ['markHandedOff', (s: LeadService, tx: DbTransaction) => s.markHandedOff(LEAD, 'LOS-1', 1, tx)],
     ['merge', (s: LeadService, tx: DbTransaction) => s.merge(LEAD, 'dup-1', 'merge', tx)],

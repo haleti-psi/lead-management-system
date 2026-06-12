@@ -30,12 +30,12 @@ import { KYSELY, UnitOfWork, type KyselyDb } from '../../core/db';
 import { DomainException } from '../../core/http';
 import { MaskingService } from '../../core/masking';
 import { OutboxService } from '../../core/outbox';
+import { deriveConsentStatus as deriveLedgerConsentStatus } from '../compliance/consent-derivation';
 import {
   IDEMPOTENCY_SCOPE_CREATE_LEAD,
   IDEMPOTENCY_SCOPE_IMPORT_LEADS,
   IMPORT_FILE_PREFIX,
   LEADS_RESOURCE_TYPE,
-  REQUIRED_CONSENT_PURPOSES,
   SYSTEM_ACTOR_ID,
 } from './capture.constants';
 import { CaptureIdempotencyService } from './capture-idempotency.service';
@@ -449,15 +449,19 @@ export class CaptureService {
 
   // ─────────────────────────────────────────────────────── validation logic ──
 
-  /** U-01..U-03 — derived `consent_status` (FR-110 canonical algorithm at intake). */
+  /**
+   * U-01..U-03 — derived `consent_status` at intake. Delegates to M12's
+   * canonical FR-110 algorithm + `REQUIRED_CONSENT_PURPOSES` (single source of
+   * truth — `modules/compliance/consent-derivation.ts`), layered with the one
+   * FR-010-LLD-specific intake rule below. Behaviour is identical to the
+   * original FR-010 implementation.
+   */
   deriveConsentStatus(consents: readonly ConsentInput[] | undefined): ConsentStatus {
     if (!consents || consents.length === 0) {
       return ConsentStatus.PENDING;
     }
-    if (consents.some((c) => c.state === ConsentState.WITHDRAWN)) {
-      return ConsentStatus.WITHDRAWN;
-    }
-    // FR-010 nuance: a lone denied lead_contact consent leaves nothing usable.
+    // FR-010 intake nuance (FR-010 LLD §consent_status derivation): a lone
+    // denied lead_contact consent leaves nothing usable → withdrawn.
     if (
       consents.length === 1 &&
       consents[0]?.purpose === ConsentPurpose.LEAD_CONTACT &&
@@ -465,16 +469,7 @@ export class CaptureService {
     ) {
       return ConsentStatus.WITHDRAWN;
     }
-    const granted = new Set(
-      consents.filter((c) => c.state === ConsentState.GRANTED).map((c) => c.purpose),
-    );
-    if (REQUIRED_CONSENT_PURPOSES.every((p) => granted.has(p))) {
-      return ConsentStatus.CAPTURED;
-    }
-    if (granted.size > 0) {
-      return ConsentStatus.PARTIAL;
-    }
-    return ConsentStatus.PENDING;
+    return deriveLedgerConsentStatus(consents);
   }
 
   /** U-04/U-05 — PAN timing vs `ProductConfig.pan_required_at`. */
