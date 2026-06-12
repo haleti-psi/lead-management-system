@@ -30,6 +30,7 @@ import { IdentityModule } from './modules/identity/identity.module';
 import { IntegrationModule } from './modules/integration/integration.module';
 import { ProductConfigModule } from './modules/product-config/product-config.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
+import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { HealthController } from './health.controller';
 
 // Root module. Stage-7 foundation wave (architecture §12): cross-cutting core/
@@ -98,6 +99,9 @@ import { HealthController } from './health.controller';
     AdminModule,
     IntegrationModule,
     ReportingModule,
+    // FR-050 (M6 workspace). Read-only lead list + saved views + the bulk-action
+    // gate; `leads` mutations delegate to the @Global CaptureModule's LeadService.
+    WorkspaceModule,
   ],
   controllers: [HealthController],
   providers: [
