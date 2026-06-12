@@ -1,4 +1,4 @@
-import { ConsentPurpose, LeadStage } from '@lms/shared';
+import { LeadStage } from '@lms/shared';
 
 /**
  * Reserved system actor seeded by schema.sql §bootstrap ("Reserved system actor
@@ -18,20 +18,6 @@ export const IDEMPOTENCY_SCOPE_CREATE_LEAD = 'create_lead';
 export const IDEMPOTENCY_SCOPE_IMPORT_LEADS = 'import_leads';
 /** 24 h TTL for cached idempotent responses (LLD step G). */
 export const IDEMPOTENCY_TTL_SECONDS = 86_400;
-
-/**
- * Purposes whose latest state must all be `granted` for the derived
- * `leads.consent_status` to be `captured`. Canonical default per the FR-110 LLD
- * (§Consent status derivation — "configurable but default to" this set); FR-010
- * applies the same algorithm at intake so the two derivations never diverge.
- */
-export const REQUIRED_CONSENT_PURPOSES: readonly ConsentPurpose[] = [
-  ConsentPurpose.LEAD_CONTACT,
-  ConsentPurpose.PRODUCT_ELIGIBILITY,
-  ConsentPurpose.KYC,
-  ConsentPurpose.DOCUMENT_PROCESSING,
-  ConsentPurpose.LOS_HANDOFF,
-];
 
 /**
  * Stages with no active LMS ownership (state-machines.md §Lead: `handed_off` is
