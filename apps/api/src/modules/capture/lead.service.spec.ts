@@ -583,7 +583,6 @@ describe('LeadService frozen-interface stubs', () => {
     ['setKycStatus', (s: LeadService, tx: DbTransaction) => s.setKycStatus(LEAD, 'verified', tx)],
     ['recordEligibility', (s: LeadService, tx: DbTransaction) => s.recordEligibility(LEAD, 'snap-1', tx)],
     ['markHandedOff', (s: LeadService, tx: DbTransaction) => s.markHandedOff(LEAD, 'LOS-1', 1, tx)],
-    ['merge', (s: LeadService, tx: DbTransaction) => s.merge(LEAD, 'dup-1', 'merge', tx)],
   ] as Array<[string, (s: LeadService, tx: DbTransaction) => Promise<void>]>)(
     '%s throws a typed INTERNAL_ERROR until its FR lands (never a silent no-op)',
     async (_name, call) => {
@@ -594,4 +593,231 @@ describe('LeadService frozen-interface stubs', () => {
       expect(t.updateSet).not.toHaveBeenCalled();
     },
   );
+});
+
+// ─────────────────────────────── FR-021 merge / unmerge mutators ────────────
+
+const MASTER = 'a0000000-0000-0000-0000-00000000000a';
+const ACTOR = 'bm-1';
+
+/**
+ * Queue-based chainable tx fake for the two-UPDATE merge/unmerge mutators:
+ * each `executeTakeFirst()` shifts the next queued result (duplicate row
+ * first, master row second; `undefined` = zero rows → CONFLICT).
+ */
+function makeQueueTx(results: ReadonlyArray<unknown>): {
+  tx: DbTransaction;
+  updateSet: jest.Mock;
+  whereCalls: jest.Mock;
+} {
+  const queue = [...results];
+  const updateSet = jest.fn();
+  const whereCalls = jest.fn();
+  const chain: Record<string, unknown> = {};
+  const self = () => chain;
+  for (const m of ['updateTable', 'returning']) {
+    chain[m] = jest.fn(self);
+  }
+  chain['set'] = jest.fn((v: unknown) => {
+    updateSet(v);
+    return chain;
+  });
+  chain['where'] = jest.fn((...args: unknown[]) => {
+    whereCalls(...args);
+    return chain;
+  });
+  chain['executeTakeFirst'] = jest.fn(async () => queue.shift());
+  return { tx: chain as unknown as DbTransaction, updateSet, whereCalls };
+}
+
+/** Evaluates the captured `.set()` callback with a recording `eb` fake. */
+function evalSetPatch(updateSet: jest.Mock, call: number): { patch: Record<string, unknown>; eb: jest.Mock } {
+  const setFn = updateSet.mock.calls[call]?.[0] as (eb: jest.Mock) => Record<string, unknown>;
+  const eb = jest.fn(() => 'version+1');
+  return { patch: setFn(eb), eb };
+}
+
+describe('LeadService.merge (FR-021)', () => {
+  const input = {
+    org_id: ORG,
+    actor_id: ACTOR,
+    expected_duplicate_version: 5,
+    expected_master_version: 9,
+    master_updates: {},
+    audit_detail: { relinked_ids: { documents: ['d1'], consents: ['c1'], tasks: [] } },
+  };
+
+  it('marks the duplicate merged and bumps both versions under their optimistic locks', async () => {
+    const t = makeQueueTx([{ version: 6 }, { version: 10 }]);
+    const audit = fakeAudit();
+    const outbox = fakeOutbox();
+    const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    const result = await service.merge(MASTER, LEAD, 'Duplicate of master', input, t.tx);
+
+    expect(result).toEqual({ duplicate_version: 6, master_version: 10 });
+    // Duplicate row: duplicate_status=merged + master_lead_id, version bump (eb).
+    const dup = evalSetPatch(t.updateSet, 0);
+    expect(dup.patch['duplicate_status']).toBe('merged');
+    expect(dup.patch['master_lead_id']).toBe(MASTER);
+    expect(dup.patch['updated_by']).toBe(ACTOR);
+    expect(dup.eb).toHaveBeenCalledWith('version', '+', 1);
+    // Master row: version bump only when no field-precedence winners (T-018).
+    const master = evalSetPatch(t.updateSet, 1);
+    expect(Object.keys(master.patch).sort()).toEqual(['updated_at', 'updated_by', 'version']);
+    // Optimistic locks: WHERE version = expected on each row (LLD §Optimistic locking).
+    expect(t.whereCalls).toHaveBeenCalledWith('version', '=', 5);
+    expect(t.whereCalls).toHaveBeenCalledWith('version', '=', 9);
+    expect(t.whereCalls).toHaveBeenCalledWith('org_id', '=', ORG);
+    expect(t.whereCalls).toHaveBeenCalledWith('deleted_at', 'is', null);
+  });
+
+  it('writes the master field-precedence winners (owner/branch/priority) on the master row', async () => {
+    const t = makeQueueTx([{ version: 6 }, { version: 10 }]);
+    const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await service.merge(
+      MASTER,
+      LEAD,
+      'merge',
+      { ...input, master_updates: { owner_id: 'rm-9', branch_id: 'branch-2', priority: 'high' } },
+      t.tx,
+    );
+
+    const master = evalSetPatch(t.updateSet, 1);
+    expect(master.patch['owner_id']).toBe('rm-9');
+    expect(master.patch['branch_id']).toBe('branch-2');
+    expect(master.patch['priority']).toBe('high');
+  });
+
+  it('T-022: appends ONE lead_merge audit row on the master carrying the E3 detail, in the same tx', async () => {
+    const t = makeQueueTx([{ version: 6 }, { version: 10 }]);
+    const audit = fakeAudit();
+    const outbox = fakeOutbox();
+    const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    await service.merge(MASTER, LEAD, 'Duplicate of master', input, t.tx);
+
+    expect(audit.append).toHaveBeenCalledTimes(1);
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'lead_merge',
+        entity_type: 'leads',
+        entity_id: MASTER,
+        lead_id: MASTER,
+        actor_id: ACTOR,
+        org_id: ORG,
+        detail: expect.objectContaining({
+          action: 'merged',
+          duplicate_lead_id: LEAD,
+          reason: 'Duplicate of master',
+          relinked_ids: { documents: ['d1'], consents: ['c1'], tasks: [] },
+        }),
+      }),
+      t.tx,
+    );
+    // Outbox event in the OBJECT form (CORRECTIONS.md), same tx.
+    expect(outbox.emit).toHaveBeenCalledWith(
+      {
+        event_code: 'LEAD_STAGE_CHANGED',
+        aggregate_type: 'leads',
+        aggregate_id: MASTER,
+        payload: { lead_id: MASTER, duplicate_lead_id: LEAD, action: 'merged', actor_id: ACTOR },
+      },
+      t.tx,
+    );
+  });
+
+  it('T-011: stale duplicate expected_version → CONFLICT before any audit/outbox', async () => {
+    const t = makeQueueTx([undefined]);
+    const audit = fakeAudit();
+    const outbox = fakeOutbox();
+    const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    await expect(service.merge(MASTER, LEAD, 'merge', input, t.tx)).rejects.toMatchObject({
+      code: ERROR_CODES.CONFLICT,
+    });
+    expect(audit.append).not.toHaveBeenCalled();
+    expect(outbox.emit).not.toHaveBeenCalled();
+  });
+
+  it('T-012: master concurrently updated → CONFLICT (the whole tx rolls back, no audit/outbox)', async () => {
+    const t = makeQueueTx([{ version: 6 }, undefined]);
+    const audit = fakeAudit();
+    const service = new LeadService(audit as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await expect(service.merge(MASTER, LEAD, 'merge', input, t.tx)).rejects.toMatchObject({
+      code: ERROR_CODES.CONFLICT,
+    });
+    expect(audit.append).not.toHaveBeenCalled();
+  });
+});
+
+describe('LeadService.unmerge (FR-021)', () => {
+  const input = {
+    org_id: ORG,
+    actor_id: ACTOR,
+    expected_master_version: 12,
+    audit_detail: { documents_restored: 3 },
+  };
+
+  it('restores the duplicate (status none, master_lead_id NULL) and bumps the master under its lock', async () => {
+    const t = makeQueueTx([{ version: 7 }, { version: 13 }]);
+    const audit = fakeAudit();
+    const outbox = fakeOutbox();
+    const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    const result = await service.unmerge(LEAD, MASTER, 'Merged in error', input, t.tx);
+
+    expect(result).toEqual({ duplicate_version: 7, master_version: 13 });
+    const dup = evalSetPatch(t.updateSet, 0);
+    expect(dup.patch['duplicate_status']).toBe('none');
+    expect(dup.patch['master_lead_id']).toBeNull();
+    // The restore is guarded by the merged-into-this-master state; the master
+    // takes the client's optimistic lock (UnmergeLeadDto.expected_master_version).
+    expect(t.whereCalls).toHaveBeenCalledWith('duplicate_status', '=', 'merged');
+    expect(t.whereCalls).toHaveBeenCalledWith('master_lead_id', '=', MASTER);
+    expect(t.whereCalls).toHaveBeenCalledWith('version', '=', 12);
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'lead_merge',
+        entity_id: MASTER,
+        detail: expect.objectContaining({
+          action: 'unmerged',
+          duplicate_lead_id: LEAD,
+          reason: 'Merged in error',
+          documents_restored: 3,
+        }),
+      }),
+      t.tx,
+    );
+    expect(outbox.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_code: 'LEAD_STAGE_CHANGED',
+        aggregate_id: MASTER,
+        payload: expect.objectContaining({ action: 'unmerged' }),
+      }),
+      t.tx,
+    );
+  });
+
+  it('CONFLICT when the lead is no longer merged into that master (concurrent change)', async () => {
+    const t = makeQueueTx([undefined]);
+    const audit = fakeAudit();
+    const service = new LeadService(audit as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await expect(service.unmerge(LEAD, MASTER, 'unmerge', input, t.tx)).rejects.toMatchObject({
+      code: ERROR_CODES.CONFLICT,
+    });
+    expect(audit.append).not.toHaveBeenCalled();
+  });
+
+  it('CONFLICT on a stale expected_master_version (optimistic lock)', async () => {
+    const t = makeQueueTx([{ version: 7 }, undefined]);
+    const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await expect(service.unmerge(LEAD, MASTER, 'unmerge', input, t.tx)).rejects.toMatchObject({
+      code: ERROR_CODES.CONFLICT,
+    });
+  });
 });
