@@ -4,14 +4,18 @@ import { ApiClientError, fromApiError, fromNetwork, fromStatus } from './errors'
 /**
  * Web → API client. Single entry point for every call to the NestJS backend.
  *
- * Contract alignment (do not diverge):
+ * Contract alignment (do not diverge — FR-001 LLD §"Auth state management"):
  * - Base path `/api/v1` (api-contract `servers.url`), same-origin. Dev reaches the
  *   API via the Vite proxy (vite.config.ts); prod is served behind the same host.
- * - Auth is httpOnly cookies (api-contract: "tokens set as httpOnly cookies").
- *   So every request sends `credentials: 'include'`; there is NO token in JS and
- *   NO `Authorization` header. A `401 AUTH_REQUIRED` triggers ONE transparent
- *   `POST /auth/refresh` (single-flight) then a single retry; if refresh also
- *   fails, the unauthorized handler (wired by the auth layer) fires.
+ * - The access token is held IN-MEMORY (never localStorage) and sent as
+ *   `Authorization: Bearer`. The refresh token is an httpOnly cookie
+ *   (`lms_refresh`), so every request also sends `credentials: 'include'`.
+ * - A `401 AUTH_REQUIRED` triggers ONE transparent `POST /auth/refresh`
+ *   (single-flight; cookie-based) whose response carries a NEW access token that
+ *   replaces the in-memory one, then a single retry. If refresh also fails, the
+ *   unauthorized handler (wired by the auth layer → redirect to /login) fires.
+ * - The auth layer (useAuth) owns the token lifecycle: it calls `setAccessToken`
+ *   after login/MFA and `setAccessToken(null)` on logout.
  * - Every response is the uniform `{ data, meta, error }` envelope. Success
  *   returns `data`; any `error` rejects with `ApiClientError` (taxonomy code).
  */
@@ -29,6 +33,21 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /** Auth endpoints set this so a 401 is not caught by the refresh interceptor. */
   skipAuthRefresh?: boolean;
+}
+
+/** The in-memory access token (FR-001: never persisted). Set by the auth layer
+ * after login/MFA/refresh; sent as `Authorization: Bearer` on every request. */
+let accessToken: string | null = null;
+export function setAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
+/** The body shape of the login/mfa/refresh 200 (FR-001 token response). */
+interface TokenResponse {
+  access_token: string;
+  token_type: 'Bearer';
+  expires_in: number;
+  mfa_required: boolean;
 }
 
 /** Registered by the auth layer; invoked when the session is unrecoverable
@@ -74,11 +93,17 @@ async function parse<T>(res: Response): Promise<T> {
 }
 
 let refreshInFlight: Promise<void> | null = null;
-/** Single-flight `POST /auth/refresh`; concurrent 401s share one refresh. */
+/** Single-flight `POST /auth/refresh`; concurrent 401s share one refresh. The
+ * response carries a new access token (cookie-based refresh) which replaces the
+ * in-memory one so the retried request authenticates. */
 function refreshSession(): Promise<void> {
   if (!refreshInFlight) {
-    refreshInFlight = rawFetch('POST', '/auth/refresh', undefined, { skipAuthRefresh: true })
-      .then(() => undefined)
+    refreshInFlight = rawFetch<TokenResponse>('POST', '/auth/refresh', undefined, {
+      skipAuthRefresh: true,
+    })
+      .then((tokens) => {
+        accessToken = tokens.access_token;
+      })
       .finally(() => {
         refreshInFlight = null;
       });
@@ -100,6 +125,7 @@ async function rawFetch<T>(
       credentials: 'include',
       headers: {
         Accept: 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         ...opts?.headers,
       },

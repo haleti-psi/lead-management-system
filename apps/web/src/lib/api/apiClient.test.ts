@@ -3,7 +3,7 @@
 // Unit tests for the web apiClient (testing-contract: "Frontend unit: Vitest").
 // `fetch` is stubbed; no DOM and no live API are needed.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { apiClient, setUnauthorizedHandler } from './apiClient';
+import { apiClient, setAccessToken, setUnauthorizedHandler } from './apiClient';
 import { isApiClientError } from './errors';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -16,8 +16,14 @@ function jsonResponse(body: unknown, status = 200): Response {
 const ok = <T>(data: T, correlation = 'cid-ok'): Response =>
   jsonResponse({ data, meta: { correlation_id: correlation }, error: null }, 200);
 
+const tokens = (accessToken: string): Response =>
+  ok({ access_token: accessToken, token_type: 'Bearer', expires_in: 900, mfa_required: false });
+
 const errEnvelope = (status: number, error: object, correlation = 'cid-err'): Response =>
   jsonResponse({ data: null, meta: { correlation_id: correlation }, error }, status);
+
+const headerOf = (init: RequestInit, name: string): string | undefined =>
+  (init.headers as Record<string, string>)[name];
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -25,6 +31,7 @@ beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
   setUnauthorizedHandler(null);
+  setAccessToken(null);
 });
 
 afterEach(() => {
@@ -42,6 +49,17 @@ describe('apiClient', () => {
     expect(url).toBe('/api/v1/leads/1');
     expect(init.method).toBe('GET');
     expect(init.credentials).toBe('include');
+    expect(headerOf(init, 'Authorization')).toBeUndefined();
+  });
+
+  it('sends the in-memory access token as a Bearer header once set', async () => {
+    setAccessToken('jwt-abc');
+    fetchMock.mockResolvedValueOnce(ok({ id: '1' }));
+
+    await apiClient.get('/leads/1');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(headerOf(init, 'Authorization')).toBe('Bearer jwt-abc');
   });
 
   it('serialises a JSON body with a Content-Type header', async () => {
@@ -111,10 +129,11 @@ describe('apiClient', () => {
     expect(err.retryable).toBe(true);
   });
 
-  it('refreshes once on 401 then retries the original request', async () => {
+  it('refreshes once on 401, adopts the new token, then retries the original request', async () => {
+    setAccessToken('stale-jwt');
     fetchMock
       .mockResolvedValueOnce(errEnvelope(401, { code: 'AUTH_REQUIRED', message: 'expired', retryable: false }))
-      .mockResolvedValueOnce(ok(null)) // POST /auth/refresh
+      .mockResolvedValueOnce(tokens('fresh-jwt')) // POST /auth/refresh → new access token
       .mockResolvedValueOnce(ok({ id: '1' })); // retried GET
 
     const res = await apiClient.get<{ id: string }>('/leads/1');
@@ -124,6 +143,9 @@ describe('apiClient', () => {
     const [refreshUrl, refreshInit] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(refreshUrl).toBe('/api/v1/auth/refresh');
     expect(refreshInit.method).toBe('POST');
+    // the retry carries the refreshed token, not the stale one
+    const [, retryInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+    expect(headerOf(retryInit, 'Authorization')).toBe('Bearer fresh-jwt');
   });
 
   it('invokes the unauthorized handler when the refresh also fails', async () => {
