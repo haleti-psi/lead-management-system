@@ -1,14 +1,16 @@
 import { Injectable } from '@nestjs/common';
+import { sql } from 'kysely';
 
 import {
   AuditAction,
+  DupAction,
+  DupStatus,
   ERROR_CODES,
   EventCode,
   LeadStage,
   type AllocationMethod,
   type ConsentStatus,
   type CreationChannel,
-  type DupStatus,
   type KycStatus,
   type ProductCode,
 } from '@lms/shared';
@@ -414,6 +416,67 @@ export class LeadService {
     if (result.numUpdatedRows === 0n) {
       throw new DomainException(ERROR_CODES.CONFLICT);
     }
+  }
+
+  /**
+   * FR-020 — recompute the derived `leads.duplicate_status` from the
+   * highest-severity OPEN `duplicate_matches` row (state-machines.md: derived
+   * summary fields are "recomputed on the relevant child change, never set
+   * directly"). Called by `DuplicateService` in the SAME transaction as every
+   * `duplicate_matches` change. Reads M3's table (read-only — owner-WRITES is
+   * the rule, per the FR-020 LLD §Step 4 pseudocode); the `leads` UPDATE runs
+   * under optimistic lock (stale `expectedVersion` → CONFLICT, T21) WITHOUT a
+   * version bump — a derived/volatile system field must not raise false 409s
+   * against concurrent human edits (§11.2). Returns the status written.
+   */
+  async recomputeDuplicateStatus(
+    leadId: string,
+    orgId: string,
+    actorId: string,
+    expectedVersion: number,
+    tx: DbTransaction,
+  ): Promise<DupStatus> {
+    const top = await tx
+      .selectFrom('duplicate_matches')
+      .select(['action'])
+      .where('lead_id', '=', leadId)
+      .where('org_id', '=', orgId)
+      .where('status', '=', 'open')
+      .orderBy(
+        sql`CASE action
+              WHEN 'merged'     THEN 1
+              WHEN 'linked'     THEN 2
+              WHEN 'blocked'    THEN 3
+              WHEN 'queued'     THEN 4
+              WHEN 'warned'     THEN 5
+              WHEN 'overridden' THEN 6
+            END`,
+      )
+      .limit(1)
+      .executeTakeFirst();
+
+    const status: DupStatus =
+      top === undefined
+        ? DupStatus.NONE
+        : top.action === DupAction.MERGED
+          ? DupStatus.MERGED
+          : top.action === DupAction.LINKED
+            ? DupStatus.LINKED
+            : top.action === DupAction.OVERRIDDEN
+              ? DupStatus.NONE // an override clears the flag (UI-T02)
+              : DupStatus.FLAGGED; // blocked | queued | warned
+
+    const result = await tx
+      .updateTable('leads')
+      .set({ duplicate_status: status, updated_by: actorId, updated_at: new Date() })
+      .where('lead_id', '=', leadId)
+      .where('version', '=', expectedVersion)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+    if (result.numUpdatedRows === 0n) {
+      throw new DomainException(ERROR_CODES.CONFLICT);
+    }
+    return status;
   }
 
   /**

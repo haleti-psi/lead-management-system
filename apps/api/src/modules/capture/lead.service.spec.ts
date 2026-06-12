@@ -197,6 +197,52 @@ describe('LeadService.setScore', () => {
   });
 });
 
+describe('LeadService.recomputeDuplicateStatus (FR-020)', () => {
+  function makeService(): LeadService {
+    return new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+  }
+
+  it.each([
+    ['warned', 'flagged'],
+    ['queued', 'flagged'],
+    ['blocked', 'flagged'],
+    ['linked', 'linked'],
+    ['merged', 'merged'],
+    ['overridden', 'none'], // an override clears the flag (UI-T02)
+  ] as const)(
+    'derives %s → duplicate_status=%s from the highest-severity open match',
+    async (action, expected) => {
+      const t = makeTx({ selectedRow: { action }, updatedRows: 1n });
+      const status = await makeService().recomputeDuplicateStatus(LEAD, ORG, 'actor-1', 3, t.tx);
+
+      expect(status).toBe(expected);
+      expect(t.updateSet).toHaveBeenCalledWith(
+        expect.objectContaining({ duplicate_status: expected, updated_by: 'actor-1' }),
+      );
+      expect(t.whereCalls).toHaveBeenCalledWith('version', '=', 3);
+    },
+  );
+
+  it('INV-04: with no open matches the status recomputes to none', async () => {
+    const t = makeTx({ selectedRow: undefined, updatedRows: 1n });
+    await expect(makeService().recomputeDuplicateStatus(LEAD, ORG, 'actor-1', 1, t.tx)).resolves.toBe('none');
+  });
+
+  it('does NOT bump the version (derived field — no false 409s for human edits)', async () => {
+    const t = makeTx({ selectedRow: { action: 'warned' }, updatedRows: 1n });
+    await makeService().recomputeDuplicateStatus(LEAD, ORG, 'actor-1', 3, t.tx);
+    const patch = t.updateSet.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(patch['version']).toBeUndefined();
+  });
+
+  it('T21: throws CONFLICT when the expectedVersion is stale (optimistic lock)', async () => {
+    const t = makeTx({ selectedRow: { action: 'warned' }, updatedRows: 0n });
+    await expect(makeService().recomputeDuplicateStatus(LEAD, ORG, 'actor-1', 9, t.tx)).rejects.toMatchObject({
+      code: ERROR_CODES.CONFLICT,
+    });
+  });
+});
+
 describe('LeadService.assignOwner', () => {
   const baseRow = {
     lead_id: LEAD,

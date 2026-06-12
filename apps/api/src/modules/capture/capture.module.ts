@@ -14,13 +14,11 @@ import { LeadIdentityRepository } from './lead-identity.repository';
 import { LeadService } from './lead.service';
 import { PublicCaptureController } from './public-capture.controller';
 import { SourceAttributionRepository } from './source-attribution.repository';
-import { DUPLICATE_CHECK_PORT } from './ports/duplicate-check.port';
 import { GcsImportFileStoreAdapter } from './ports/gcs-import-file-store.adapter';
 import { IMPORT_DISPATCH_PORT } from './ports/import-dispatch.port';
 import { IMPORT_FILE_STORE_PORT } from './ports/import-file-store.port';
 import { InMemoryImportFileStoreAdapter } from './ports/in-memory-import-file-store.adapter';
 import { InlineImportDispatchAdapter } from './ports/inline-import-dispatch.adapter';
-import { NoopDuplicateCheckAdapter } from './ports/noop-duplicate-check.adapter';
 import { NoopScoringAdapter, SCORING_PORT } from './ports/scoring.port';
 
 /**
@@ -37,8 +35,10 @@ import { NoopScoringAdapter, SCORING_PORT } from './ports/scoring.port';
  *   - {@link LeadReassignmentAdapter} — exported for AdminModule, which rebinds
  *     its FR-130 `LEAD_REASSIGN_PORT` placeholder to it (admin.module.ts).
  *
- * FR-020 (dedupe) / FR-011 (scoring) are not built: their ports are bound to
- * logged no-op stubs here and rebound by the owning FRs.
+ * FR-011 (scoring) is not built: its port is bound to a logged no-op stub here
+ * and rebound by the owning FR. FR-020's `DUPLICATE_CHECK_PORT` is now bound by
+ * the @Global DedupeModule (real `DuplicateCheckAdapter` — the documented
+ * rebind), so it is no longer provided here.
  */
 @Global()
 @Module({
@@ -56,8 +56,7 @@ import { NoopScoringAdapter, SCORING_PORT } from './ports/scoring.port';
     LeadSlaWriterAdapter,
     LeadReassignmentAdapter,
     { provide: LEAD_SLA_WRITER_PORT, useExisting: LeadSlaWriterAdapter },
-    // Consumer-side seams awaiting their owner FRs (FR-020 / FR-011).
-    { provide: DUPLICATE_CHECK_PORT, useClass: NoopDuplicateCheckAdapter },
+    // Consumer-side seam awaiting its owner FR (FR-011).
     { provide: SCORING_PORT, useClass: NoopScoringAdapter },
     // Bulk-import infrastructure: GCS in production, in-memory in dev/test
     // (outbox-publisher / retry-queue convention — no live GCP in the suite).
@@ -82,7 +81,6 @@ import { NoopScoringAdapter, SCORING_PORT } from './ports/scoring.port';
     LeadSlaWriterAdapter,
     LeadReassignmentAdapter,
     LEAD_SLA_WRITER_PORT,
-    DUPLICATE_CHECK_PORT,
     SCORING_PORT,
   ],
 })
