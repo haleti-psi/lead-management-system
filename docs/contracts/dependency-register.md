@@ -36,6 +36,11 @@ Derived from `docs/architecture.md` (§2, ADRs). Versions are minimums; pin exac
 | Build | `vite`, `@vitejs/plugin-react` | ^5 / ^4 | plugin-react is on its own 4.x line |
 | Styling | `tailwindcss` | ^3 | |
 | Components | `shadcn/ui` (Radix primitives) | latest | |
+| · class utils | `clsx` + `tailwind-merge` | ^2 | the shadcn `cn()` helper |
+| · variants | `class-variance-authority` | ^0.7 | shadcn component variants |
+| · primitives | `@radix-ui/react-slot`, `@radix-ui/react-label` | ^1 / ^2 | Button `asChild`, Label |
+| · animation | `tailwindcss-animate` | ^1 | shadcn animation preset |
+| Toasts | `sonner` | ^1 | shadcn-default toast (Toaster + `toast()`) |
 | Icons | `lucide-react` | latest | |
 | Server state | `@tanstack/react-query` | ^5 | |
 | Forms | `react-hook-form` + `zod` + `@hookform/resolvers` | ^7 / ^3.23 | |
