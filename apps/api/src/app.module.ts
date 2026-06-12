@@ -21,6 +21,7 @@ import { OutboxModule } from './core/outbox';
 import { RedisModule } from './core/redis';
 import { SlaModule } from './core/sla';
 import { AdminModule } from './modules/admin/admin.module';
+import { AllocationModule } from './modules/allocation/allocation.module';
 import { CaptureModule } from './modules/capture/capture.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { IdentityModule } from './modules/identity/identity.module';
@@ -70,6 +71,11 @@ import { HealthController } from './health.controller';
     // global SlaEngine; LeadReassignmentAdapter consumed by AdminModule).
     // Registered before AdminModule, whose LEAD_REASSIGN_PORT now resolves to it.
     CaptureModule,
+    // FR-030 (M4 allocation). @Global: binds capture's ALLOCATION_PORT so lead
+    // creation triggers rules-based allocation inside the creating transaction;
+    // owns allocation_rules (its slug is excluded from FR-131's generic
+    // /admin/{masterResource} allow-list — no route collision).
+    AllocationModule,
     EngagementModule,
     // FR-040 (M5 product configuration). Owns the `product_config` activator,
     // which self-registers with the shared FR-132 ConfigActivatorRegistry.

@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
+import { AllocationMethod } from '@lms/shared';
+
 import type { DbTransaction } from '../../../core/db';
 import type { LeadSlaWriterPort } from '../../../core/sla';
+import { SYSTEM_ACTOR_ID } from '../capture.constants';
 import { LeadService } from '../lead.service';
 
 /**
@@ -24,13 +27,25 @@ export class LeadSlaWriterAdapter implements LeadSlaWriterPort {
 
   /**
    * SLA-breach reassignment. `LeadService.assignOwner` is idempotent (skips when
-   * `newOwnerId` already owns the lead — the port contract) and writes the audit
-   * + LEAD_ASSIGNED outbox atomically in the caller's tx.
+   * `newOwnerId` already owns the assigned lead — the port contract) and writes
+   * the stage_history/audit + LEAD_ASSIGNED outbox atomically in the caller's
+   * tx. System-originated (`SYSTEM_ACTOR_ID`), method `escalation`; the team is
+   * left unchanged (an SLA escalation moves the owner, not the team).
    */
-  reassignOwner(
+  async reassignOwner(
     args: { leadId: string; newOwnerId: string; reason: string; expectedVersion: number },
     tx: DbTransaction,
   ): Promise<void> {
-    return this.leads.assignOwner(args.leadId, args.newOwnerId, args.reason, tx);
+    await this.leads.assignOwner(
+      args.leadId,
+      {
+        ownerId: args.newOwnerId,
+        reason: args.reason,
+        method: AllocationMethod.ESCALATION,
+        actorId: SYSTEM_ACTOR_ID,
+        expectedVersion: args.expectedVersion,
+      },
+      tx,
+    );
   }
 }

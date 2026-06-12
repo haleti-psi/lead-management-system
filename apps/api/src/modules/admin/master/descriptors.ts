@@ -22,10 +22,6 @@ import {
   PatchRejectionReasonDto,
 } from './dto/rejection-reason.dto';
 import {
-  CreateAllocationRuleDto,
-  PatchAllocationRuleDto,
-} from './dto/allocation-rule.dto';
-import {
   CreateRetentionPolicyDto,
   PatchRetentionPolicyDto,
 } from './dto/retention-policy.dto';
@@ -328,99 +324,6 @@ function toRejectionView(row: {
     primaryReason: row.primary_reason,
     subReason: row.sub_reason,
     requiresRemarks: row.requires_remarks,
-    isActive: row.is_active,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-// ───────────────────────── allocation_rules (global, is_active) ─────────────────────────
-
-class AllocationRuleDescriptor implements MasterResourceDescriptor {
-  readonly slug = 'allocation-rules';
-  readonly configType = 'allocation_rule';
-  readonly entityType = 'allocation_rule';
-  readonly scopeModel = 'global' as const;
-  readonly activenessModel = 'boolean' as const;
-  readonly createSchema = CreateAllocationRuleDto;
-  readonly patchSchema = PatchAllocationRuleDto;
-
-  async list(executor: KyselyDb, args: ListArgs): Promise<MasterListPage> {
-    let q = executor.selectFrom('allocation_rules').selectAll().where('org_id', '=', ORG_ID_DEFAULT);
-    if (args.isActive !== undefined) q = q.where('is_active', '=', args.isActive);
-    const rows = await q.orderBy('priority_order', 'asc').limit(args.limit).offset((args.page - 1) * args.limit).execute();
-    let c = executor.selectFrom('allocation_rules').select((eb) => eb.fn.countAll<string>().as('count')).where('org_id', '=', ORG_ID_DEFAULT);
-    if (args.isActive !== undefined) c = c.where('is_active', '=', args.isActive);
-    const { count } = await c.executeTakeFirstOrThrow();
-    return { rows: rows.map(toAllocationView), total: Number(count) };
-  }
-
-  async findById(executor: KyselyDb | DbTransaction, id: string): Promise<MasterRecordView | undefined> {
-    const row = await executor.selectFrom('allocation_rules').selectAll().where('allocation_rule_id', '=', id).where('org_id', '=', ORG_ID_DEFAULT).executeTakeFirst();
-    return row != null ? toAllocationView(row) : undefined;
-  }
-
-  async insert(tx: DbTransaction, body: unknown, actorId: string) {
-    const dto = body as CreateAllocationRuleDto;
-    const row = await tx
-      .insertInto('allocation_rules')
-      .values({
-        org_id: ORG_ID_DEFAULT,
-        name: dto.name,
-        priority_order: dto.priorityOrder,
-        method: dto.method,
-        criteria: JSON.stringify(dto.criteria),
-        target: JSON.stringify(dto.target),
-        capacity_limit: dto.capacityLimit ?? null,
-        is_active: true,
-        created_by: actorId,
-        updated_by: actorId,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    return { record: toAllocationView(row), version: 1, diff: { op: 'create', after: { name: dto.name, priority_order: dto.priorityOrder } } };
-  }
-
-  async update(tx: DbTransaction, existing: MasterRecordView, body: unknown, actorId: string) {
-    const dto = body as PatchAllocationRuleDto;
-    const row = await tx
-      .updateTable('allocation_rules')
-      .set({
-        ...(dto.name != null && { name: dto.name }),
-        ...(dto.priorityOrder != null && { priority_order: dto.priorityOrder }),
-        ...(dto.method != null && { method: dto.method }),
-        ...(dto.criteria != null && { criteria: JSON.stringify(dto.criteria) }),
-        ...(dto.target != null && { target: JSON.stringify(dto.target) }),
-        ...(dto.capacityLimit != null && { capacity_limit: dto.capacityLimit }),
-        ...(dto.isActive != null && { is_active: dto.isActive }),
-        updated_by: actorId,
-        updated_at: new Date(),
-      })
-      .where('allocation_rule_id', '=', existing.id)
-      .where('org_id', '=', ORG_ID_DEFAULT)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    return { record: toAllocationView(row), version: 1, diff: { op: 'update', changed: Object.keys(dto) } };
-  }
-
-  async assertNotInUse(): Promise<void> {
-    // Deactivation only flips is_active=false; the rule simply stops participating
-    // in allocation. No hard referential block (LLD: rule may be deactivated).
-  }
-}
-
-function toAllocationView(row: {
-  allocation_rule_id: string; name: string; priority_order: number; method: string; criteria: unknown; target: unknown; capacity_limit: number | null; is_active: boolean; created_at: Date; updated_at: Date;
-}): MasterRecordView {
-  return {
-    id: row.allocation_rule_id,
-    allocationRuleId: row.allocation_rule_id,
-    name: row.name,
-    priorityOrder: row.priority_order,
-    method: row.method,
-    criteria: row.criteria,
-    target: row.target,
-    capacityLimit: row.capacity_limit,
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -956,16 +859,15 @@ function toDlaView(row: {
  * concrete controller in another committed FR. Resources owned elsewhere are
  * deliberately absent (see master.constants.ts): users/roles/teams (FR-130),
  * product-configs (FR-040), sla-policies (FR-104), schemes (FR-042),
- * webhooks (FR-140), break-glass (FR-003).
+ * allocation-rules (FR-030), webhooks (FR-140), break-glass (FR-003).
  *
- * NOTE: ownership of partners/communication-templates/allocation-rules/retention
- * is pending cross-FR review (other modules may claim these); left here as-is.
+ * NOTE: ownership of partners/communication-templates/retention is pending
+ * cross-FR review (other modules may claim these); left here as-is.
  */
 export const MASTER_DESCRIPTORS: readonly MasterResourceDescriptor[] = [
   new RegionDescriptor(),
   new BranchDescriptor(),
   new RejectionReasonDescriptor(),
-  new AllocationRuleDescriptor(),
   new BusinessCalendarDescriptor(),
   new RetentionPolicyDescriptor(),
   new PartnerDescriptor(),

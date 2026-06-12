@@ -22,6 +22,7 @@ import type { CustomerProfileRepository } from './customer-profile.repository';
 import type { LeadIdentityRepository } from './lead-identity.repository';
 import type { LeadService } from './lead.service';
 import type { SourceAttributionRepository } from './source-attribution.repository';
+import type { AllocationPort } from './ports/allocation.port';
 import type { DuplicateCheckPort } from './ports/duplicate-check.port';
 import type { ImportFileStorePort } from './ports/import-file-store.port';
 import type { ScoringPort } from './ports/scoring.port';
@@ -79,6 +80,7 @@ interface Harness {
   entitlements: { loadActorEntitlement: jest.Mock };
   duplicates: { matchSync: jest.Mock; matchAsync: jest.Mock };
   scoring: { evaluateAsync: jest.Mock };
+  allocation: { allocate: jest.Mock };
   productDetailInsert: jest.Mock;
   consentInsert: jest.Mock;
 }
@@ -135,6 +137,8 @@ function makeHarness(opts: {
   cachedIdempotent?: unknown;
   dupResult?: { blocked: boolean; matches: unknown[] };
   partnerEntitlement?: { partnerId: string | null } | undefined;
+  /** FR-030 in-tx allocation outcome; defaults to the no-match pass-through. */
+  allocationOutcome?: Record<string, unknown>;
 } = {}): Harness {
   const productDetailInsert = jest.fn().mockResolvedValue(undefined);
   const consentInsert = jest.fn().mockResolvedValue(undefined);
@@ -162,6 +166,19 @@ function makeHarness(opts: {
     matchAsync: jest.fn().mockResolvedValue(undefined),
   };
   const scoring = { evaluateAsync: jest.fn().mockResolvedValue(undefined) };
+  const allocation = {
+    allocate: jest.fn().mockResolvedValue(
+      opts.allocationOutcome ?? {
+        ownerId: null,
+        teamId: null,
+        stage: 'captured',
+        version: 1,
+        reason: 'no_rule_match',
+        method: null,
+        allocationRuleId: null,
+      },
+    ),
+  };
   const codeGenerator = { nextLeadCode: jest.fn().mockResolvedValue('LD-2026-000123') };
   const files: ImportFileStorePort = {
     put: jest.fn().mockResolvedValue('imports/x/source.csv'),
@@ -197,6 +214,7 @@ function makeHarness(opts: {
     duplicates as unknown as DuplicateCheckPort,
     scoring as unknown as ScoringPort,
     files,
+    allocation as unknown as AllocationPort,
     logger as never,
   );
 
@@ -214,6 +232,7 @@ function makeHarness(opts: {
     entitlements,
     duplicates,
     scoring,
+    allocation,
     productDetailInsert,
     consentInsert,
   };
@@ -444,6 +463,49 @@ describe('CaptureService.createLead', () => {
     // 5i/5j post-commit hooks fired.
     expect(h.scoring.evaluateAsync).toHaveBeenCalledWith(LEAD_ID);
     expect(h.duplicates.matchAsync).toHaveBeenCalledWith(LEAD_ID);
+  });
+
+  it('T34 analogue (FR-030): triggers allocation INSIDE the creating tx and reflects the assigned stage', async () => {
+    const h = makeHarness({
+      allocationOutcome: {
+        ownerId: 'owner-rm-1',
+        teamId: 'team-1',
+        stage: 'assigned',
+        version: 2,
+        reason: 'rule:CV Branch Rule',
+        method: 'round_robin',
+        allocationRuleId: 'rule-1',
+      },
+    });
+
+    const result = await h.service.createLead(validDto(), ctx());
+
+    // E11: system-actor trigger with the fresh lead's version, same sentinel tx.
+    expect(h.allocation.allocate).toHaveBeenCalledTimes(1);
+    expect(h.allocation.allocate).toHaveBeenCalledWith(
+      {
+        leadId: LEAD_ID,
+        orgId: ORG,
+        actorId: '00000000-0000-0000-0000-000000000000',
+        expectedVersion: 1,
+      },
+      expect.objectContaining({ insertInto: expect.any(Function) }),
+    );
+    // The 201 payload reflects the post-allocation stage (captured → assigned).
+    expect(result.data.stage).toBe('assigned');
+  });
+
+  it('FR-030: an allocation failure inside the tx propagates (rollback) — no partial capture survives', async () => {
+    const h = makeHarness();
+    h.allocation.allocate.mockRejectedValueOnce(new Error('allocation exploded'));
+
+    await expect(
+      h.service.createLead(validDto(), ctx({ idempotencyKey: 'idem-fr030' })),
+    ).rejects.toThrow('allocation exploded');
+    // The throw happened inside uow.run — the real UnitOfWork rolls back; the
+    // idempotency cache and post-commit hooks must not run.
+    expect(h.idempotency.set).not.toHaveBeenCalled();
+    expect(h.scoring.evaluateAsync).not.toHaveBeenCalled();
   });
 
   it('I-01/A-03 analogue: replays the cached payload without touching the DB', async () => {

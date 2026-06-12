@@ -21,7 +21,7 @@ describe('LeadSlaWriterAdapter', () => {
   });
 
   it('reassignOwner delegates to LeadService.assignOwner (idempotent in the service)', async () => {
-    const leads = { assignOwner: jest.fn().mockResolvedValue(undefined) };
+    const leads = { assignOwner: jest.fn().mockResolvedValue({ lead_id: 'lead-1' }) };
     const adapter = new LeadSlaWriterAdapter(leads as unknown as LeadService);
 
     await adapter.reassignOwner(
@@ -29,6 +29,18 @@ describe('LeadSlaWriterAdapter', () => {
       tx,
     );
 
-    expect(leads.assignOwner).toHaveBeenCalledWith('lead-1', 'owner-2', 'SLA breach', tx);
+    // System-originated escalation reassignment under the port's optimistic lock;
+    // team untouched (no teamId key) — FR-030 AssignOwnerInput shape.
+    expect(leads.assignOwner).toHaveBeenCalledWith(
+      'lead-1',
+      {
+        ownerId: 'owner-2',
+        reason: 'SLA breach',
+        method: 'escalation',
+        actorId: '00000000-0000-0000-0000-000000000000',
+        expectedVersion: 4,
+      },
+      tx,
+    );
   });
 });

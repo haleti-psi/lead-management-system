@@ -3,7 +3,7 @@ import { ERROR_CODES } from '@lms/shared';
 import type { AuditAppender } from '../../core/audit';
 import type { DbTransaction } from '../../core/db';
 import type { OutboxService } from '../../core/outbox';
-import { LeadService, type CreateLeadInput } from './lead.service';
+import { LeadService, type AssignOwnerInput, type CreateLeadInput } from './lead.service';
 
 /**
  * FR-010 unit tests for {@link LeadService} — the sole writer of `leads`
@@ -63,13 +63,17 @@ interface TxFake {
 function makeTx(opts: {
   selectedRow?: unknown;
   updatedRows?: bigint;
+  /** Row the UPDATE…RETURNING path resolves (assignOwner); undefined = 0 rows → CONFLICT. */
+  updatedRow?: unknown;
   insertedRow?: unknown;
   returningRows?: unknown[];
 } = {}): TxFake {
   const insertValues = jest.fn();
   const updateSet = jest.fn();
   const whereCalls = jest.fn();
-  const executeTakeFirst = jest.fn(async () => ({ numUpdatedRows: opts.updatedRows ?? 1n }));
+  const executeTakeFirst = jest.fn(async () =>
+    'updatedRow' in opts ? opts.updatedRow : { numUpdatedRows: opts.updatedRows ?? 1n },
+  );
   const executeTakeFirstOrThrow = jest.fn(async () => opts.insertedRow ?? { lead_id: LEAD });
   const execute = jest.fn(async () => opts.returningRows ?? []);
   const selectRow = jest.fn(async () => opts.selectedRow);
@@ -194,38 +198,69 @@ describe('LeadService.setScore', () => {
 });
 
 describe('LeadService.assignOwner', () => {
-  it('skips the write when the owner is unchanged (idempotent per the SLA port contract)', async () => {
+  const baseRow = {
+    lead_id: LEAD,
+    org_id: ORG,
+    lead_code: 'LD-2026-000123',
+    owner_id: 'owner-old',
+    team_id: 'team-1',
+    stage: 'assigned',
+    version: 2,
+  };
+
+  function assignInput(overrides: Partial<AssignOwnerInput> = {}): AssignOwnerInput {
+    return {
+      ownerId: 'owner-new',
+      teamId: 'team-2',
+      reason: 'Customer requested language-match RM',
+      method: 'manual',
+      actorId: 'actor-bm',
+      expectedVersion: 2,
+      ...overrides,
+    };
+  }
+
+  it('skips the write when the owner already owns the assigned lead (idempotent — SLA port contract)', async () => {
     const audit = fakeAudit();
     const outbox = fakeOutbox();
-    const t = makeTx({
-      selectedRow: { lead_id: LEAD, org_id: ORG, lead_code: 'LD-2026-000123', owner_id: 'owner-1', version: 2 },
-    });
+    const t = makeTx({ selectedRow: { ...baseRow, owner_id: 'owner-1' } });
     const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
 
-    await service.assignOwner(LEAD, 'owner-1', 'SLA breach', t.tx);
+    const result = await service.assignOwner(LEAD, assignInput({ ownerId: 'owner-1' }), t.tx);
 
+    expect(result).toEqual({ lead_id: LEAD, owner_id: 'owner-1', team_id: 'team-1', stage: 'assigned', version: 2 });
     expect(t.updateSet).not.toHaveBeenCalled();
     expect(audit.append).not.toHaveBeenCalled();
     expect(outbox.emit).not.toHaveBeenCalled();
   });
 
-  it('updates the owner and emits audit(reassign) + LEAD_ASSIGNED outbox in the same tx', async () => {
+  it('updates owner under WHERE version=expectedVersion and emits audit(reassign) + LEAD_ASSIGNED in the same tx', async () => {
     const audit = fakeAudit();
     const outbox = fakeOutbox();
     const t = makeTx({
-      selectedRow: { lead_id: LEAD, org_id: ORG, lead_code: 'LD-2026-000123', owner_id: 'owner-old', version: 2 },
-      updatedRows: 1n,
+      selectedRow: baseRow,
+      updatedRow: { lead_id: LEAD, owner_id: 'owner-new', team_id: 'team-2', stage: 'assigned', version: 3 },
     });
     const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
 
-    await service.assignOwner(LEAD, 'owner-new', 'SLA breach reassignment', t.tx);
+    const result = await service.assignOwner(LEAD, assignInput({ detail: { override_capacity: true } }), t.tx);
 
+    expect(result).toEqual({ lead_id: LEAD, owner_id: 'owner-new', team_id: 'team-2', stage: 'assigned', version: 3 });
+    expect(t.whereCalls).toHaveBeenCalledWith('version', '=', 2);
+    // Already-assigned lead: owner changes, stage stays — NO stage_history row (INV-02).
+    expect(t.insertValues).not.toHaveBeenCalled();
     expect(audit.append).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'reassign',
         entity_type: 'leads',
+        actor_id: 'actor-bm',
         lead_id: LEAD,
-        detail: expect.objectContaining({ previous_owner_id: 'owner-old', new_owner_id: 'owner-new' }),
+        detail: expect.objectContaining({
+          previous_owner_id: 'owner-old',
+          new_owner_id: 'owner-new',
+          method: 'manual',
+          override_capacity: true,
+        }),
       }),
       t.tx,
     );
@@ -234,43 +269,192 @@ describe('LeadService.assignOwner', () => {
         event_code: 'LEAD_ASSIGNED',
         aggregate_type: 'leads',
         aggregate_id: LEAD,
+        payload: expect.objectContaining({ owner_id: 'owner-new', team_id: 'team-2' }),
       }),
       t.tx,
     );
   });
 
-  it('audits allocate (not reassign) on first assignment from a null owner', async () => {
+  it('regression: reassign at stage=qualified moves the owner only — stage untouched, NO stage_history; audit + outbox still in the same tx', async () => {
+    const audit = fakeAudit();
+    const outbox = fakeOutbox();
+    const t = makeTx({
+      selectedRow: { ...baseRow, stage: 'qualified' },
+      updatedRow: { lead_id: LEAD, owner_id: 'owner-new', team_id: 'team-2', stage: 'qualified', version: 3 },
+    });
+    const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    const result = await service.assignOwner(
+      LEAD,
+      assignInput({ slaFirstContactDueAt: new Date('2026-06-15T09:00:00Z') }),
+      t.tx,
+    );
+
+    expect(result).toEqual({ lead_id: LEAD, owner_id: 'owner-new', team_id: 'team-2', stage: 'qualified', version: 3 });
+    // qualified → assigned is NOT in the state-machine allow-list: the single
+    // optimistic-lock UPDATE must not touch stage (or reset the SLA timer)…
+    const setFn = t.updateSet.mock.calls[0]?.[0] as (eb: jest.Mock) => Record<string, unknown>;
+    const patch = setFn(jest.fn(() => 'version+1'));
+    expect(patch['owner_id']).toBe('owner-new');
+    expect(patch).not.toHaveProperty('stage');
+    expect(patch).not.toHaveProperty('sla_first_contact_due_at');
+    // …and NO stage_history row is appended (INV-02).
+    expect(t.insertValues).not.toHaveBeenCalled();
+    // Audit (actor = the caller) + LEAD_ASSIGNED outbox still land in the same tx.
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'reassign',
+        actor_id: 'actor-bm',
+        lead_id: LEAD,
+        detail: expect.objectContaining({ previous_owner_id: 'owner-old', new_owner_id: 'owner-new' }),
+      }),
+      t.tx,
+    );
+    expect(outbox.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_code: 'LEAD_ASSIGNED',
+        aggregate_id: LEAD,
+        payload: expect.objectContaining({ owner_id: 'owner-new', team_id: 'team-2' }),
+      }),
+      t.tx,
+    );
+  });
+
+  it('captured → assigned: sets stage + SLA due in ONE update and appends stage_history (T24/T34 analogue)', async () => {
     const audit = fakeAudit();
     const t = makeTx({
-      selectedRow: { lead_id: LEAD, org_id: ORG, lead_code: 'LD-2026-000123', owner_id: null, version: 1 },
-      updatedRows: 1n,
+      selectedRow: { ...baseRow, owner_id: null, stage: 'captured', version: 1 },
+      updatedRow: { lead_id: LEAD, owner_id: 'owner-new', team_id: 'team-2', stage: 'assigned', version: 2 },
+    });
+    const service = new LeadService(audit as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+    const dueAt = new Date('2026-06-15T09:00:00Z');
+
+    await service.assignOwner(
+      LEAD,
+      assignInput({ method: 'round_robin', expectedVersion: 1, slaFirstContactDueAt: dueAt }),
+      t.tx,
+    );
+
+    const setFn = t.updateSet.mock.calls[0]?.[0] as (eb: jest.Mock) => Record<string, unknown>;
+    const patch = setFn(jest.fn(() => 'version+1'));
+    expect(patch['stage']).toBe('assigned');
+    expect(patch['owner_id']).toBe('owner-new');
+    expect(patch['team_id']).toBe('team-2');
+    expect(patch['sla_first_contact_due_at']).toBe(dueAt);
+    // A real transition → stage_history appended in the same tx.
+    expect(t.insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ from_stage: 'captured', to_stage: 'assigned', lead_id: LEAD, actor_id: 'actor-bm' }),
+    );
+    // First assignment from a null owner defaults to audit action 'allocate'.
+    expect(audit.append).toHaveBeenCalledWith(expect.objectContaining({ action: 'allocate' }), t.tx);
+  });
+
+  it('dormant → assigned: the other allow-listed entry to assigned — stage set + stage_history appended', async () => {
+    const audit = fakeAudit();
+    const t = makeTx({
+      selectedRow: { ...baseRow, stage: 'dormant' },
+      updatedRow: { lead_id: LEAD, owner_id: 'owner-new', team_id: 'team-2', stage: 'assigned', version: 3 },
     });
     const service = new LeadService(audit as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
 
-    await service.assignOwner(LEAD, 'owner-new', 'allocation', t.tx);
-    expect(audit.append).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'allocate' }),
-      t.tx,
+    await service.assignOwner(LEAD, assignInput(), t.tx);
+
+    const setFn = t.updateSet.mock.calls[0]?.[0] as (eb: jest.Mock) => Record<string, unknown>;
+    expect(setFn(jest.fn(() => 'version+1'))['stage']).toBe('assigned');
+    expect(t.insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({ from_stage: 'dormant', to_stage: 'assigned', lead_id: LEAD, actor_id: 'actor-bm' }),
     );
+  });
+
+  it('honours an explicit auditAction override (manual reassign of a captured lead → reassign, T25)', async () => {
+    const audit = fakeAudit();
+    const t = makeTx({
+      selectedRow: { ...baseRow, owner_id: null, stage: 'captured', version: 1 },
+      updatedRow: { lead_id: LEAD, owner_id: 'owner-new', team_id: 'team-2', stage: 'assigned', version: 2 },
+    });
+    const service = new LeadService(audit as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await service.assignOwner(LEAD, assignInput({ expectedVersion: 1, auditAction: 'reassign' }), t.tx);
+
+    expect(audit.append).toHaveBeenCalledWith(expect.objectContaining({ action: 'reassign' }), t.tx);
   });
 
   it('throws NOT_FOUND for a missing/deleted lead', async () => {
     const t = makeTx({ selectedRow: undefined });
     const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
-    await expect(service.assignOwner(LEAD, 'owner-new', 'x', t.tx)).rejects.toMatchObject({
+    await expect(service.assignOwner(LEAD, assignInput(), t.tx)).rejects.toMatchObject({
       code: ERROR_CODES.NOT_FOUND,
     });
   });
 
-  it('throws CONFLICT when a concurrent writer bumped the version', async () => {
-    const t = makeTx({
-      selectedRow: { lead_id: LEAD, org_id: ORG, lead_code: 'LD-2026-000123', owner_id: 'owner-old', version: 2 },
-      updatedRows: 0n,
-    });
+  it('throws CONFLICT for a lead in the terminal handed_off stage (T20 analogue)', async () => {
+    const t = makeTx({ selectedRow: { ...baseRow, stage: 'handed_off' } });
     const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
-    await expect(service.assignOwner(LEAD, 'owner-new', 'x', t.tx)).rejects.toMatchObject({
+    await expect(service.assignOwner(LEAD, assignInput(), t.tx)).rejects.toMatchObject({
       code: ERROR_CODES.CONFLICT,
     });
+    expect(t.updateSet).not.toHaveBeenCalled();
+  });
+
+  it('T09: throws CONFLICT when the optimistic-lock UPDATE matches 0 rows (stale expectedVersion)', async () => {
+    const audit = fakeAudit();
+    const outbox = fakeOutbox();
+    const t = makeTx({ selectedRow: baseRow, updatedRow: undefined });
+    const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    await expect(service.assignOwner(LEAD, assignInput({ expectedVersion: 1 }), t.tx)).rejects.toMatchObject({
+      code: ERROR_CODES.CONFLICT,
+    });
+    // Nothing else persists from this mutator on conflict (tx rolls back anyway).
+    expect(audit.append).not.toHaveBeenCalled();
+    expect(outbox.emit).not.toHaveBeenCalled();
+  });
+
+  it('unassigned-pool variant (ownerId=null): parks team, keeps stage/owner, emits LEAD_ASSIGNED only (T07/T35 analogue)', async () => {
+    const audit = fakeAudit();
+    const outbox = fakeOutbox();
+    const t = makeTx({
+      selectedRow: { ...baseRow, owner_id: null, team_id: null, stage: 'captured', version: 1 },
+      updatedRow: { team_id: 'team-pool', version: 2 },
+    });
+    const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    const result = await service.assignOwner(
+      LEAD,
+      assignInput({ ownerId: null, teamId: 'team-pool', reason: 'unassigned_pool', method: null, expectedVersion: 1 }),
+      t.tx,
+    );
+
+    expect(result).toEqual({ lead_id: LEAD, owner_id: null, team_id: 'team-pool', stage: 'captured', version: 2 });
+    // INV-01/INV-02/INV-08: no stage transition, no stage_history, no audit row.
+    expect(t.insertValues).not.toHaveBeenCalled();
+    expect(audit.append).not.toHaveBeenCalled();
+    expect(outbox.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_code: 'LEAD_ASSIGNED',
+        aggregate_id: LEAD,
+        payload: expect.objectContaining({ owner_id: null, team_id: 'team-pool', reason: 'unassigned_pool' }),
+      }),
+      t.tx,
+    );
+  });
+
+  it('unassigned-pool variant without a pool team: no leads write at all, event still emitted', async () => {
+    const outbox = fakeOutbox();
+    const t = makeTx({
+      selectedRow: { ...baseRow, owner_id: null, team_id: null, stage: 'captured', version: 1 },
+    });
+    const service = new LeadService(fakeAudit() as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    const result = await service.assignOwner(
+      LEAD,
+      assignInput({ ownerId: null, teamId: undefined, reason: 'unassigned_pool', method: null, expectedVersion: 1 }),
+      t.tx,
+    );
+
+    expect(result.version).toBe(1); // no version churn
+    expect(t.updateSet).not.toHaveBeenCalled();
+    expect(outbox.emit).toHaveBeenCalledTimes(1);
   });
 });
 
