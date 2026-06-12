@@ -19,7 +19,7 @@
 ## Domain services (sole writers of their entities — owner-writes §11)
 | Service | Module | Mutators / purpose |
 |---|---|---|
-| `LeadService` | M2 | **sole writer of `leads`** (no other module/service may UPDATE/INSERT `leads`): `create / transitionStage / assignOwner / bulkReassign / setScore / setHotFlag / setKycStatus / setConsentStatus / setSlaDueAt / recordEligibility / markHandedOff / merge`. Single-row mutators take `expectedVersion` (stale → `CONFLICT`); `bulkReassign(leadIds, ownerId, reason, tx)` is the LIMIT-bounded admin path (FR-130) — bumps `version` per row, writes one `audit_logs(reassign)` per lead, no per-row `expectedVersion` |
+| `LeadService` | M2 | **sole writer of `leads`** (no other module/service may UPDATE/INSERT `leads`): `create / transitionStage / assignOwner / bulkReassign / setScore / setHotFlag / setKycStatus / setConsentStatus / setSlaDueAt / recordEligibility / markHandedOff / merge`. Single-row mutators take `expectedVersion` (stale → `CONFLICT`); **`assignOwner` uses the FR-030 options-object form** (returns `AssignOwnerResult`; stage-preserving on reassign past `assigned` — see `modules/capture/lead.service.ts`; write-back per FR-030 LLD); `bulkReassign(leadIds, ownerId, reason, tx)` is the LIMIT-bounded admin path (FR-130) — bumps `version` per row, writes one `audit_logs(reassign)` per lead, no per-row `expectedVersion` |
 | `StageGuardService` | M2 | evaluates §10.3 transition guards (single owner of the matrix) |
 | `DuplicateService` | M3 | match rules + confidence (FR-020) |
 | `ScoringService` | M4 | explainable lead score + hot rules (FR-011/031) |

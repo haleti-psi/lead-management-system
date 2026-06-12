@@ -1,4 +1,3 @@
-import { CreateAllocationRuleDto } from './allocation-rule.dto';
 import { CreateBusinessCalendarDto } from './business-calendar.dto';
 import { CreateRejectionReasonDto, PatchRejectionReasonDto } from './rejection-reason.dto';
 import { CreateRetentionPolicyDto } from './retention-policy.dto';
@@ -57,20 +56,6 @@ describe('FR-131 master DTOs', () => {
     it('accepts a valid IANA timezone and full weekday schedule', () => {
       const r = CreateBusinessCalendarDto.safeParse({ code: 'C1', name: 'Cal', timezone: 'Asia/Kolkata', workingHours: FULL_WEEK });
       expect(r.success).toBe(true);
-    });
-  });
-
-  describe('AllocationRuleDto', () => {
-    it('rejects a non-positive priorityOrder', () => {
-      const r = CreateAllocationRuleDto.safeParse({ name: 'R', priorityOrder: 0, method: 'round_robin', criteria: { a: 1 }, target: { b: 2 } });
-      expect(r.success).toBe(false);
-      if (!r.success) expect(r.error.issues[0]?.path).toEqual(['priorityOrder']);
-    });
-
-    it('rejects an empty criteria object', () => {
-      const r = CreateAllocationRuleDto.safeParse({ name: 'R', priorityOrder: 1, method: 'round_robin', criteria: {}, target: { b: 2 } });
-      expect(r.success).toBe(false);
-      if (!r.success) expect(r.error.issues.some((i) => i.path.join('.') === 'criteria')).toBe(true);
     });
   });
 

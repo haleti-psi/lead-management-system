@@ -5,6 +5,7 @@ import {
   ERROR_CODES,
   EventCode,
   LeadStage,
+  type AllocationMethod,
   type ConsentStatus,
   type CreationChannel,
   type DupStatus,
@@ -47,6 +48,47 @@ export interface StageHistoryEntry {
   to_stage: LeadStage;
   actor_id: string;
   reason: string | null;
+}
+
+/**
+ * Input for {@link LeadService.assignOwner} (FR-030 LLD §Data Operations —
+ * `assignOwner(leadId, { ownerId, teamId, reason, expectedVersion }, tx)`).
+ * `ownerId=null` is the unassigned-pool variant (no-match fallback): only
+ * `team_id` changes, the stage is NOT transitioned and nothing is audited
+ * (INV-01/INV-02/INV-08) — the `LEAD_ASSIGNED` outbox event still fires.
+ */
+export interface AssignOwnerInput {
+  /** Winning RM, or null for the branch unassigned pool. */
+  ownerId: string | null;
+  /** `leads.team_id` to set; omit (undefined) to leave the column unchanged. */
+  teamId?: string | null;
+  /** Auditable reason (mandatory on the manual path; rule label on auto). */
+  reason: string;
+  /** Allocation method, `'manual'` for POST /leads/{id}/reassign, null on no-match. */
+  method: AllocationMethod | 'manual' | null;
+  /** Caller (BM/SM/HEAD) or the system actor for automatic allocation. */
+  actorId: string;
+  /** Optimistic lock — `WHERE version = :v`; stale → CONFLICT (409). */
+  expectedVersion: number;
+  /**
+   * `sla_first_contact_due_at`, computed by the SLA engine. Set ONLY on the
+   * `captured → assigned` transition (state-machines.md); never on reassignment
+   * (ignored unless the lead is actually entering `assigned`).
+   */
+  slaFirstContactDueAt?: Date;
+  /** `allocate` (Path A) / `reassign` (Path B); defaults by previous owner. */
+  auditAction?: typeof AuditAction.ALLOCATE | typeof AuditAction.REASSIGN;
+  /** Extra audit detail (e.g. `override_capacity`, `allocation_rule_id`). */
+  detail?: Record<string, unknown>;
+}
+
+/** Lead state after {@link LeadService.assignOwner} (reassign response shape). */
+export interface AssignOwnerResult {
+  lead_id: string;
+  owner_id: string | null;
+  team_id: string | null;
+  stage: LeadStage;
+  version: number;
 }
 
 /**
@@ -150,20 +192,31 @@ export class LeadService {
   }
 
   /**
-   * Assign/reassign the lead's owner (§11.2). Idempotent: when `ownerId` already
-   * owns the lead the write is skipped (LeadSlaWriterPort contract). Writes the
-   * audit (`allocate` on first assignment, `reassign` on a change) and the
-   * `LEAD_ASSIGNED` outbox event in the SAME transaction as the update.
+   * Assign/reassign the lead's owner + team (§11.2 / FR-030). One atomic UPDATE
+   * under optimistic lock (`WHERE version = expectedVersion`; stale → CONFLICT)
+   * sets `owner_id`, `team_id` and — only from the allow-listed entry stages
+   * (`captured`/`dormant` → `assigned`, state-machines.md §Lead) — `stage` +
+   * `sla_first_contact_due_at`. At `assigned` or any later stage the owner/team
+   * change leaves the stage untouched ("assigned→assigned: owner changes; stage
+   * stays") — a reassignment never regresses the lead. Then, in the SAME
+   * transaction: `stage_history` (only on that real transition — INV-02),
+   * `audit_logs` (`allocate`/`reassign`) and the `LEAD_ASSIGNED` outbox event.
+   * Idempotent: when `ownerId` already owns an already-`assigned` lead the
+   * write is skipped (LeadSlaWriterPort contract).
+   *
+   * `ownerId=null` is the FR-030 no-match unassigned-pool variant: the lead
+   * keeps its stage (`captured`, INV-01) and owner; only `team_id` is parked on
+   * the branch pool team; no stage_history/audit rows (INV-02/INV-08); the
+   * `LEAD_ASSIGNED` event (owner_id=null) still fires.
    */
   async assignOwner(
     leadId: string,
-    ownerId: string,
-    reason: string,
+    input: AssignOwnerInput,
     tx: DbTransaction,
-  ): Promise<void> {
+  ): Promise<AssignOwnerResult> {
     const lead = await tx
       .selectFrom('leads')
-      .select(['lead_id', 'org_id', 'lead_code', 'owner_id', 'version'])
+      .select(['lead_id', 'org_id', 'lead_code', 'owner_id', 'team_id', 'stage', 'version'])
       .where('lead_id', '=', leadId)
       .where('deleted_at', 'is', null)
       .limit(1)
@@ -171,30 +224,88 @@ export class LeadService {
     if (!lead) {
       throw new DomainException(ERROR_CODES.NOT_FOUND);
     }
-    if (lead.owner_id === ownerId) {
-      return; // already the owner — idempotent skip, no version churn
+    if (lead.stage === LeadStage.HANDED_OFF) {
+      // Terminal in LMS (state-machines.md §Lead) — never reassignable.
+      throw new DomainException(ERROR_CODES.CONFLICT, 'Lead is in a terminal stage and cannot be reassigned.');
     }
 
-    const updateResult = await tx
+    if (input.ownerId === null) {
+      return this.parkInUnassignedPool(lead, input, tx);
+    }
+
+    if (lead.owner_id === input.ownerId && lead.stage === LeadStage.ASSIGNED) {
+      // Already the owner of an assigned lead — idempotent skip, no version churn.
+      return {
+        lead_id: lead.lead_id,
+        owner_id: lead.owner_id,
+        team_id: lead.team_id,
+        stage: lead.stage,
+        version: lead.version,
+      };
+    }
+
+    // `assigned` is only entered from `captured`/`dormant` (state-machines.md
+    // §Lead allow-list); reassignment at any other stage moves the owner/team
+    // only and must never regress the stage (or reset the first-contact SLA).
+    const transitionsToAssigned =
+      lead.stage === LeadStage.CAPTURED || lead.stage === LeadStage.DORMANT;
+
+    const updated = await tx
       .updateTable('leads')
-      .set((eb) => ({ owner_id: ownerId, version: eb('version', '+', 1), updated_at: new Date(), updated_by: ownerId }))
+      .set((eb) => ({
+        owner_id: input.ownerId,
+        ...(transitionsToAssigned ? { stage: LeadStage.ASSIGNED } : {}),
+        ...(input.teamId !== undefined ? { team_id: input.teamId } : {}),
+        ...(transitionsToAssigned && input.slaFirstContactDueAt !== undefined
+          ? { sla_first_contact_due_at: input.slaFirstContactDueAt }
+          : {}),
+        version: eb('version', '+', 1),
+        updated_at: new Date(),
+        updated_by: input.actorId,
+      }))
       .where('lead_id', '=', leadId)
-      .where('version', '=', lead.version)
+      .where('version', '=', input.expectedVersion)
+      .where('deleted_at', 'is', null)
+      .returning(['lead_id', 'owner_id', 'team_id', 'stage', 'version'])
       .executeTakeFirst();
-    if (updateResult.numUpdatedRows === 0n) {
-      // Concurrent writer bumped the version between our read and write.
+    if (!updated) {
+      // Concurrent writer bumped the version between the caller's read and this write.
       throw new DomainException(ERROR_CODES.CONFLICT);
+    }
+
+    if (transitionsToAssigned) {
+      // A real captured/dormant → assigned transition; reassignment at any
+      // other stage changes the owner/team only — no history row, since no
+      // other entry to `assigned` is in the state-machine allow-list (INV-02).
+      await this.appendStageHistory(
+        {
+          org_id: lead.org_id,
+          lead_id: leadId,
+          from_stage: lead.stage,
+          to_stage: LeadStage.ASSIGNED,
+          actor_id: input.actorId,
+          reason: input.reason,
+        },
+        tx,
+      );
     }
 
     await this.audit.append(
       {
-        action: lead.owner_id == null ? AuditAction.ALLOCATE : AuditAction.REASSIGN,
+        action: input.auditAction ?? (lead.owner_id == null ? AuditAction.ALLOCATE : AuditAction.REASSIGN),
         entity_type: LEADS_RESOURCE_TYPE,
         entity_id: leadId,
-        actor_id: ownerId,
+        actor_id: input.actorId,
         org_id: lead.org_id,
         lead_id: leadId,
-        detail: { reason, previous_owner_id: lead.owner_id, new_owner_id: ownerId },
+        detail: {
+          reason: input.reason,
+          method: input.method,
+          previous_owner_id: lead.owner_id,
+          new_owner_id: input.ownerId,
+          team_id: updated.team_id,
+          ...input.detail,
+        },
       },
       tx,
     );
@@ -203,10 +314,77 @@ export class LeadService {
         event_code: EventCode.LEAD_ASSIGNED,
         aggregate_type: LEADS_RESOURCE_TYPE,
         aggregate_id: leadId,
-        payload: { lead_id: leadId, lead_code: lead.lead_code, owner_id: ownerId, reason },
+        payload: {
+          lead_id: leadId,
+          lead_code: lead.lead_code,
+          owner_id: input.ownerId,
+          team_id: updated.team_id,
+          reason: input.reason,
+        },
       },
       tx,
     );
+
+    return updated;
+  }
+
+  /**
+   * FR-030 no-match fallback (LLD step 7): park the lead on the branch pool
+   * team. Stage/owner/SLA untouched (INV-01/INV-05 scope), no audit or
+   * stage_history (INV-02/INV-08); only the `LEAD_ASSIGNED` (owner_id=null)
+   * outbox event records the routing decision.
+   */
+  private async parkInUnassignedPool(
+    lead: { lead_id: string; org_id: string; lead_code: string; owner_id: string | null; team_id: string | null; stage: LeadStage; version: number },
+    input: AssignOwnerInput,
+    tx: DbTransaction,
+  ): Promise<AssignOwnerResult> {
+    let teamId = lead.team_id;
+    let version = lead.version;
+    if (input.teamId !== undefined && input.teamId !== lead.team_id) {
+      const updated = await tx
+        .updateTable('leads')
+        .set((eb) => ({
+          team_id: input.teamId,
+          version: eb('version', '+', 1),
+          updated_at: new Date(),
+          updated_by: input.actorId,
+        }))
+        .where('lead_id', '=', lead.lead_id)
+        .where('version', '=', input.expectedVersion)
+        .where('deleted_at', 'is', null)
+        .returning(['team_id', 'version'])
+        .executeTakeFirst();
+      if (!updated) {
+        throw new DomainException(ERROR_CODES.CONFLICT);
+      }
+      teamId = updated.team_id;
+      version = updated.version;
+    }
+
+    await this.outbox.emit(
+      {
+        event_code: EventCode.LEAD_ASSIGNED,
+        aggregate_type: LEADS_RESOURCE_TYPE,
+        aggregate_id: lead.lead_id,
+        payload: {
+          lead_id: lead.lead_id,
+          lead_code: lead.lead_code,
+          owner_id: lead.owner_id,
+          team_id: teamId,
+          reason: input.reason,
+        },
+      },
+      tx,
+    );
+
+    return {
+      lead_id: lead.lead_id,
+      owner_id: lead.owner_id,
+      team_id: teamId,
+      stage: lead.stage,
+      version,
+    };
   }
 
   /**

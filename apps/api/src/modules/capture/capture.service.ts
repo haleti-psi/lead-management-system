@@ -36,6 +36,7 @@ import {
   IMPORT_FILE_PREFIX,
   LEADS_RESOURCE_TYPE,
   REQUIRED_CONSENT_PURPOSES,
+  SYSTEM_ACTOR_ID,
 } from './capture.constants';
 import { CaptureIdempotencyService } from './capture-idempotency.service';
 import { CodeGenerator } from './code-generator.service';
@@ -46,6 +47,7 @@ import { SourceAttributionRepository } from './source-attribution.repository';
 import type { ConsentInput, CreateLeadDto } from './dto/create-lead.dto';
 import type { ImportJobResponseDto } from './dto/import-job-response.dto';
 import type { UploadedFileLike } from './dto/uploaded-file.type';
+import { ALLOCATION_PORT, type AllocationPort } from './ports/allocation.port';
 import { DUPLICATE_CHECK_PORT, type DuplicateCheckPort } from './ports/duplicate-check.port';
 import { IMPORT_FILE_STORE_PORT, type ImportFileStorePort } from './ports/import-file-store.port';
 import { SCORING_PORT, type ScoringPort } from './ports/scoring.port';
@@ -131,6 +133,7 @@ export class CaptureService {
     @Inject(DUPLICATE_CHECK_PORT) private readonly duplicates: DuplicateCheckPort,
     @Inject(SCORING_PORT) private readonly scoring: ScoringPort,
     @Inject(IMPORT_FILE_STORE_PORT) private readonly files: ImportFileStorePort,
+    @Inject(ALLOCATION_PORT) private readonly allocation: AllocationPort,
     @InjectPinoLogger(CaptureService.name) private readonly logger: PinoLogger,
   ) {}
 
@@ -326,13 +329,22 @@ export class CaptureService {
           .execute();
       }
 
-      return { lead_id, lead_code: leadCode };
+      // E11 (FR-030). Automatic rules-based allocation — SAME transaction
+      // (LLD §Backend Flow Path A step 1): the captured→assigned transition,
+      // its stage_history/audit/LEAD_ASSIGNED rows and the lead INSERT commit
+      // or roll back together. System actor; the fresh lead is at version 1.
+      const allocation = await this.allocation.allocate(
+        { leadId: lead_id, orgId: ctx.orgId, actorId: SYSTEM_ACTOR_ID, expectedVersion: 1 },
+        tx,
+      );
+
+      return { lead_id, lead_code: leadCode, stage: allocation.stage };
     });
 
     const data: LeadCaptureData = {
       lead_id: created.lead_id,
       lead_code: created.lead_code,
-      stage: LeadStage.CAPTURED,
+      stage: created.stage,
       product_code: dto.product_code,
       consent_status: consentStatus,
       duplicate_status: DupStatus.NONE,

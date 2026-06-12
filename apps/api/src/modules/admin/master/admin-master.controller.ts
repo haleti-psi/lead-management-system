@@ -34,14 +34,15 @@ const masterResource = () => ({ resourceType: MASTER_RESOURCE_TYPE });
  * FR-131 — generic master/config CRUD under `/api/v1/admin/{masterResource}`.
  *
  * Route-ownership: this handler serves ONLY the allow-listed master resources in
- * {@link MasterResourceRegistry} (regions, branches, partners, schemes,
- * rejection-reasons, allocation-rules, business-calendars,
- * communication-templates, dla-registry, retention-policies). Resources owned by
- * another FR with its own concrete controller are NOT in the allow-list and are
- * never handled here — users/roles/teams (FR-130), products (FR-040),
- * sla-policies (FR-104), webhooks/integrations (FR-140), break-glass (FR-003).
- * An unknown/disallowed `{masterResource}` resolves to VALIDATION_ERROR (400,
- * field `masterResource`) per the LLD (T05/T30).
+ * {@link MasterResourceRegistry} (regions, branches, partners,
+ * rejection-reasons, business-calendars, communication-templates, dla-registry,
+ * retention-policies). Resources owned by another FR with its own concrete
+ * controller are NOT in the allow-list and are never handled here —
+ * users/roles/teams (FR-130), products (FR-040), schemes (FR-042),
+ * allocation-rules (FR-030), sla-policies (FR-104), webhooks/integrations
+ * (FR-140), break-glass (FR-003). An unknown/disallowed `{masterResource}`
+ * resolves to VALIDATION_ERROR (400, field `masterResource`) per the LLD
+ * (T05/T30).
  *
  * All handlers run behind the global `JwtAuthGuard` + `AbacGuard` via
  * `@Requires('configuration')`; the service enforces the scope-A (ADMIN/HEAD)
