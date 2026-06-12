@@ -1,10 +1,34 @@
-// App shell placeholder. The Stage-7 foundation wave wires AppShell (role-filtered
-// nav), the router, React Query, i18n, masking, and the shared UI component library.
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { AppShell } from '@/components/layout/AppShell';
+import { ProtectedRoute } from '@/lib/auth/ProtectedRoute';
+import { useAuth } from '@/hooks/use-auth';
+import { LoginPage } from './login/LoginPage';
+import { ResetPasswordPage } from './reset-password/ResetPasswordPage';
+
+// Temporary landing inside the shell until feature screens (FRs) are wired.
+function DashboardPlaceholder(): JSX.Element {
+  const { user } = useAuth();
+  return (
+    <div>
+      <h1 className="text-xl font-semibold">Dashboard</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Signed in as {user?.role} (scope {user?.scope}). Feature screens follow per FR.
+      </p>
+    </div>
+  );
+}
+
 export function App(): JSX.Element {
   return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', padding: '2rem' }}>
-      <h1>Lead Management System</h1>
-      <p>Scaffold ready. Feature screens are generated in Stage 7 — see docs/lld/.</p>
-    </main>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route element={<ProtectedRoute />}>
+        <Route element={<AppShell />}>
+          <Route path="/" element={<DashboardPlaceholder />} />
+        </Route>
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
