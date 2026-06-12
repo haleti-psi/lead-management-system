@@ -23,6 +23,7 @@ import { SlaModule } from './core/sla';
 import { AdminModule } from './modules/admin/admin.module';
 import { AllocationModule } from './modules/allocation/allocation.module';
 import { CaptureModule } from './modules/capture/capture.module';
+import { DedupeModule } from './modules/dedupe/dedupe.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { IntegrationModule } from './modules/integration/integration.module';
@@ -76,6 +77,11 @@ import { HealthController } from './health.controller';
     // owns allocation_rules (its slug is excluded from FR-131's generic
     // /admin/{masterResource} allow-list — no route collision).
     AllocationModule,
+    // FR-020 (M3 dedupe). @Global: binds capture's DUPLICATE_CHECK_PORT to the
+    // real DuplicateCheckAdapter (replacing the Wave-2 noop), so lead creation
+    // runs the sync strong-block gate inside the capture transaction and the
+    // post-commit scan persists medium/weak flags.
+    DedupeModule,
     EngagementModule,
     // FR-040 (M5 product configuration). Owns the `product_config` activator,
     // which self-registers with the shared FR-132 ConfigActivatorRegistry.

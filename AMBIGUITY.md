@@ -88,3 +88,43 @@ self-ownership on no-match.
 4. **FR-030-tests.md INV-08** contradicts INV-02 for reassignment of an already-assigned lead; implementation (correctly) writes `stage_history` only on real transitions — amend the test spec.
 
 (The `assignOwner` options-object pin is already written back to `shared-utilities.md`. Stage-regression-on-reassign was FIXED in code before commit — reassign past `assigned` now preserves stage.)
+
+---
+
+# AMBIGUITY — FR-020 (Duplicate & Near-Duplicate Detection)
+
+## FR-020-1. Same-mobile match where PANs differ (or only one side has a PAN) is not in the BRD match table
+
+**The gap (precise):** the BRD default-match table (FR-020 LLD §Confidence Scoring
+Rules) covers `same PAN + same mobile` (strong/block), `same PAN, different
+mobile` (strong/warn) and `same mobile, NO PAN on either` (medium/warn). It does
+not specify the same-mobile case where the two identities carry **different**
+PAN tokens, or where exactly one side has a PAN.
+
+**Resolution applied (conservative, in-code):** any same-mobile candidate not
+upgraded by a same-PAN hit scores **medium/warned** (`matched_on: ['mobile']`) —
+the same outcome as the table's mobile row, so a shared family phone flags for
+review instead of being silently ignored or hard-blocked. Encoded in
+`MATCH_RULES` (`apps/api/src/modules/dedupe/dedupe.service.ts`); T03 still holds.
+
+**Needed decision (Dev 1 / product):** ratify medium/warn for the
+different-PAN/one-PAN mobile variants, or specify a distinct row (e.g. weak for
+PAN-mismatch) — then write it back into FR-020.md.
+
+## FR-020-2. (process incident, for Dev 1) Cross-worktree `git stash` race during the build
+
+`git stash` state is repo-wide — shared by ALL worktrees (`lms-wt/fr020`,
+`fr050`, `fr110`). During this FR's build, this agent's `stash -u`/`pop` raced a
+concurrent FR-110 agent's stash: each worktree popped the OTHER agent's WIP.
+Recovered here from the dangling stash commits (this worktree's final state
+verified byte-identical to its pre-stash state); the FR-110 WIP was re-stored as
+`stash@{0}` ("restored by FR-020 agent…", commit `a6900af`) — **pop it in the
+fr110 worktree**, whose working tree may also still hold FR-020 content from the
+race. Rule for the team plan: **never use `git stash` in shared-repo worktrees**
+(use `git worktree`-local commits or plain file copies instead).
+
+## FR-020 — reviewer write-backs (minors, arbiter)
+1. LLD Assumption 5 ("email as supplementary weak signal") has no MATCH_RULES rule — email absent from BRD match table and test spec; record/strike in LLD.
+2. Zero-candidate early return reports duplicate_status='none' without recomputing — a previously-flagged lead with edited identity keeps stale 'flagged' in DB (LLD-literal); resolve in FR-021 resolution flow.
+3. LLD yaml lists HEAD under roles_with_edit_lead but auth-matrix gives HEAD no edit_lead — contracts win (HEAD→403); reconcile LLD.
+4. duplicate-check.port.ts:9 doc comment still links deleted NoopDuplicateCheckAdapter — fix comment in next touch.
