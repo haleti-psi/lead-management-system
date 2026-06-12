@@ -22,7 +22,7 @@ x-fr-coverage:
   FR-010: "POST /leads, POST /leads/import, POST /public/leads"
   FR-011: "POST /leads, PATCH /leads/{id} (scoring at capture/update)"
   FR-020: "POST /leads/{id}/duplicate-check"
-  FR-021: "POST /leads/{id}/merge"
+  FR-021: "POST /leads/{id}/merge + POST /leads/{id}/unmerge"
   FR-030: "POST /leads/{id}/reassign, GET/POST /admin/allocation-rules"
   FR-031: "POST /leads, PATCH /leads/{id} (hot flag / score)"
   FR-040: "GET/POST/PATCH /admin/products"
@@ -167,6 +167,8 @@ paths:
     post: { summary: "Run duplicate detection", operationId: duplicateCheck, tags: [Leads], x-frs: [FR-020], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "409": { $ref: '#/components/responses/Conflict' } } }
   /leads/{id}/merge:
     post: { summary: "Merge duplicate into master (BM/SM)", operationId: mergeLead, tags: [Leads], x-frs: [FR-021], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /leads/{id}/unmerge:
+    post: { summary: "Unmerge within the merge window (BM/SM; restores E3 relinked children)", operationId: unmergeLead, tags: [Leads], x-frs: [FR-021], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
   /leads/{id}/reassign:
     post: { summary: "Reassign owner (reason, audited)", operationId: reassignLead, tags: [Leads], x-frs: [FR-030], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
   /leads/bulk-action:
