@@ -68,6 +68,21 @@ export interface ExistingMatchRow {
   status: DupRecordStatus;
 }
 
+/**
+ * Snapshot of one `duplicate_matches` row for the merging pair, taken BEFORE
+ * the merge resolves it (FR-021). Stored in the merge `audit_logs.detail` so
+ * unmerge can restore the row's pre-merge action — re-opening with
+ * `action='merged'` left behind would poison FR-020's recompute (an open
+ * `merged` row derives `duplicate_status='merged'`).
+ */
+export interface PairMatchSnapshot {
+  duplicate_match_id: string;
+  action: DupAction;
+  status: DupRecordStatus;
+  action_by: string | null;
+  action_reason: string | null;
+}
+
 /** Values for one upserted `duplicate_matches` row (LLD §Step 3). */
 export interface UpsertMatchValues {
   org_id: string;
@@ -277,6 +292,104 @@ export class DedupeRepository {
       .returning(['duplicate_match_id', 'matched_lead_id'])
       .execute();
     return new Map(rows.map((row) => [row.matched_lead_id, row.duplicate_match_id]));
+  }
+
+  // ─────────────────────────────── FR-021 merge pair transitions ────────────
+
+  /**
+   * FR-021 — the `duplicate_matches` rows linking the merging pair (both
+   * directions), snapshotted before the merge resolves them. Bounded by
+   * {@link EXISTING_PAIR_LIMIT} (LIMIT rule).
+   */
+  async findPairMatches(
+    leadId: string,
+    matchedLeadId: string,
+    orgId: string,
+    db: KyselyDb,
+  ): Promise<PairMatchSnapshot[]> {
+    return db
+      .selectFrom('duplicate_matches')
+      .select(['duplicate_match_id', 'action', 'status', 'action_by', 'action_reason'])
+      .where('org_id', '=', orgId)
+      .where((eb) =>
+        eb.or([
+          eb.and([eb('lead_id', '=', leadId), eb('matched_lead_id', '=', matchedLeadId)]),
+          eb.and([eb('lead_id', '=', matchedLeadId), eb('matched_lead_id', '=', leadId)]),
+        ]),
+      )
+      .limit(EXISTING_PAIR_LIMIT)
+      .execute();
+  }
+
+  /**
+   * FR-021 LLD §Merge step 7 — resolve every `duplicate_matches` row linking
+   * the pair: `status='resolved'`, `action='merged'`, `action_by`/`action_reason`
+   * recorded (state-machines.md §DuplicateMatch open → resolved). Returns the
+   * number of rows transitioned (drives `duplicate_match_resolved`).
+   */
+  async resolvePairAsMerged(
+    duplicateId: string,
+    masterId: string,
+    orgId: string,
+    actorId: string,
+    reason: string,
+    tx: DbTransaction,
+  ): Promise<number> {
+    const rows = await tx
+      .updateTable('duplicate_matches')
+      .set({
+        status: 'resolved',
+        action: 'merged',
+        action_by: actorId,
+        action_reason: reason,
+        updated_by: actorId,
+        updated_at: new Date(),
+      })
+      .where('org_id', '=', orgId)
+      .where((eb) =>
+        eb.or([
+          eb.and([eb('lead_id', '=', duplicateId), eb('matched_lead_id', '=', masterId)]),
+          eb.and([eb('lead_id', '=', masterId), eb('matched_lead_id', '=', duplicateId)]),
+        ]),
+      )
+      .returning(['duplicate_match_id'])
+      .execute();
+    return rows.length;
+  }
+
+  /**
+   * FR-021 LLD §Unmerge step 6 — re-open the pair rows resolved at merge time,
+   * restoring each row's EXACT pre-merge state from the audit-detail snapshot
+   * (see {@link PairMatchSnapshot}): rows that were open before the merge go
+   * back to `open` with their prior action (leaving `action='merged'` on an
+   * open row would poison FR-020's recompute); rows already resolved before
+   * the merge stay resolved. One bounded UPDATE per snapshotted row (the pair
+   * set is ≤ {@link EXISTING_PAIR_LIMIT}).
+   */
+  async reopenMatches(
+    snapshots: readonly PairMatchSnapshot[],
+    orgId: string,
+    actorId: string,
+    tx: DbTransaction,
+  ): Promise<number> {
+    let reopened = 0;
+    for (const snapshot of snapshots) {
+      const result = await tx
+        .updateTable('duplicate_matches')
+        .set({
+          status: snapshot.status,
+          action: snapshot.action,
+          action_by: snapshot.action_by,
+          action_reason: snapshot.action_reason,
+          updated_by: actorId,
+          updated_at: new Date(),
+        })
+        .where('duplicate_match_id', '=', snapshot.duplicate_match_id)
+        .where('org_id', '=', orgId)
+        .executeTakeFirst();
+      reopened += Number(result.numUpdatedRows);
+    }
+    return reopened;
   }
 
   /**

@@ -20,3 +20,10 @@ export const QUEUE_ROLES: readonly RoleCode[] = [RoleCode.BM, RoleCode.SM, RoleC
 
 /** `error.detail.reason` for the 409 strong-block (error-taxonomy.md). */
 export const DUPLICATE_BLOCKED_REASON = 'DUPLICATE_BLOCKED';
+
+/**
+ * FR-021 — roles that may merge/unmerge (LLD §Auth: BM scope B, SM scope T).
+ * The AbacGuard grants `edit_lead` more broadly (RM=O, KYC=B); the merge
+ * service applies this allow-list on top (T-006: RM → 403).
+ */
+export const MERGE_ROLES: readonly RoleCode[] = [RoleCode.BM, RoleCode.SM];

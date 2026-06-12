@@ -5,12 +5,16 @@ import { DedupeController } from './dedupe.controller';
 import { DedupeRepository } from './dedupe.repository';
 import { DuplicateService } from './dedupe.service';
 import { DuplicateCheckAdapter } from './duplicate-check.adapter';
+import { MergeLeadController } from './merge-lead.controller';
+import { MergeLeadRepository } from './merge-lead.repository';
+import { MergeLeadService } from './merge-lead.service';
 
 /**
- * M3 Dedupe — FR-020 (duplicate & near-duplicate detection). Depends on the
- * global core modules (DB/UnitOfWork, audit, outbox, auth-core, masking) and
- * the @Global CaptureModule's `LeadService` (sole writer of `leads`, §11.2 —
- * `recomputeDuplicateStatus`).
+ * M3 Dedupe — FR-020 (duplicate & near-duplicate detection) + FR-021 (merge &
+ * source-attribution preservation). Depends on the global core modules
+ * (DB/UnitOfWork, audit, outbox, auth-core, masking, config) and the @Global
+ * CaptureModule's `LeadService` (sole writer of `leads`, §11.2 —
+ * `recomputeDuplicateStatus`, `merge`, `unmerge`).
  *
  * `@Global` because this module BINDS capture's {@link DUPLICATE_CHECK_PORT}
  * seam (replacing the Wave-2 `NoopDuplicateCheckAdapter`): `CaptureService`
@@ -23,11 +27,13 @@ import { DuplicateCheckAdapter } from './duplicate-check.adapter';
  */
 @Global()
 @Module({
-  controllers: [DedupeController],
+  controllers: [DedupeController, MergeLeadController],
   providers: [
     DuplicateService,
     DedupeRepository,
     DuplicateCheckAdapter,
+    MergeLeadService,
+    MergeLeadRepository,
     { provide: DUPLICATE_CHECK_PORT, useExisting: DuplicateCheckAdapter },
   ],
   exports: [DuplicateService, DUPLICATE_CHECK_PORT],

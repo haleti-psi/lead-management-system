@@ -44,3 +44,18 @@ describe('DedupeModule seam wiring', () => {
     expect(exports).not.toContain(DUPLICATE_CHECK_PORT);
   });
 });
+
+describe('DedupeModule FR-021 wiring', () => {
+  it('registers the MergeLeadController and the merge providers', async () => {
+    const { MergeLeadController } = await import('./merge-lead.controller');
+    const { MergeLeadService } = await import('./merge-lead.service');
+    const { MergeLeadRepository } = await import('./merge-lead.repository');
+
+    const controllers = Reflect.getMetadata('controllers', DedupeModule) as unknown[];
+    expect(controllers).toContain(MergeLeadController);
+
+    const providers = Reflect.getMetadata('providers', DedupeModule) as unknown[];
+    expect(providers).toContain(MergeLeadService);
+    expect(providers).toContain(MergeLeadRepository);
+  });
+});

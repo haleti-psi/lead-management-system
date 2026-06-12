@@ -12,6 +12,7 @@ import {
   type ConsentStatus,
   type CreationChannel,
   type KycStatus,
+  type Priority,
   type ProductCode,
 } from '@lms/shared';
 
@@ -91,6 +92,52 @@ export interface AssignOwnerResult {
   team_id: string | null;
   stage: LeadStage;
   version: number;
+}
+
+/**
+ * Master-row winners resolved by M3's field-precedence step (FR-021 LLD §10):
+ * only the keys present are written. `branch_id` is set ONLY via an explicit
+ * manual override — on a cross-branch merge the master's branch always takes
+ * precedence (FR-021 §Auth), so `field_precedence='duplicate'` never moves it.
+ */
+export interface MergeMasterFieldUpdates {
+  owner_id?: string | null;
+  branch_id?: string;
+  priority?: Priority;
+}
+
+/** Options for {@link LeadService.merge} (FR-021). */
+export interface MergeLeadsInput {
+  org_id: string;
+  actor_id: string;
+  /** `MergeLeadDto.expected_version` — optimistic lock on the duplicate row. */
+  expected_duplicate_version: number;
+  /** Master version read in the same request — optimistic lock on the master. */
+  expected_master_version: number;
+  /** Field-precedence winners to write on the master row. */
+  master_updates: MergeMasterFieldUpdates;
+  /**
+   * PII-free merge bookkeeping for `audit_logs.detail` (E3): `relinked_ids`
+   * (documents/consents/tasks), child counts, `field_precedence`,
+   * `unmerge_allowed_until`, `duplicate_match_snapshots`.
+   */
+  audit_detail: Record<string, unknown>;
+}
+
+/** Options for {@link LeadService.unmerge} (FR-021). */
+export interface UnmergeLeadsInput {
+  org_id: string;
+  actor_id: string;
+  /** `UnmergeLeadDto.expected_master_version` — optimistic lock on the master. */
+  expected_master_version: number;
+  /** PII-free restore bookkeeping (counts) for `audit_logs.detail`. */
+  audit_detail: Record<string, unknown>;
+}
+
+/** Post-merge/unmerge `leads.version` values (consumed by FR-020's recompute). */
+export interface MergeLeadsResult {
+  duplicate_version: number;
+  master_version: number;
 }
 
 /**
@@ -593,9 +640,201 @@ export class LeadService {
     return Promise.reject(notYetWired('markHandedOff', 'FR-081'));
   }
 
-  /** FR-021 — merge duplicate into master. */
-  merge(_masterId: string, _duplicateId: string, _reason: string, _tx: DbTransaction): Promise<void> {
-    return Promise.reject(notYetWired('merge', 'FR-021'));
+  /**
+   * FR-021 — merge the duplicate lead into the master (§11.2 pinned mutator;
+   * positional prefix per shared-utilities.md, extra inputs via the options
+   * object — the FR-030 `assignOwner` options-object precedent). BOTH `leads`
+   * writes of the merge happen here (sole-writer rule):
+   *
+   *  1. duplicate row → `duplicate_status='merged'`, `master_lead_id`,
+   *     `version++` under `WHERE version = expected_duplicate_version`
+   *     (stale → CONFLICT 409, transaction rolls back);
+   *  2. master row → the field-precedence winners resolved by M3
+   *     ({@link MergeMasterFieldUpdates}) + `version++` under
+   *     `WHERE version = expected_master_version` (stale → CONFLICT — the
+   *     FR-021 T-012 path);
+   *
+   * then, in the SAME tx (architecture §11 audit+outbox atomicity):
+   * one `audit_logs(lead_merge)` row on the master whose `detail` carries
+   * `relinked_ids` + `unmerge_allowed_until` (AMBIGUITIES E3 — unmerge reads
+   * them back) and the `LEAD_STAGE_CHANGED` outbox event (object form).
+   * M3's MergeLeadService re-parents the child records and resolves the
+   * `duplicate_matches` pair BEFORE calling this, so `input.audit_detail`
+   * already holds the relinked ids/counts (PII-free — id lists only).
+   */
+  async merge(
+    masterId: string,
+    duplicateId: string,
+    reason: string,
+    input: MergeLeadsInput,
+    tx: DbTransaction,
+  ): Promise<MergeLeadsResult> {
+    const duplicate = await tx
+      .updateTable('leads')
+      .set((eb) => ({
+        duplicate_status: DupStatus.MERGED,
+        master_lead_id: masterId,
+        version: eb('version', '+', 1),
+        updated_at: new Date(),
+        updated_by: input.actor_id,
+      }))
+      .where('lead_id', '=', duplicateId)
+      .where('org_id', '=', input.org_id)
+      .where('version', '=', input.expected_duplicate_version)
+      .where('deleted_at', 'is', null)
+      .returning(['version'])
+      .executeTakeFirst();
+    if (!duplicate) {
+      // Concurrent writer bumped the duplicate's version (or the lead vanished).
+      throw new DomainException(ERROR_CODES.CONFLICT);
+    }
+
+    const updates = input.master_updates;
+    const master = await tx
+      .updateTable('leads')
+      .set((eb) => ({
+        ...(updates.owner_id !== undefined ? { owner_id: updates.owner_id } : {}),
+        ...(updates.branch_id !== undefined ? { branch_id: updates.branch_id } : {}),
+        ...(updates.priority !== undefined ? { priority: updates.priority } : {}),
+        version: eb('version', '+', 1),
+        updated_at: new Date(),
+        updated_by: input.actor_id,
+      }))
+      .where('lead_id', '=', masterId)
+      .where('org_id', '=', input.org_id)
+      .where('version', '=', input.expected_master_version)
+      .where('deleted_at', 'is', null)
+      .returning(['version'])
+      .executeTakeFirst();
+    if (!master) {
+      // Master concurrently updated (FR-021 T-012) — whole merge rolls back.
+      throw new DomainException(ERROR_CODES.CONFLICT);
+    }
+
+    await this.audit.append(
+      {
+        action: AuditAction.LEAD_MERGE,
+        entity_type: LEADS_RESOURCE_TYPE,
+        entity_id: masterId,
+        actor_id: input.actor_id,
+        org_id: input.org_id,
+        lead_id: masterId,
+        detail: {
+          ...input.audit_detail,
+          action: 'merged',
+          duplicate_lead_id: duplicateId,
+          reason,
+        },
+      },
+      tx,
+    );
+    await this.outbox.emit(
+      {
+        event_code: EventCode.LEAD_STAGE_CHANGED,
+        aggregate_type: LEADS_RESOURCE_TYPE,
+        aggregate_id: masterId,
+        payload: {
+          lead_id: masterId,
+          duplicate_lead_id: duplicateId,
+          action: 'merged',
+          actor_id: input.actor_id,
+        },
+      },
+      tx,
+    );
+
+    return { duplicate_version: duplicate.version, master_version: master.version };
+  }
+
+  /**
+   * FR-021 — reverse a merge within the unmerge window (window enforcement is
+   * M3's, BEFORE this is called). The duplicate row is restored
+   * (`duplicate_status='none'`, `master_lead_id=NULL`, `version++`) guarded by
+   * `WHERE duplicate_status='merged' AND master_lead_id=:masterId` — a
+   * concurrent unmerge/state change yields zero rows → CONFLICT. The master
+   * takes a version bump under `WHERE version = expected_master_version`
+   * (UnmergeLeadDto's optimistic lock; stale → CONFLICT) so the restore
+   * serialises against concurrent master edits. Audit (`lead_merge`,
+   * `detail.action='unmerged'`) + `LEAD_STAGE_CHANGED` ride the same tx.
+   */
+  async unmerge(
+    duplicateId: string,
+    masterId: string,
+    reason: string,
+    input: UnmergeLeadsInput,
+    tx: DbTransaction,
+  ): Promise<MergeLeadsResult> {
+    const duplicate = await tx
+      .updateTable('leads')
+      .set((eb) => ({
+        duplicate_status: DupStatus.NONE,
+        master_lead_id: null,
+        version: eb('version', '+', 1),
+        updated_at: new Date(),
+        updated_by: input.actor_id,
+      }))
+      .where('lead_id', '=', duplicateId)
+      .where('org_id', '=', input.org_id)
+      .where('duplicate_status', '=', DupStatus.MERGED)
+      .where('master_lead_id', '=', masterId)
+      .where('deleted_at', 'is', null)
+      .returning(['version'])
+      .executeTakeFirst();
+    if (!duplicate) {
+      // The lead is no longer in the merged-into-this-master state.
+      throw new DomainException(ERROR_CODES.CONFLICT);
+    }
+
+    const master = await tx
+      .updateTable('leads')
+      .set((eb) => ({
+        version: eb('version', '+', 1),
+        updated_at: new Date(),
+        updated_by: input.actor_id,
+      }))
+      .where('lead_id', '=', masterId)
+      .where('org_id', '=', input.org_id)
+      .where('version', '=', input.expected_master_version)
+      .where('deleted_at', 'is', null)
+      .returning(['version'])
+      .executeTakeFirst();
+    if (!master) {
+      throw new DomainException(ERROR_CODES.CONFLICT);
+    }
+
+    await this.audit.append(
+      {
+        action: AuditAction.LEAD_MERGE,
+        entity_type: LEADS_RESOURCE_TYPE,
+        entity_id: masterId,
+        actor_id: input.actor_id,
+        org_id: input.org_id,
+        lead_id: masterId,
+        detail: {
+          ...input.audit_detail,
+          action: 'unmerged',
+          duplicate_lead_id: duplicateId,
+          reason,
+        },
+      },
+      tx,
+    );
+    await this.outbox.emit(
+      {
+        event_code: EventCode.LEAD_STAGE_CHANGED,
+        aggregate_type: LEADS_RESOURCE_TYPE,
+        aggregate_id: masterId,
+        payload: {
+          lead_id: masterId,
+          duplicate_lead_id: duplicateId,
+          action: 'unmerged',
+          actor_id: input.actor_id,
+        },
+      },
+      tx,
+    );
+
+    return { duplicate_version: duplicate.version, master_version: master.version };
   }
 }
 

@@ -289,3 +289,64 @@ would re-implement shared components, violating shared-utilities reuse).
 3. bulk-action secondary denials (disallowed predicate type / target-owner out of scope) return FORBIDDEN without abac_deny audit — add audits (primary capability denial IS guard-audited).
 4. (pre-existing) LeadService.bulkReassign sets updated_by/audit actor_id to the NEW OWNER (pinned signature has no actor param) — same fix as the FR-010 actorId item.
 5. FR-050-tests INV-3 query (action='bulk_action') must be amended to the detail.sub_action mapping.
+
+# AMBIGUITY — FR-021 (Merge & Source-Attribution Preservation)
+
+## 1. `POST /leads/{id}/unmerge` is missing from api-contract.yaml
+**The gap:** the LLD defines unmerge as a full companion endpoint ("same x-frs: [FR-021]"), but
+`api-contract.yaml` has only `/leads/{id}/merge` (path 169). **Resolution:** implemented per the LLD
+(it governs); a Dev-1 contracts PR should add the unmerge path + 403 (window) / 400 / 409 responses.
+
+## 2. `LeadService.merge` pinned 4-arg signature cannot satisfy the LLD's locking requirements
+**The gap:** shared-utilities/architecture §11.2 pin `merge(masterId, duplicateId, reason, tx)`, but
+the LLD requires optimistic locks on BOTH rows (duplicate `expected_version` from the DTO, master
+version) plus the field-precedence winners — none carriable in 4 args. **Resolution:** implemented
+`merge(masterId, duplicateId, reason, input, tx)` — pinned positional prefix + an options object
+(the ratified FR-030 `assignOwner` options-object precedent). It performs both `leads` writes and
+emits the `lead_merge` audit (E3 detail incl. `relinked_ids`) + `LEAD_STAGE_CHANGED` outbox in-tx.
+`LeadService.unmerge(duplicateId, masterId, reason, input, tx)` was added the same way (the LLD's
+unmerge pseudocode calls it; it is absent from the §11.2 pinned list). Shared-utilities.md should
+ratify both signatures.
+
+## 3. Field-precedence contested-field set is not enumerated
+**The gap:** the LLD never lists which master fields `field_precedence` arbitrates; the DTO models
+only `manual_overrides.{owner_id,branch_id}` and T-018 evidences `priority`. **Resolution
+(minimal, spec-evidenced):** `duplicate` precedence adopts the duplicate's non-null `owner_id` +
+`priority`; `manual` writes the validated `owner_id` (+ optional `branch_id`); `master` writes
+nothing. `branch_id` is NEVER taken from the duplicate (cross-branch: master's branch takes
+precedence, T-020). Other columns (amounts, product, identity, attribution FK) are not adopted.
+`manual_overrides.owner_id` is validated as an ACTIVE user whose `branch_id` equals the merged
+record's final branch (override branch if given, else the master's).
+
+## 4. Re-opening pair matches at unmerge would poison FR-020's recompute
+**The gap:** LLD unmerge step 6 sets the pair rows to `status='open'` only — leaving
+`action='merged'` on OPEN rows, which FR-020's `recomputeDuplicateStatus` ranks first and would
+re-derive `duplicate_status='merged'` on the next duplicate-check of either lead. **Resolution:**
+the merge audit detail also stores `duplicate_match_snapshots` (pre-merge `action`/`status`/
+`action_by`/`action_reason` per pair row — an E3-adjacent extension); unmerge restores those exact
+values. Needs LLD write-back.
+
+## 5. Chained-merge error code conflict inside the LLD
+LLD §Service-layer validations says master-already-merged → 400; §State Machine says chained merge
+→ 409; T-010 accepts either. **Resolution:** 409 `CONFLICT` (taxonomy: "illegal state") for both
+already-merged-duplicate and merged-master. Also added (beyond the LLD's validation table) a 409
+guard refusing to merge a lead that is itself the MASTER of earlier merges — required by test-spec
+INV-008 ("a master lead must not itself be merged").
+
+## 6. Post-commit notification hook skipped
+LLD step 13 calls `NotificationDispatchService` "if any notification rule triggers" — the M11
+service (FR-101/103, Wave 3) does not exist and no merge notification rule is defined anywhere.
+**Resolution:** skipped (conditional hook with no rules); wire when M11 lands.
+
+## 7. Derived-status semantics after merge/unmerge (recorded, no action needed)
+Per the dispatch scope, `recomputeDuplicateStatus` runs for the MASTER after merge (its open-match
+picture changed; the duplicate's `merged` status is set directly by `LeadService.merge` — a
+recompute would clobber it since the pair rows are now resolved). At unmerge the duplicate is
+restored to `none` per the LLD and no recompute runs for either lead; with matches re-opened, both
+statuses re-derive on the next FR-020 check/scan.
+
+## FR-021 — reviewer write-backs (minors, arbiter)
+1. Web slice (MergeConfirmDialog/UnmergeActionButton/hooks) deferred to Dev 2's web foundation — same precedent as FR-050-6.
+2. Unmerge restores attribution_status='original' unconditionally (LLD-literal); a pre-merge 'reassigned' status is lost — fold into the snapshot-principle LLD write-back.
+3. In-org out-of-scope merge → 403 (per LLD §Auth 4c + T-007); LLD §Error Cases' "out of scope → 404" line should be reconciled.
+4. api-contract mergeLead lists only 200/403/409; implementation (per LLD) also emits 400/401/404/429 — completed in the FR-021 contracts amendment PR.
