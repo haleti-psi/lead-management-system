@@ -12,8 +12,8 @@ import { AdminTeamsController } from './admin-teams.controller';
 import { AdminTeamService } from './admin-team.service';
 import { AdminUsersController } from './admin-users.controller';
 import { AdminUserService } from './admin-user.service';
+import { LeadReassignmentAdapter } from '../capture/adapters/lead-reassignment.adapter';
 import { LEAD_REASSIGN_PORT } from './ports/lead-reassign.port';
-import { UnimplementedLeadReassignAdapter } from './ports/unimplemented-lead-reassign.adapter';
 import { RoleRepository } from './role.repository';
 import { TeamRepository } from './team.repository';
 import { UserRepository } from './user.repository';
@@ -61,9 +61,10 @@ import { MasterResourceRegistry } from './master/master-resource.registry';
     MasterResourceRegistry,
     AdminMasterService,
     AdminMasterRepository,
-    // Owner-writes seam: bulk lead reassignment on deactivation. Wave 2
-    // (FR-010/030) rebinds this token to `LeadService.bulkReassign`.
-    { provide: LEAD_REASSIGN_PORT, useClass: UnimplementedLeadReassignAdapter },
+    // Owner-writes seam: bulk lead reassignment on deactivation — bound (FR-010,
+    // Wave 2) to the capture module's adapter over `LeadService.bulkReassign`.
+    // `LeadReassignmentAdapter` is exported by the @Global CaptureModule.
+    { provide: LEAD_REASSIGN_PORT, useExisting: LeadReassignmentAdapter },
   ],
   exports: [ConfigGovernanceService],
 })

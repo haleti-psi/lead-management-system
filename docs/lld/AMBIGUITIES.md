@@ -57,6 +57,11 @@
 | E2 | `KYC.edit_lead` is "KYC fields only" — the exact field subset must be enumerated (shared constant) | FR-002 → FR-070/072 |
 | E3 | Unmerge restore: store `relinked_ids` (documents/consents/tasks) in `audit_logs.detail` at merge time; read at unmerge | FR-021 |
 
+## F. Stage-7 build discoveries
+| # | Gap | Found in | Needed decision |
+|---|---|---|---|
+| F1 | Bulk-import **XLSX** parsing: LLD requires CSV+XLSX but `dependency-register.md` has no spreadsheet library. CSV is fully implemented (hand-rolled RFC-4180); XLSX jobs fail loudly with an explanatory error file. Full write-up: `AMBIGUITY.md` (repo root) | FR-010 | Dev 1 (arbiter): register `exceljs` + implement the XLSX branch, **or** amend FR-010/api-contract to CSV-only for MVP |
+
 ---
 
 **Process:** Per the project's amendment governance (BRD §14.5), each resolved item should be written back into the BRD/data-model/contracts (with a version bump + amendment-log entry), then the affected FR LLD updated, before the corresponding FR is dispatched in Stage 7. None of these block LLD completion; they block *correct code generation* for the specific affected FRs.

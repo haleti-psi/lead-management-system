@@ -21,6 +21,7 @@ import { OutboxModule } from './core/outbox';
 import { RedisModule } from './core/redis';
 import { SlaModule } from './core/sla';
 import { AdminModule } from './modules/admin/admin.module';
+import { CaptureModule } from './modules/capture/capture.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { IntegrationModule } from './modules/integration/integration.module';
@@ -64,6 +65,11 @@ import { HealthController } from './health.controller';
       }),
     }),
     IdentityModule,
+    // FR-010 (M2 capture). @Global: owns LeadService (sole writer of `leads`)
+    // and binds the cross-module lead-writer seams (LEAD_SLA_WRITER_PORT for the
+    // global SlaEngine; LeadReassignmentAdapter consumed by AdminModule).
+    // Registered before AdminModule, whose LEAD_REASSIGN_PORT now resolves to it.
+    CaptureModule,
     EngagementModule,
     // FR-040 (M5 product configuration). Owns the `product_config` activator,
     // which self-registers with the shared FR-132 ConfigActivatorRegistry.

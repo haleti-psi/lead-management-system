@@ -1,14 +1,17 @@
 import { Global, Module } from '@nestjs/common';
 
 import { AppConfigService } from '../config';
+import { CaptchaService } from './captcha.service';
 import { CircuitBreakerService } from './circuit-breaker.service';
 import { IntegrationGateway } from './integration-gateway';
 import { IntegrationLogRepository } from './integration-log.repository';
+import { CaptchaMockAdapter } from './adapters/captcha-mock.adapter';
 import { CloudTasksRetryQueueAdapter } from './adapters/cloud-tasks-retry-queue.adapter';
 import { KycMockAdapter } from './adapters/kyc-mock.adapter';
 import { LosMockAdapter } from './adapters/los-mock.adapter';
 import { NoopRetryQueueAdapter } from './adapters/noop-retry-queue.adapter';
 import { LosWebhookGuard } from './guards/los-webhook.guard';
+import { CAPTCHA_PORT } from './ports/captcha.port';
 import { KYC_PORT } from './ports/kyc.port';
 import { LOS_PORT } from './ports/los.port';
 import { MockChannelAdapter } from './ports/mock-channel.adapter';
@@ -41,6 +44,11 @@ import { RETRY_QUEUE_PORT } from './retry-queue.port';
     { provide: LOS_PORT, useClass: LosMockAdapter },
     { provide: KYC_PORT, useClass: KycMockAdapter },
     { provide: NOTIFICATION_CHANNEL_PORT, useClass: MockChannelAdapter },
+    // FR-010 — public-capture captcha (AMBIGUITIES C3). Mock adapter bound in
+    // every environment until the vendor lands (OD-08/OD-17); the real adapter
+    // will read CAPTCHA_SECRET (environment-contract.md §Provider variables).
+    { provide: CAPTCHA_PORT, useClass: CaptchaMockAdapter },
+    CaptchaService,
     {
       provide: RETRY_QUEUE_PORT,
       useFactory: (
@@ -58,10 +66,12 @@ import { RETRY_QUEUE_PORT } from './retry-queue.port';
     CircuitBreakerService,
     IntegrationLogRepository,
     LosWebhookGuard,
+    CaptchaService,
     LOS_PORT,
     KYC_PORT,
     NOTIFICATION_CHANNEL_PORT,
     RETRY_QUEUE_PORT,
+    CAPTCHA_PORT,
   ],
 })
 export class IntegrationCoreModule {}
