@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
@@ -22,4 +23,9 @@ export default defineConfig({
   },
   preview: { port: 8080 },
   build: { outDir: 'dist' },
+  test: {
+    // Component specs select jsdom via `// @vitest-environment jsdom`; this setup
+    // runs in every spec to register Testing Library cleanup after each test.
+    setupFiles: ['./src/test/setup.ts'],
+  },
 });

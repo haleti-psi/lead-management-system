@@ -44,6 +44,7 @@ Derived from `docs/architecture.md` (§2, ADRs). Versions are minimums; pin exac
 | PWA | `vite-plugin-pwa` | latest | service worker |
 | i18n | `i18next` + `react-i18next` | latest | |
 | Unit test | `vitest` + `@testing-library/react` | latest | |
+| DOM test env | `jsdom` | latest | DOM for `@testing-library/react` component specs; selected per-file via `// @vitest-environment jsdom` |
 | E2E | `@playwright/test` | latest | shared with api |
 
 ## Shared (`packages/shared`)
