@@ -406,3 +406,47 @@ be non-null before any real user reads the lead via the GET endpoint (FR-050).
 synchronously inside the UnitOfWork (requires changing capture.service.ts scoring call from
 fire-and-forget to awaited inside the tx). Either is spec-consistent; the async variant is
 live in the code.
+
+---
+
+# AMBIGUITY — FR-051 (Lead 360 View)
+
+## Foundation UI gaps (Dev 2)
+
+The merged web foundation does NOT ship `StatusChip`, `PageHeader`, or a shadcn
+`Tabs` primitive (no `@radix-ui/react-tabs` dep) that `shared-utilities.md §Shared UI`
+and the FR-051 LLD §UI Component Tree require. FR-051 ships minimal LOCAL
+`StatusChip`/`SectionTabs` and omits `PageHeader` (lead code + stage chip rendered
+inline) to stay unblocked.
+
+**Action: Dev 2 to provide the canonical primitives; FR-051 to swap to them.**
+Keep the local components; do NOT create canonical primitives in
+`components/common` — that is Dev 2's ownership.
+
+## e2e deferral
+
+`apps/web/e2e/lead360.spec.ts` (Playwright E2E-051-01..05) deferred to the
+project-wide integration-test wave (manifest `stage7.test_strategy`), consistent
+with every other FR. Not built now.
+
+## LLD write-backs (MINOR, for arbiter)
+
+(a) §Auth Check step 2 — `scopeResolver` returns only `{resourceType:'leads'}`;
+scope is enforced in SQL by AbacGuard, not a resource-attribute pre-check.
+
+(b) §Endpoint error table 403/FORBIDDEN row contradicts §Auth Check step 3 /
+§Error Cases (endpoint returns 404 only) — strike the 403 row from the LLD error
+table.
+
+(c) §Data Operations step-1 pseudocode `owner.display_name` should read
+`owner.full_name` (matches schema column + implementation).
+
+(d) DPO notes path returns `[]` (break-glass notes deferred, needs FR-003
+break-glass context) — intentional; document in LLD.
+
+## Resolved
+
+`view_sensitive` added to `audit_action` enum (schema.sql line 112 +
+`V4__add_view_sensitive_audit_action.sql` + `@lms/shared` AuditAction +
+`types.generated.ts`). `DPO_VIEW_AUDIT_ACTION` now correctly set to
+`AuditAction.VIEW_SENSITIVE`.

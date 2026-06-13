@@ -729,5 +729,6 @@ export const AuditAction = {
   ROLE_CHANGE: 'role_change',
   BREAK_GLASS_ACCESS: 'break_glass_access',
   ABAC_DENY: 'abac_deny',
+  VIEW_SENSITIVE: 'view_sensitive',
 } as const;
 export type AuditAction = typeof AuditAction[keyof typeof AuditAction];
