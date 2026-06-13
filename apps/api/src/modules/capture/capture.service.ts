@@ -82,6 +82,7 @@ export interface LeadCaptureData {
   duplicate_status: DupStatus;
   kyc_status: KycStatus;
   score: number | null;
+  score_reasons: string[] | null;
   is_hot: boolean;
   channel_created_by: CreationChannel;
   name_masked: string | null;
@@ -350,22 +351,33 @@ export class CaptureService {
       duplicate_status: DupStatus.NONE,
       kyc_status: KycStatus.NOT_STARTED,
       score: null,
+      score_reasons: null,
       is_hot: false,
       channel_created_by: ctx.channel,
       name_masked: this.masking.mask('full_name', dto.identity.name),
       mobile_masked: this.masking.mask('mobile', dto.identity.mobile),
     };
 
-    // 5h. Idempotency cache (post-commit, 24 h).
+    // 5i. Awaited post-commit scoring — runs in its OWN short tx (capture tx is
+    // already committed). The adapter itself never throws; we also guard here
+    // so that even a mocked/unexpected rejection never blocks the 201 response.
+    // The result is threaded into the response DTO so T11 "data.score is integer
+    // [0,100]" holds on the happy path; score stays null on any failure.
+    try {
+      const scoringResult = await this.scoring.evaluateAsync(created.lead_id);
+      data.score = scoringResult.score;
+      data.score_reasons = scoringResult.reasons;
+    } catch (err) {
+      this.logger.warn({ err, lead_id: created.lead_id }, 'Post-commit scoring failed — score stays null');
+    }
+
+    // 5h. Idempotency cache (post-commit, 24 h) — stored after scoring so that
+    // replays include the computed score in the cached payload.
     if (ctx.idempotencyKey) {
       await this.idempotency.set(IDEMPOTENCY_SCOPE_CREATE_LEAD, ctx.idempotencyKey, data);
     }
 
-    // 5i/5j. Non-blocking post-commit hooks — failures are logged, never thrown
-    // into the 201 path (the lead is already committed).
-    this.scoring.evaluateAsync(created.lead_id).catch((err: unknown) => {
-      this.logger.error({ err, lead_id: created.lead_id }, 'Post-commit scoring dispatch failed');
-    });
+    // 5j. Non-blocking async duplicate scan — failures logged, never thrown.
     this.duplicates.matchAsync(created.lead_id).catch((err: unknown) => {
       this.logger.error({ err, lead_id: created.lead_id }, 'Post-commit duplicate scan failed');
     });

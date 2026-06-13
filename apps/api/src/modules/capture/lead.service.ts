@@ -8,6 +8,7 @@ import {
   ERROR_CODES,
   EventCode,
   LeadStage,
+  ScoreReasonCode,
   type AllocationMethod,
   type ConsentStatus,
   type CreationChannel,
@@ -20,7 +21,7 @@ import { AuditAppender } from '../../core/audit';
 import type { DbTransaction } from '../../core/db';
 import { DomainException } from '../../core/http';
 import { OutboxService } from '../../core/outbox';
-import { BULK_REASSIGN_MAX_IDS, LEADS_RESOURCE_TYPE, TERMINAL_LEAD_STAGES } from './capture.constants';
+import { BULK_REASSIGN_MAX_IDS, LEADS_RESOURCE_TYPE, SYSTEM_ACTOR_ID, TERMINAL_LEAD_STAGES } from './capture.constants';
 
 /** Input for {@link LeadService.create} — every column FR-010 sets at capture. */
 export interface CreateLeadInput {
@@ -437,32 +438,52 @@ export class LeadService {
   }
 
   /**
-   * Set the explainable score (volatile system field, §11.2) under optimistic
-   * lock (shared-utilities.md: single-row mutators take expectedVersion).
-   * Consumed by FR-011 scoring via the capture seam.
+   * Set the explainable score (volatile system field, §11.2). Score is a
+   * background / side-effect write — it does NOT use `expectedVersion` and does
+   * NOT bump `version`. This is intentional: concurrent RM edits and a
+   * background re-score must never raise false 409 conflicts (FR-011 LLD §278-282;
+   * STAGE7-CONTINUATION §4 "volatile fields").
+   * Consumed by FR-011 ScoringService via the capture seam.
    */
   async setScore(
     leadId: string,
-    score: number,
-    reasons: Record<string, unknown> | unknown[],
-    expectedVersion: number,
+    score: number | null,
+    reasons: ScoreReasonCode[] | null,
     tx: DbTransaction,
   ): Promise<void> {
-    const result = await tx
-      .updateTable('leads')
-      .set((eb) => ({
-        score,
-        score_reasons: JSON.stringify(reasons),
-        version: eb('version', '+', 1),
-        updated_at: new Date(),
-      }))
+    // Load org_id for the audit row (single parameterised read, no PII).
+    const lead = await tx
+      .selectFrom('leads')
+      .select(['org_id'])
       .where('lead_id', '=', leadId)
-      .where('version', '=', expectedVersion)
       .where('deleted_at', 'is', null)
       .executeTakeFirst();
-    if (result.numUpdatedRows === 0n) {
-      throw new DomainException(ERROR_CODES.CONFLICT);
-    }
+
+    await tx
+      .updateTable('leads')
+      .set({
+        score,
+        score_reasons: reasons != null ? JSON.stringify(reasons) : null,
+        updated_at: new Date(),
+        updated_by: SYSTEM_ACTOR_ID,
+      })
+      .where('lead_id', '=', leadId)
+      .where('deleted_at', 'is', null)
+      .execute();
+
+    // LLD §Data Operations: audit every score write (LEAD_UPDATE action).
+    await this.audit.append(
+      {
+        action: AuditAction.LEAD_UPDATE,
+        entity_type: LEADS_RESOURCE_TYPE,
+        entity_id: leadId,
+        actor_id: SYSTEM_ACTOR_ID,
+        org_id: lead?.org_id ?? '',
+        lead_id: leadId,
+        detail: { field: 'score', score, reason_codes: reasons },
+      },
+      tx,
+    );
   }
 
   /**

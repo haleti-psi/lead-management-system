@@ -10,6 +10,8 @@ export type {
   ScopePredicate,
 } from './abac.types';
 
+export type { ScoringResult } from './scoring.types';
+
 export interface PaginationMeta {
   page: number;
   limit: number;

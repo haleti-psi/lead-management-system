@@ -19,8 +19,6 @@ import { IMPORT_DISPATCH_PORT } from './ports/import-dispatch.port';
 import { IMPORT_FILE_STORE_PORT } from './ports/import-file-store.port';
 import { InMemoryImportFileStoreAdapter } from './ports/in-memory-import-file-store.adapter';
 import { InlineImportDispatchAdapter } from './ports/inline-import-dispatch.adapter';
-import { NoopScoringAdapter, SCORING_PORT } from './ports/scoring.port';
-
 /**
  * M2 Lead Capture — FR-010 (omnichannel capture + `LeadService`, the sole
  * writer of `leads`). Depends only on the global core modules (DB/UnitOfWork,
@@ -35,10 +33,10 @@ import { NoopScoringAdapter, SCORING_PORT } from './ports/scoring.port';
  *   - {@link LeadReassignmentAdapter} — exported for AdminModule, which rebinds
  *     its FR-130 `LEAD_REASSIGN_PORT` placeholder to it (admin.module.ts).
  *
- * FR-011 (scoring) is not built: its port is bound to a logged no-op stub here
- * and rebound by the owning FR. FR-020's `DUPLICATE_CHECK_PORT` is now bound by
- * the @Global DedupeModule (real `DuplicateCheckAdapter` — the documented
- * rebind), so it is no longer provided here.
+ * FR-011 (scoring): `SCORING_PORT` is bound by the @Global `AllocationModule`
+ * (which registers `ScoringAdapter` and re-exports the token). CaptureService
+ * injects it from the global provider graph — no binding needed here. This is
+ * the same pattern as `DUPLICATE_CHECK_PORT` (bound by @Global DedupeModule).
  */
 @Global()
 @Module({
@@ -56,8 +54,9 @@ import { NoopScoringAdapter, SCORING_PORT } from './ports/scoring.port';
     LeadSlaWriterAdapter,
     LeadReassignmentAdapter,
     { provide: LEAD_SLA_WRITER_PORT, useExisting: LeadSlaWriterAdapter },
-    // Consumer-side seam awaiting its owner FR (FR-011).
-    { provide: SCORING_PORT, useClass: NoopScoringAdapter },
+    // SCORING_PORT is bound by AllocationModule (FR-011 ScoringAdapter) — the
+    // @Global AllocationModule registers the real adapter and re-exports the
+    // token, so CaptureService can inject it here via the global provider graph.
     // Bulk-import infrastructure: GCS in production, in-memory in dev/test
     // (outbox-publisher / retry-queue convention — no live GCP in the suite).
     GcsImportFileStoreAdapter,
@@ -81,7 +80,6 @@ import { NoopScoringAdapter, SCORING_PORT } from './ports/scoring.port';
     LeadSlaWriterAdapter,
     LeadReassignmentAdapter,
     LEAD_SLA_WRITER_PORT,
-    SCORING_PORT,
   ],
 })
 export class CaptureModule {}
