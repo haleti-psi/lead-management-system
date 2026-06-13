@@ -137,6 +137,8 @@ paths:
       parameters: [{ $ref: '#/components/parameters/PathId' }]
       responses:
         "200": { $ref: '#/components/responses/LeadOne' }
+        "400": { $ref: '#/components/responses/ValidationError' }
+        "401": { $ref: '#/components/responses/Unauthenticated' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
     patch:

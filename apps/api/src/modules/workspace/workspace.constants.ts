@@ -1,7 +1,17 @@
-import { DataScope } from '@lms/shared';
+import { AuditAction, DataScope } from '@lms/shared';
 
 /** ABAC resource type for the saved-view endpoints (auth-matrix `resources`). */
 export const SAVED_VIEWS_RESOURCE_TYPE = 'saved_views';
+
+/**
+ * FR-051 — audit action recorded when a DPO opens the masked Lead-360 view
+ * (LLD §Auth Check 4: "every access is audited" as `view_sensitive`).
+ *
+ * `view_sensitive` was added to the `audit_action` enum in V4 migration
+ * (schema.sql line 112, @lms/shared AuditAction, types.generated.ts).
+ */
+export const DPO_VIEW_AUDIT_ACTION = AuditAction.VIEW_SENSITIVE;
+export const DPO_VIEW_AUDIT_OP = 'view_sensitive';
 
 /**
  * `score_band` thresholds (FR-050 LLD §Data Operations — `leads.score` 0..100):

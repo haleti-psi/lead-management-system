@@ -66,8 +66,9 @@ export class LeadListController {
   }
 }
 
-/** Lift the AbacGuard grant outputs off the request for the services. */
-function scopeContext(req: AbacRequestContext): WorkspaceScopeContext {
+/** Lift the AbacGuard grant outputs off the request for the services
+ *  (shared by the workspace controllers — FR-050 list/bulk, FR-051 lead-360). */
+export function scopeContext(req: AbacRequestContext): WorkspaceScopeContext {
   return {
     effectiveScope: req[EFFECTIVE_SCOPE_KEY],
     predicate: req[SCOPE_PREDICATE_KEY],
