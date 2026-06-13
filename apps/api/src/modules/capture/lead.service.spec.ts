@@ -188,12 +188,37 @@ describe('LeadService.setSlaDueAt', () => {
 });
 
 describe('LeadService.setScore', () => {
-  it('throws CONFLICT on stale version (optimistic lock)', async () => {
-    const t = makeTx({ updatedRows: 0n });
+  it('writes score and reasons without bumping version (volatile field, FR-011 LLD §278-282)', async () => {
+    // setScore is a volatile-field mutator: no expectedVersion, no version bump.
+    const t = makeTx({ updatedRows: 1n });
+    const audit = fakeAudit();
+    const service = new LeadService(audit as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+    await expect(service.setScore(LEAD, 80, ['mobile_verified', 'pin_present'] as never, t.tx)).resolves.toBeUndefined();
+    expect(t.execute).toHaveBeenCalledTimes(1);
+    // The set call must include score and score_reasons (not a version bump).
+    expect(t.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ score: 80 }),
+    );
+    // LLD §Data Operations: audit append fires on every score write (BLOCKER 2).
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'lead_update',
+        entity_type: 'leads',
+        entity_id: LEAD,
+        lead_id: LEAD,
+        detail: expect.objectContaining({ field: 'score', score: 80 }),
+      }),
+      t.tx,
+    );
+  });
+
+  it('accepts null score and null reasons (scoring failure path)', async () => {
+    const t = makeTx({ updatedRows: 1n });
     const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
-    await expect(service.setScore(LEAD, 80, ['hot amount'], 1, t.tx)).rejects.toMatchObject({
-      code: ERROR_CODES.CONFLICT,
-    });
+    await expect(service.setScore(LEAD, null, null, t.tx)).resolves.toBeUndefined();
+    expect(t.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ score: null, score_reasons: null }),
+    );
   });
 });
 

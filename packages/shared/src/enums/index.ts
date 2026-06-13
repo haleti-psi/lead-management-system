@@ -682,6 +682,10 @@ export const EventCode = {
 } as const;
 export type EventCode = typeof EventCode[keyof typeof EventCode];
 
+// ── 15. Scoring (FR-011) ─────────────────────────────────────
+export { ScoreReasonCode } from './score-reason-code.enum';
+export type { ScoreReasonCode as ScoreReasonCodeType } from './score-reason-code.enum';
+
 export const AuditAction = {
   LOGIN: 'login',
   LOGOUT: 'logout',

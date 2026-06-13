@@ -165,7 +165,7 @@ function makeHarness(opts: {
     matchSync: jest.fn().mockResolvedValue(opts.dupResult ?? { blocked: false, matches: [] }),
     matchAsync: jest.fn().mockResolvedValue(undefined),
   };
-  const scoring = { evaluateAsync: jest.fn().mockResolvedValue(undefined) };
+  const scoring = { evaluateAsync: jest.fn().mockResolvedValue({ score: null, reasons: null }) };
   const allocation = {
     allocate: jest.fn().mockResolvedValue(
       opts.allocationOutcome ?? {
@@ -454,6 +454,7 @@ describe('CaptureService.createLead', () => {
       stage: 'captured',
       duplicate_status: 'none',
       score: null,
+      score_reasons: null,
       is_hot: false,
       mobile_masked: '98xxxxxx10',
       name_masked: 'Ramesh Kumar',
@@ -657,13 +658,24 @@ describe('CaptureService.createLead', () => {
     expect(h.leadService.create.mock.calls[0]?.[0]).toMatchObject({ owner_id: null });
   });
 
-  it('post-commit hook failures are logged, never thrown into the 201 path', async () => {
+  it('post-commit hook failures are logged, never thrown into the 201 path (forced scoring error → score stays null)', async () => {
     const h = makeHarness();
+    // Even if evaluateAsync unexpectedly rejects (the adapter normally absorbs
+    // errors, but we test the outer guard too), capture still succeeds.
     h.scoring.evaluateAsync.mockRejectedValue(new Error('queue down'));
     h.duplicates.matchAsync.mockRejectedValue(new Error('scan down'));
-    await expect(h.service.createLead(validDto(), ctx())).resolves.toMatchObject({
-      replayed: false,
-    });
+    const result = await h.service.createLead(validDto(), ctx());
+    expect(result.replayed).toBe(false);
+    expect(result.data.score).toBeNull();
+  });
+
+  it('T11 — awaited scoring result is threaded into 201/200 response (score integer, score_reasons array)', async () => {
+    const h = makeHarness();
+    h.scoring.evaluateAsync.mockResolvedValue({ score: 72, reasons: ['mobile_verified', 'pan_present'] });
+    const result = await h.service.createLead(validDto(), ctx());
+    expect(result.replayed).toBe(false);
+    expect(result.data.score).toBe(72);
+    expect(result.data.score_reasons).toEqual(['mobile_verified', 'pan_present']);
   });
 });
 

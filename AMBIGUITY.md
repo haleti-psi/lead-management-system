@@ -350,3 +350,59 @@ statuses re-derive on the next FR-020 check/scan.
 2. Unmerge restores attribution_status='original' unconditionally (LLD-literal); a pre-merge 'reassigned' status is lost — fold into the snapshot-principle LLD write-back.
 3. In-org out-of-scope merge → 403 (per LLD §Auth 4c + T-007); LLD §Error Cases' "out of scope → 404" line should be reconciled.
 4. api-contract mergeLead lists only 200/403/409; implementation (per LLD) also emits 400/401/404/429 — completed in the FR-021 contracts amendment PR.
+
+---
+
+# AMBIGUITY — FR-011 (Lead Quality Enrichment & Score at Capture)
+
+## FR-011-1. updateLead endpoint (PATCH /leads/{id}) does not exist on this worktree
+
+**The gap:** FR-011 LLD §Backend Flow "Trigger: PATCH /api/v1/leads/{id}" requires scoring
+re-evaluation on relevant field changes. This endpoint (operationId: updateLead) is owned by
+FR-050 (Wave 3) and does not exist in this worktree (Wave 2). Per dispatch instructions, the
+scoring path was not wired to a non-existent endpoint.
+
+**Resolution applied:** `ScoringService.evaluate(leadId, db, orgId)` is fully implemented and
+available for the update FR to call. Wire `ScoringService.evaluate` into `UpdateLeadUseCase`
+when FR-050 builds the PATCH endpoint — pass the `ScoringService` from `AllocationModule`
+(already exported) and call `LeadService.setScore` on scoring-relevant field changes.
+
+**Needed action (Dev 1 / FR-050 implementor):** import `ScoringService` from AllocationModule
+in the FR-050 use case and wire the scoring side-effect identical to the create path.
+
+## FR-011-2. score/score_reasons masking (stripping for PARTNER/CUSTOMER) not implemented
+
+**The gap:** FR-011 LLD §Score visibility says `MaskingService`/`ResponseEnvelopeInterceptor`
+strips `score` and `score_reasons` from the response for PARTNER/CUSTOMER roles. The current
+`MaskingInterceptor.FIELD_MAP` transforms PII values (partial masking) — it does not support
+field deletion based on role scope. The LLD's test T18 (`score` absent for PARTNER) and T19
+(`score` present for BM) both require the `GET /api/v1/leads/{id}` endpoint (FR-050) to exist.
+
+**Resolution applied:** `ScoringService` and `LeadService.setScore` are fully implemented.
+The masking gap is deferred: when FR-050 builds the getLeadById endpoint and its DTO, add
+a role-scoped `score`/`score_reasons` exclusion (either via a NestJS class-transformer `@Exclude`
+with the ABAC-resolved role, or a response-shape discriminator in the serialization layer).
+
+**Needed action (Dev 1 / FR-050 + FR-002 owner):** extend the masking layer to support
+field-deletion (not value-masking) for role-scoped fields; record in FR-002 FIELD_MAP or
+create a complementary `ROLE_STRIP_MAP`. T18/T19 API tests move to the FR-050 wave.
+
+## FR-011-3. Scoring port wiring: ScoringAdapter opens its own UnitOfWork (post-commit)
+
+The capture path calls `evaluateAsync(leadId)` fire-and-forget AFTER the lead commit
+(capture.service.ts lines 366-368). `ScoringAdapter` opens its own `UnitOfWork.run` to
+load `org_id`, evaluate the score, and call `LeadService.setScore`. This means the score
+write is in a SEPARATE transaction from the lead creation, not the same tx as described in
+the LLD's "within UnitOfWork" flow (FR-011.md §389-392). The trade-off: the score is null
+immediately after the 201 response and updated within milliseconds by the post-commit hook.
+
+**Rationale:** the LLD's transaction diagram was written for a synchronous inline path, but
+the built wiring (capture.service.ts:366) is explicitly asynchronous post-commit. Both
+patterns satisfy the LLD's non-blocking requirement; the post-commit approach prevents the
+scoring I/O from extending the lead-capture transaction latency. The lead.score field will
+be non-null before any real user reads the lead via the GET endpoint (FR-050).
+
+**Needed decision (Dev 1):** ratify the post-commit async wiring, OR wire ScoringService
+synchronously inside the UnitOfWork (requires changing capture.service.ts scoring call from
+fire-and-forget to awaited inside the tx). Either is spec-consistent; the async variant is
+live in the code.
