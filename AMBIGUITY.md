@@ -497,3 +497,30 @@ FR-091 resolves the partner by `partner_id` (from the AbacGuard `partner`-scope 
 
 ## FR-091-A6. Partner document submission out of scope (LLD AMB)
 No partner document-upload route is added; partner documents go through the standard M8 endpoints (FR-060/070) once the lead exists. Masking: list `name`→`Ramesh xxxxx`, `mobile`→`98xxxxxx10` (PARTNER projection omits score/owner/internal fields — AC2).
+
+---
+
+# AMBIGUITY — FR-092 (Partner Quality Score & Dashboard)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9). LLD Assumptions 1–6 carried with what was applied.*
+
+## FR-092-A1. Scope follows the auth-matrix (broader than the LLD table)
+The LLD restricts the quality endpoint to PARTNER/BM/SM/HEAD, but `auth-matrix.json` grants `reports` to RM(O)/KYC(B)/DPO(M) too. **Resolution applied (matrix wins):** `partnerInScope` grants the predicate-derived scope — `partner`(own)/`branch`/`region`/`team`/`all`/`masked` — and denies `own`(RM)/`customer_token`. So RM → FORBIDDEN, but KYC/DPO CAN read partner quality within their branch/masked scope (the payload carries no PII). Reconcile the LLD or the matrix.
+
+## FR-092-A2. Median TAT approximated with AVG via raw SQL (LLD Assumption 2)
+Kysely's builder can't express the §12.4 nested median; the `speed_index` numerator/denominator use a parameterised raw `sql` nested aggregate with `AVG` (per-lead first-doc-upload − created_at → per-partner avg → org-min). For a true statistical median, add a `PERCENTILE_CONT(0.5)` view. `doc TAT` = first doc upload − lead.created_at (LLD Assumption 3, option a).
+
+## FR-092-A3. `verified_docs_first_time` ≈ `status='verified' AND version=1`
+No first-time-verify column exists; approximated as verified on v1 (LLD Assumption 3). `uploaded_docs` = `status <> 'pending'`. Contactability uses the CURRENT `leads.stage` (reached `contacted`+), not `stage_history` (LLD Assumption 1).
+
+## FR-092-A4. Weights hard-coded; MIN_VOLUME=10 const (LLD Assumptions 5/6)
+The §12.4 weights and the 10-lead minimum-volume threshold are constants in `partner.constants.ts` (no config table; the `PARTNER_QUALITY_MIN_VOLUME` env var is not in the environment contract, so a const default is used). Add a config table / env var to make them runtime-configurable.
+
+## FR-092-A5. Cache write actor + window timezone
+The best-effort `partners.quality_score` cache write sets `updated_by` to the requesting user (schema requires NOT NULL; LLD Assumption 4 — a system-user UUID could be used instead). The default scoring window is a rolling 30 days computed in **UTC** (the LLD says IST midnight); ratify or switch to IST.
+
+## FR-092-A7. Org-min TAT excludes non-partner leads (review fix)
+The LLD's E2 grouped by `sa.partner_id` without a null filter, so direct/web/RM-captured leads (`partner_id IS NULL`) would form a synthetic "partner" group and could become the org-min, skewing every partner's `speed_index`. The query now adds `sa.partner_id IS NOT NULL`. Write-back to the LLD E2. (`uploaded_docs` counting `not_required` docs is per-LLD and left as-is.)
+
+## FR-092-A6. Insufficient-data + zero-denominator
+`total_leads < 10` → `quality_score: null`, all `factors: null`, raw `metrics` still returned. Any factor with a zero denominator renders `null` (never 0%), per BRD §12.5; a null factor contributes 0 to the weighted score.
