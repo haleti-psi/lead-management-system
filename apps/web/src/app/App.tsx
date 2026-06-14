@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { LoginPage } from './login/LoginPage';
 import { ResetPasswordPage } from './reset-password/ResetPasswordPage';
 import { DocumentsPage } from './leads/documents/DocumentsPage';
+import { KycPage } from './leads/kyc/KycPage';
 import { CustomerUploadPage } from './customer/CustomerUploadPage';
 
 // Temporary landing inside the shell until feature screens (FRs) are wired.
@@ -30,6 +31,7 @@ export function App(): JSX.Element {
         <Route element={<AppShell />}>
           <Route path="/" element={<DashboardPlaceholder />} />
           <Route path="/leads/:id/documents" element={<DocumentsPage />} />
+          <Route path="/leads/:id/kyc" element={<KycPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

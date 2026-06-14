@@ -1,9 +1,22 @@
-import { DocStatus, KycStatus } from '@lms/shared';
+import { DocStatus, KycCheckStatus, KycStatus } from '@lms/shared';
 import type { ChipTone } from '@/components/ui/StatusChip';
 
 interface Display {
   label: string;
   tone: ChipTone;
+}
+
+/** `kyc_check_status` (per-verification) → chip label + tone (FR-071 workbench). */
+const KYC_CHECK_STATUS_DISPLAY: Readonly<Record<KycCheckStatus, Display>> = {
+  [KycCheckStatus.INITIATED]: { label: 'Not started', tone: 'neutral' },
+  [KycCheckStatus.SUCCESS]: { label: 'Verified', tone: 'success' },
+  [KycCheckStatus.FAILED]: { label: 'Exception', tone: 'danger' },
+  [KycCheckStatus.EXCEPTION]: { label: 'Exception', tone: 'danger' },
+  [KycCheckStatus.WAIVED]: { label: 'Waived', tone: 'warning' },
+};
+
+export function kycCheckStatusDisplay(status: KycCheckStatus): Display {
+  return KYC_CHECK_STATUS_DISPLAY[status] ?? { label: status, tone: 'neutral' };
 }
 
 /** `doc_status` → chip label + tone (LLD §UI: StatusChip over doc_status). */
