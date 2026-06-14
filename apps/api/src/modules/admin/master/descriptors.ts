@@ -14,7 +14,6 @@ import {
   CreateCommunicationTemplateDto,
   PatchCommunicationTemplateDto,
 } from './dto/communication-template.dto';
-import { CreateDlaRegistryDto, PatchDlaRegistryDto } from './dto/dla-registry.dto';
 import { CreatePartnerDto, PatchPartnerDto } from './dto/partner.dto';
 import { CreateRegionDto, PatchRegionDto } from './dto/region.dto';
 import {
@@ -758,108 +757,13 @@ function toTemplateView(row: {
   };
 }
 
-// ───────────────────────── dla_registry (global, status enum) ─────────────────────────
-
-class DlaRegistryDescriptor implements MasterResourceDescriptor {
-  readonly slug = 'dla-registry';
-  readonly configType = 'dla_registry';
-  readonly entityType = 'dla_registry';
-  readonly scopeModel = 'global' as const;
-  readonly activenessModel = 'status' as const;
-  readonly createSchema = CreateDlaRegistryDto;
-  readonly patchSchema = PatchDlaRegistryDto;
-
-  async list(executor: KyselyDb, args: ListArgs): Promise<MasterListPage> {
-    let q = executor.selectFrom('dla_registry').selectAll().where('org_id', '=', ORG_ID_DEFAULT);
-    if (args.isActive !== undefined) q = args.isActive ? q.where('status', '=', STATUS_ACTIVE) : q.where('status', '!=', STATUS_ACTIVE);
-    const rows = await q.orderBy('created_at', 'desc').limit(args.limit).offset((args.page - 1) * args.limit).execute();
-    let c = executor.selectFrom('dla_registry').select((eb) => eb.fn.countAll<string>().as('count')).where('org_id', '=', ORG_ID_DEFAULT);
-    if (args.isActive !== undefined) c = args.isActive ? c.where('status', '=', STATUS_ACTIVE) : c.where('status', '!=', STATUS_ACTIVE);
-    const { count } = await c.executeTakeFirstOrThrow();
-    return { rows: rows.map(toDlaView), total: Number(count) };
-  }
-
-  async findById(executor: KyselyDb | DbTransaction, id: string): Promise<MasterRecordView | undefined> {
-    const row = await executor.selectFrom('dla_registry').selectAll().where('dla_registry_id', '=', id).where('org_id', '=', ORG_ID_DEFAULT).executeTakeFirst();
-    return row != null ? toDlaView(row) : undefined;
-  }
-
-  async insert(tx: DbTransaction, body: unknown, actorId: string) {
-    const dto = body as CreateDlaRegistryDto;
-    const row = await tx
-      .insertInto('dla_registry')
-      .values({
-        org_id: ORG_ID_DEFAULT,
-        name: dto.name,
-        type: dto.type,
-        owner: dto.owner ?? null,
-        url: dto.url ?? null,
-        grievance_officer: asJson(dto.grievanceOfficer),
-        enabled_products: asJson(dto.enabledProducts),
-        data_collected: asJson(dto.dataCollected),
-        storage_location: dto.storageLocation ?? null,
-        status: STATUS_ACTIVE,
-        created_by: actorId,
-        updated_by: actorId,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    return { record: toDlaView(row), version: 1, diff: { op: 'create', after: { name: dto.name, type: dto.type } } };
-  }
-
-  async update(tx: DbTransaction, existing: MasterRecordView, body: unknown, actorId: string) {
-    const dto = body as PatchDlaRegistryDto;
-    const row = await tx
-      .updateTable('dla_registry')
-      .set({
-        ...(dto.name != null && { name: dto.name }),
-        ...(dto.type != null && { type: dto.type }),
-        ...(dto.owner != null && { owner: dto.owner }),
-        ...(dto.url != null && { url: dto.url }),
-        ...(dto.grievanceOfficer != null && { grievance_officer: asJson(dto.grievanceOfficer) }),
-        ...(dto.enabledProducts != null && { enabled_products: asJson(dto.enabledProducts) }),
-        ...(dto.dataCollected != null && { data_collected: asJson(dto.dataCollected) }),
-        ...(dto.storageLocation != null && { storage_location: dto.storageLocation }),
-        ...(dto.status != null && { status: dto.status }),
-        updated_by: actorId,
-        updated_at: new Date(),
-      })
-      .where('dla_registry_id', '=', existing.id)
-      .where('org_id', '=', ORG_ID_DEFAULT)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    return { record: toDlaView(row), version: 1, diff: { op: 'update', changed: Object.keys(dto) } };
-  }
-
-  async assertNotInUse(): Promise<void> {
-    // No hard FK from leads to dla_registry; retiring simply removes it from the
-    // published registry surface (LLD §In-use: no block).
-  }
-}
-
-function toDlaView(row: {
-  dla_registry_id: string; name: string; type: string; owner: string | null; url: string | null; status: string; created_at: Date; updated_at: Date;
-}): MasterRecordView {
-  return {
-    id: row.dla_registry_id,
-    dlaRegistryId: row.dla_registry_id,
-    name: row.name,
-    type: row.type,
-    owner: row.owner,
-    url: row.url,
-    status: row.status,
-    isActive: row.status === STATUS_ACTIVE,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 /**
  * The FR-131 allow-list. Every entry is a master resource with NO competing
  * concrete controller in another committed FR. Resources owned elsewhere are
  * deliberately absent (see master.constants.ts): users/roles/teams (FR-130),
  * product-configs (FR-040), sla-policies (FR-104), schemes (FR-042),
- * allocation-rules (FR-030), webhooks (FR-140), break-glass (FR-003).
+ * allocation-rules (FR-030), webhooks (FR-140), break-glass (FR-003),
+ * dla-registry (FR-113 M12 — claimed out like allocation-rules/FR-030).
  *
  * NOTE: ownership of partners/communication-templates/retention is pending
  * cross-FR review (other modules may claim these); left here as-is.
@@ -872,5 +776,4 @@ export const MASTER_DESCRIPTORS: readonly MasterResourceDescriptor[] = [
   new RetentionPolicyDescriptor(),
   new PartnerDescriptor(),
   new CommunicationTemplateDescriptor(),
-  new DlaRegistryDescriptor(),
 ];
