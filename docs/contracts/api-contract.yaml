@@ -46,7 +46,7 @@ x-fr-coverage:
   FR-091: "GET/POST /partners/leads"
   FR-092: "GET /partners/{id}/quality"
   FR-100: "GET/POST /tasks, PATCH /tasks/{id}"
-  FR-101: "GET/POST /admin/templates, POST /leads/{id}/communications"
+  FR-101: "GET/POST /admin/templates, GET/POST /leads/{id}/communications, POST /internal/communications/dispatch"
   FR-102: "PATCH /tasks/{id} (visit/call disposition)"
   FR-103: "PUT /preferences"
   FR-104: "GET/POST /admin/sla-policies"
@@ -248,7 +248,10 @@ paths:
   /tasks/{id}:
     patch: { summary: "Update/complete task (disposition, visit geo)", operationId: updateTask, tags: [Tasks], x-frs: [FR-100, FR-102], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "409": { $ref: '#/components/responses/Conflict' } } }
   /leads/{id}/communications:
+    get: { summary: "List communication logs for a lead (paginated, recipient masked)", operationId: listCommunications, tags: [Communication], x-frs: [FR-101], parameters: [{ $ref: '#/components/parameters/PathId' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "404": { $ref: '#/components/responses/NotFound' } } }
     post: { summary: "Send templated, consent-gated message", operationId: sendCommunication, tags: [Communication], x-frs: [FR-101], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "202": { description: "Queued" }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /internal/communications/dispatch:
+    post: { summary: "Cloud Tasks worker — dispatch queued communication (FR-101)", operationId: dispatchCommunication, tags: [Internal], x-frs: [FR-101], security: [], responses: { "200": { $ref: '#/components/responses/Ok' } } }
   /admin/templates:
     get: { summary: "List communication templates", operationId: listTemplates, tags: [Admin], x-frs: [FR-101], responses: { "200": { $ref: '#/components/responses/Ok' } } }
     post: { summary: "Create/version template", operationId: createTemplate, tags: [Admin], x-frs: [FR-101], responses: { "201": { $ref: '#/components/responses/Created' } } }

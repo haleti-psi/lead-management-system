@@ -79,6 +79,7 @@
     "POST /api/v1/los/webhooks/status",
     "POST /api/v1/internal/sla/sweep",
     "POST /api/v1/internal/tasks/overdue-sweep",
+    "POST /api/v1/internal/communications/dispatch",
     "POST /api/v1/internal/jobs/grievance-escalation"
   ],
   "endpoint_auth_notes": {
@@ -87,6 +88,7 @@
     "/api/v1/los/webhooks/status": "HMAC-signature verified (no user session)",
     "/api/v1/internal/sla/sweep": "Cloud Tasks queue header (InternalTaskGuard); @Public — no user JWT",
     "/api/v1/internal/tasks/overdue-sweep": "Cloud Tasks queue header (InternalTaskGuard); @Public — no user JWT",
+    "/api/v1/internal/communications/dispatch": "Cloud Tasks queue header (InternalTaskGuard); @Public — no user JWT",
     "/api/v1/internal/jobs/grievance-escalation": "Cloud Tasks OIDC service-account token verified at infra layer"
   },
   "http_status_rules": {

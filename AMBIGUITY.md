@@ -705,6 +705,80 @@ FR-100-tests.md T01–T13 are API component tests; the Playwright UI tests
 UI-01..UI-05 and SQL invariant tests are deferred per `manifest.stage7.test_strategy`.
 Unit tests T14–T20 are implemented as Jest unit specs.
 ---
+
+# AMBIGUITY — FR-101 (Communication Templates & Audit, M11 Engagement)
+
+## FR-101-A1: GET /leads/{id}/communications not in api-contract.yaml
+
+**The gap (precise):** `CommunicationHistory` component and `useCommunicationLogs` hook
+reference a `GET /api/v1/leads/{id}/communications` endpoint for fetching a lead's
+communication log list. This path does not appear in `docs/contracts/api-contract.yaml`
+(v5.3). `POST /leads/{id}/communications` (the send endpoint, operationId `sendCommunication`)
+IS contracted.
+
+**What was built:** The `useCommunicationLogs` hook declares the query key and type shape;
+the `apiClient.get(...)` call is present and functional. The endpoint will return 404 until
+the contract is added and the GET controller method is implemented.
+
+**Needed action (Dev 1 / contracts owner):** Add `GET /api/v1/leads/{id}/communications`
+to `api-contract.yaml` with the `CommLogListResponse` schema (paginated list of
+`CommunicationLog`), then add the corresponding controller method to
+`CommunicationController`.
+
+## FR-101-A2: FR-103 notification_preferences not yet built — direct DB query with defaults
+
+**The gap (precise):** `NotificationDispatchService` queries `notification_preferences`
+directly (raw Kysely, no service abstraction) because FR-103 (Notification Preferences
+module) is not yet built. The opt-in/opt-out defaults applied are:
+
+- Absent preference row + transactional category → treat as opted-in (allow send)
+- Absent preference row + marketing category → treat as opted-out (block send)
+
+These defaults are code-level conventions, not documented in any contract.
+
+**What was built:** `NotificationDispatchService.checkOptOut` queries
+`notification_preferences` where `subject_ref = leadId AND purpose = consent_basis AND
+opted_in = false`. Absence of a row does NOT block transactional sends.
+
+**Needed action (Dev 1 / FR-103 owner):** When FR-103 builds `NotificationPreferenceService`,
+replace the direct Kysely query in `NotificationDispatchService` with the service call.
+Ratify the absence-default semantics in the FR-103 LLD.
+
+## FR-101-A3: AuditAction enum has no TEMPLATE_CREATED value
+
+**The gap (precise):** FR-101.md §Data Operations specifies
+`AuditAppender.append({ action: 'TEMPLATE_CREATED', ... })` but `audit_action`
+(schema.sql / `@lms/shared` `AuditAction`) has no such value.
+
+**Resolution applied (enum rule wins, per CORRECTIONS.md):**
+Template creation appends `action: AuditAction.CONFIG_CHANGE` with
+`detail.sub_action = 'TEMPLATE_CREATED'`, `detail.template_id`, `detail.code`,
+`detail.channel`. Consistent with the FR-050 precedent (`detail.sub_action='bulk_action'`).
+Communication send appends `action: AuditAction.COMM_SEND` (this value exists in the enum).
+
+**Needed action (Dev 1):** add `template_created` to `audit_action` enum in schema.sql +
+Flyway migration + `@lms/shared` `AuditAction`, then replace `AuditAction.CONFIG_CHANGE` +
+`detail.sub_action` with `AuditAction.TEMPLATE_CREATED` in `template.service.ts`.
+
+## FR-101-A4: DispatchCommunicationWorker internal endpoint not in auth-matrix
+
+**The gap (precise):** `DispatchCommunicationWorker` is a Cloud Tasks HTTP worker endpoint.
+Internal worker endpoints should appear in `docs/contracts/auth-matrix.json`
+`service_to_service_only` list (or equivalent). No such list exists in the current matrix,
+and the worker is not registered there.
+
+**Resolution applied:** The worker controller is decorated with `@Public()` (exempt from
+`JwtAuthGuard`) per the Cloud Tasks pattern established by other worker endpoints in the
+project. Cloud Tasks adds a task-origin header; the worker validates only that the payload
+is well-formed.
+
+**Needed action (Dev 1 / contracts owner):** Add an `internal_worker_endpoints` or
+`service_to_service_only` section to `auth-matrix.json` and list the worker paths there,
+so the auth reviewer knows which `@Public()` uses are intentional Cloud Tasks workers vs.
+truly public endpoints.
+
+---
+
 # AMBIGUITY — FR-114 (Grievance Workflow)
 
 ## FR-114-A1: No EventCode for GRIEVANCE_ESCALATED in shared enums
