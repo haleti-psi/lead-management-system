@@ -40,6 +40,16 @@ export class CustomerLinkAdapter implements CustomerLinkPort {
     return this.resolve(token, 'grievance');
   }
 
+  /** FR-062 — token resolution for `GET /c/{token}/status` (purpose 'status'). */
+  resolveForStatus(token: string): Promise<ResolvedCustomerLink | null> {
+    return this.resolve(token, 'status');
+  }
+
+  /** FR-062 — token resolution for `POST /c/{token}/callback` (purpose 'callback'). */
+  resolveForCallback(token: string): Promise<ResolvedCustomerLink | null> {
+    return this.resolve(token, 'callback');
+  }
+
   private async resolve(token: string, requiredPurpose: LinkPurpose): Promise<ResolvedCustomerLink | null> {
     const link = await this.repo.findActiveByTokenHash(hashToken(token));
     if (!link) return null;

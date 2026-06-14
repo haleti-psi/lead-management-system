@@ -425,3 +425,27 @@ Customer-link writes have no JWT user; `grievances.created_by/updated_by` use th
 
 ## FR-061-A7. Grievance-officer info block deferred (web)
 The LLD's `GrievanceOfficerInfoBlock` reads `dla_registry.grievance_officer` from the FR-060 `GET /c/{token}` payload, but FR-060's landing doesn't expose `dla_registry` (no PII/registry data added there). The grievance form ships without the officer block (a generic "contact your RM" note); surfacing the officer requires adding `grievance_officer` to the FR-060 landing response.
+
+---
+
+# AMBIGUITY — FR-062 (Customer Status Tracking & Callback)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9).*
+
+## FR-062-A1. `tasks` has no owner service — FR-062 is the de-facto first writer
+The yaml names "sole writer: TaskService / M11", but no `TaskService`/M11 task module exists yet (zero `tasks` writers in the codebase). **Resolution applied:** FR-062 inserts the callback `tasks` row via its own `StatusRepository` (no competing writer → no owner-writes conflict today). **Needed decision:** when M11/FR-100 lands, it should own `tasks` (a `TaskService.createCallbackTask` or a port seam) and FR-062 should delegate. Stage-9 ownership reconciliation item.
+
+## FR-062-A2. Hot-flag side effect deferred (`LeadService.setHotFlag` is a stub)
+`LeadService.setHotFlag` is a FR-031 stub that REJECTS (`notYetWired`). The LLD §2.4 wants the callback to set `leads.is_hot=true` (high-intent signal). **Resolution applied (per LLD Assumption 3):** the callback task is created; the hot-flag is SKIPPED (calling the stub would throw and roll back the task). Wire it when FR-031 implements `setHotFlag(leadId, isHot, reasons, tx)`.
+
+## FR-062-A3. `UNASSIGNED_LEAD_OWNER_ID` env var absent → SYSTEM_USER_ID
+`tasks.owner_id` is NOT NULL; the LLD assigns an unassigned lead's callback to `UNASSIGNED_LEAD_OWNER_ID`, which is not in the environment contract. **Resolution applied:** fall back to the seeded `SYSTEM_USER_ID` (a valid users FK) + warn log. Add the env var (and a real ops-queue user) if a dedicated unassigned owner is required.
+
+## FR-062-A4. Token resolution via the adapter (404), not the LLD's 401/404 split
+`GET /status` + `POST /callback` resolve via `CustomerLinkAdapter.resolveForStatus`/`resolveForCallback` (purpose + OTP-session gated) → `null` → uniform NOT_FOUND (404). The LLD's 401-for-OTP-missing is folded into 404 (existence hiding — consistent with FR-060/061/070/110). Ratify or enrich the port.
+
+## FR-062-A5. Idempotency-Key optional (not strictly required)
+The LLD marks `Idempotency-Key` required on the callback POST; FR-062 treats it as optional — when present, replays return the original `task_id` (Redis, 24h TTL); when absent, the request proceeds without dedupe. The `IDEMPOTENT_REPLAY` `meta.detail.reason` is not surfaced (no success-envelope channel). Ratify.
+
+## FR-062-A6. No external GET-status caching / LOS status label
+`los_status_label` is always `null` (LOS status surfacing is M9/FR-08x). The status view is a live read; no stage transition occurs.

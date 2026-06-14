@@ -72,4 +72,11 @@ describe('CustomerLinkAdapter (port rebind)', () => {
       channel: 'api',
     });
   });
+
+  it('resolveForStatus / resolveForCallback gate on their purposes', async () => {
+    expect(await build(linkRow({ purpose: ['status'] }), true).resolveForStatus('tok')).not.toBeNull();
+    expect(await build(linkRow({ purpose: ['callback'] }), true).resolveForStatus('tok')).toBeNull();
+    expect(await build(linkRow({ purpose: ['callback'] }), true).resolveForCallback('tok')).not.toBeNull();
+    expect(await build(linkRow({ purpose: ['callback'] }), false).resolveForCallback('tok')).toBeNull();
+  });
 });

@@ -11,6 +11,9 @@ import { GrievanceController } from './grievance.controller';
 import { GrievanceRepository } from './grievance.repository';
 import { GrievanceService } from './grievance.service';
 import { OtpService } from './otp.service';
+import { StatusController } from './status.controller';
+import { StatusRepository } from './status.repository';
+import { StatusService } from './status.service';
 
 /**
  * M7 Customer Self-Service — FR-060 (secure customer action link; sole writer of
@@ -22,7 +25,12 @@ import { OtpService } from './otp.service';
  */
 @Global()
 @Module({
-  controllers: [CustomerLinkController, CustomerPublicController, GrievanceController],
+  controllers: [
+    CustomerLinkController,
+    CustomerPublicController,
+    GrievanceController,
+    StatusController,
+  ],
   providers: [
     CustomerLinkService,
     CustomerLinkRepository,
@@ -31,6 +39,8 @@ import { OtpService } from './otp.service';
     CustomerLinkAdapter,
     GrievanceService,
     GrievanceRepository,
+    StatusService,
+    StatusRepository,
     { provide: CUSTOMER_LINK_PORT, useExisting: CustomerLinkAdapter },
   ],
   exports: [CUSTOMER_LINK_PORT, CustomerLinkService],
