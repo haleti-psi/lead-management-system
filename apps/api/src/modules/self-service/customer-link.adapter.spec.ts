@@ -61,4 +61,15 @@ describe('CustomerLinkAdapter (port rebind)', () => {
     expect(await build(uploadOnly, true).resolveForConsent('tok')).toBeNull();
     expect(await build(linkRow({ purpose: ['consent'] }), true).resolveForConsent('tok')).not.toBeNull();
   });
+
+  it('resolveForGrievance gates on the grievance purpose + OTP session', async () => {
+    expect(await build(linkRow({ purpose: ['upload'] }), true).resolveForGrievance('tok')).toBeNull();
+    expect(await build(linkRow({ purpose: ['grievance'] }), false).resolveForGrievance('tok')).toBeNull();
+    expect(await build(linkRow({ purpose: ['grievance'] }), true).resolveForGrievance('tok')).toEqual({
+      leadId: LEAD,
+      orgId: ORG,
+      customerProfileId: null,
+      channel: 'api',
+    });
+  });
 });

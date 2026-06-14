@@ -7,6 +7,9 @@ import { CustomerLinkGuard } from './customer-link.guard';
 import { CustomerLinkRepository } from './customer-link.repository';
 import { CustomerLinkService } from './customer-link.service';
 import { CustomerPublicController } from './customer-public.controller';
+import { GrievanceController } from './grievance.controller';
+import { GrievanceRepository } from './grievance.repository';
+import { GrievanceService } from './grievance.service';
 import { OtpService } from './otp.service';
 
 /**
@@ -19,13 +22,15 @@ import { OtpService } from './otp.service';
  */
 @Global()
 @Module({
-  controllers: [CustomerLinkController, CustomerPublicController],
+  controllers: [CustomerLinkController, CustomerPublicController, GrievanceController],
   providers: [
     CustomerLinkService,
     CustomerLinkRepository,
     OtpService,
     CustomerLinkGuard,
     CustomerLinkAdapter,
+    GrievanceService,
+    GrievanceRepository,
     { provide: CUSTOMER_LINK_PORT, useExisting: CustomerLinkAdapter },
   ],
   exports: [CUSTOMER_LINK_PORT, CustomerLinkService],

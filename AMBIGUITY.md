@@ -398,3 +398,30 @@ Links remain `active` until expiry or staff revoke (resend revokes the prior). T
 The adapter sets the consent `channel` to `CreationChannel.API` for customer self-service (the FR-110-2 open question on the channel source). Ratify, or carry the delivery channel (sms/whatsapp/email) through instead.
 
 *Reused, not rebuilt (already shipped):* customer document upload (FR-070 `POST /c/{token}/documents` + VirusScanPort — LLD AMB-3 is moot), customer consent (FR-110 `POST /c/{token}/consent`), the `CustomerUploadPage`. FR-060 adds the token/OTP machinery + landing that make them reachable.
+
+---
+
+# AMBIGUITY — FR-061 (Customer Grievance & Service Request)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9). The LLD's AMB-1..5 are carried with what was applied.*
+
+## FR-061-A1. `audit_action` has no `grievance_create` value → `lead_create`
+The audit appender writes `action = 'lead_create'` with `entity_type = 'grievance'` (LLD AMB-1's option a — the closest enum value). This pollutes lead-creation audit queries; add a `grievance_create` value to `audit_action` (schema + enum + Flyway) and switch, or ratify the mapping.
+
+## FR-061-A2. Token resolution via the adapter (404), not a guard (409)
+The LLD §Auth wants `CONFLICT` (409) for status≠active / expired / OTP-unverified and `NOT_FOUND` (404) only for unknown token. **Resolution applied:** grievance resolves via `CustomerLinkAdapter.resolveForGrievance` (purpose-gated, OTP-gated) → `null` → uniform `NOT_FOUND` (404) for ALL token problems — consistent with the FR-070/110 customer endpoints and FR-060-2/3 (existence hiding). Ratify, or enrich the port to distinguish 409.
+
+## FR-061-A3. Grievance SLA due-at is wall-clock, not business-time
+The global `SlaEngine.computeDueAt`/`setGrievanceDue` require `SLA_POLICY_READER_PORT`, which is bound only in EngagementModule's local scope (not visible to the @Global SlaEngine singleton) — calling them would throw `not bound` (pre-existing seam gap). **Resolution applied:** the service reads the active grievance `sla_policies.threshold_minutes` directly and sets `sla_due_at = now + threshold` (wall-clock). SLA is non-blocking here ("should"); the FR-104 sweep owns escalation. **Needed decision:** bind `SLA_POLICY_READER_PORT` globally (or in SlaModule) so business-time computation works, then switch grievance intake to `computeDueAt(GRIEVANCE, …)`.
+
+## FR-061-A4. (LLD AMB-2) `created_by`/`updated_by` = SYSTEM_USER_ID
+Customer-link writes have no JWT user; `grievances.created_by/updated_by` use the seeded `SYSTEM_USER_ID` (the FR-060/customer-write convention).
+
+## FR-061-A5. (LLD AMB-3/4/5) attachment, owner, duplicate-link deferred
+`attachmentNote` is free-text only (no binary — `grievances` has no `attachment_ref`); `owner_id` left null at intake (routing is FR-114); no duplicate-complaint linking (`grievances` has no `parent_grievance_id`). All per the LLD ambiguities; FR-061 is intake-only (`(none) → open`).
+
+## FR-061-A6. `CodeGenerator` extended + exported
+`CodeGenerator.nextGrievanceNo` (GRV-{YYYY}-{seq5}) was added (same advisory-lock + MAX()+1 pattern as `nextLeadCode`) and `CodeGenerator` is now exported from the @Global `CaptureModule` so M7 can inject it. `resolveForGrievance` was added to `CustomerLinkAdapter` (M7-internal; NOT on the cross-module `CustomerLinkPort`).
+
+## FR-061-A7. Grievance-officer info block deferred (web)
+The LLD's `GrievanceOfficerInfoBlock` reads `dla_registry.grievance_officer` from the FR-060 `GET /c/{token}` payload, but FR-060's landing doesn't expose `dla_registry` (no PII/registry data added there). The grievance form ships without the officer block (a generic "contact your RM" note); surfacing the officer requires adding `grievance_officer` to the FR-060 landing response.

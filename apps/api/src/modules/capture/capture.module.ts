@@ -78,6 +78,7 @@ import { NoopScoringAdapter, SCORING_PORT } from './ports/scoring.port';
   exports: [
     LeadService,
     CaptureService,
+    CodeGenerator,
     LeadSlaWriterAdapter,
     LeadReassignmentAdapter,
     LEAD_SLA_WRITER_PORT,

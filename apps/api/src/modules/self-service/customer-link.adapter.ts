@@ -34,6 +34,12 @@ export class CustomerLinkAdapter implements CustomerLinkPort {
     return this.resolve(token, 'consent');
   }
 
+  /** FR-061 — token resolution for `POST /c/{token}/grievance` (purpose 'grievance').
+   * Not on the cross-module {@link CustomerLinkPort}; consumed within M7. */
+  resolveForGrievance(token: string): Promise<ResolvedCustomerLink | null> {
+    return this.resolve(token, 'grievance');
+  }
+
   private async resolve(token: string, requiredPurpose: LinkPurpose): Promise<ResolvedCustomerLink | null> {
     const link = await this.repo.findActiveByTokenHash(hashToken(token));
     if (!link) return null;
