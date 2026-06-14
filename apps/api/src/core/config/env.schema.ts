@@ -62,6 +62,7 @@ export const envSchema = z.object({
   MAX_PAGE_LIMIT: intFrom(100, { min: 1 }),
   BREAK_GLASS_MAX_WINDOW_HOURS: intFrom(48, { min: 1 }),
   MERGE_UNMERGE_WINDOW_HOURS: intFrom(24, { min: 1 }),
+  DASHBOARD_CACHE_TTL_SECONDS: intFrom(60, { min: 1 }),
 
   // ── Provider variables (environment-contract.md §Provider variables) ──
   // Optional in the schema: required only where the real provider/inbound
