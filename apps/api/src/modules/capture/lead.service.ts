@@ -22,6 +22,7 @@ import type { DbTransaction } from '../../core/db';
 import { DomainException } from '../../core/http';
 import { OutboxService } from '../../core/outbox';
 import { BULK_REASSIGN_MAX_IDS, LEADS_RESOURCE_TYPE, SYSTEM_ACTOR_ID, TERMINAL_LEAD_STAGES } from './capture.constants';
+import type { StageTransitionContext } from './stage-guard.service';
 
 /** Input for {@link LeadService.create} — every column FR-010 sets at capture. */
 export interface CreateLeadInput {
@@ -630,15 +631,109 @@ export class LeadService {
   // UnimplementedLeadReassignAdapter) so a premature call fails loudly and rolls
   // its transaction back.
 
-  /** FR-052 — stage transition (StageGuardService matrix + history/audit/outbox). */
-  transitionStage(
-    _leadId: string,
-    _toStage: LeadStage,
-    _guardCtx: Record<string, unknown>,
-    _expectedVersion: number,
-    _tx: DbTransaction,
-  ): Promise<void> {
-    return Promise.reject(notYetWired('transitionStage', 'FR-052'));
+  /**
+   * FR-052 — stage transition (StageGuardService matrix + history/audit/outbox).
+   *
+   * Writes, in ONE transaction:
+   *  1. `leads` UPDATE (stage + version bump) under optimistic lock
+   *  2. `stage_history` INSERT (append-only)
+   *  3. `audit_logs` INSERT via AuditAppender
+   *  4. `event_outbox` INSERT via OutboxService (LEAD_STAGE_CHANGED)
+   *
+   * The caller (PipelineBoardService) runs guard evaluation BEFORE calling this
+   * method; this mutator trusts that guards have passed and only enforces the
+   * optimistic-lock predicate (stale version → CONFLICT 409).
+   *
+   * @param leadId    Target lead UUID
+   * @param toStage   Desired stage (guard-validated by caller)
+   * @param guardCtx  PII-free context for the audit detail record
+   * @param expectedVersion  Optimistic lock version; UPDATE WHERE version = this
+   * @param tx        Ambient UnitOfWork transaction (all 4 writes share it)
+   *
+   * @returns Updated lead projection (lead_id, lead_code, stage, version, updated_at)
+   */
+  async transitionStage(
+    leadId: string,
+    toStage: LeadStage,
+    guardCtx: StageTransitionContext,
+    expectedVersion: number,
+    tx: DbTransaction,
+  ): Promise<{ lead_id: string; lead_code: string; stage: LeadStage; version: number; updated_at: Date }> {
+    // Step 1: UPDATE leads under optimistic lock; bump version.
+    const updated = await tx
+      .updateTable('leads')
+      .set((eb) => ({
+        stage: toStage,
+        version: eb('version', '+', 1),
+        updated_at: new Date(),
+        updated_by: guardCtx.actor_id,
+      }))
+      .where('lead_id', '=', leadId)
+      .where('version', '=', expectedVersion)
+      .where('deleted_at', 'is', null)
+      .returning(['lead_id', 'lead_code', 'stage', 'version', 'updated_at', 'org_id'])
+      .executeTakeFirst();
+
+    if (!updated) {
+      // Zero rows updated → the version was stale (concurrent writer).
+      throw new DomainException(ERROR_CODES.CONFLICT);
+    }
+
+    // Step 2: Append stage_history row (append-only; M2 owns this table).
+    await this.appendStageHistory(
+      {
+        org_id: updated.org_id,
+        lead_id: leadId,
+        from_stage: guardCtx.from_stage,
+        to_stage: toStage,
+        actor_id: guardCtx.actor_id,
+        reason: guardCtx.reason,
+      },
+      tx,
+    );
+
+    // Step 3: Audit intent (action = stage_transition; detail is PII-free).
+    await this.audit.append(
+      {
+        action: AuditAction.STAGE_TRANSITION,
+        entity_type: LEADS_RESOURCE_TYPE,
+        entity_id: leadId,
+        actor_id: guardCtx.actor_id,
+        org_id: updated.org_id,
+        lead_id: leadId,
+        detail: {
+          from_stage: guardCtx.from_stage,
+          to_stage: toStage,
+          reason: guardCtx.reason,
+        },
+      },
+      tx,
+    );
+
+    // Step 4: Outbox event (LEAD_STAGE_CHANGED).
+    await this.outbox.emit(
+      {
+        event_code: EventCode.LEAD_STAGE_CHANGED,
+        aggregate_type: LEADS_RESOURCE_TYPE,
+        aggregate_id: leadId,
+        payload: {
+          leadId,
+          fromStage: guardCtx.from_stage,
+          toStage,
+          actorId: guardCtx.actor_id,
+          occurredAt: new Date().toISOString(),
+        },
+      },
+      tx,
+    );
+
+    return {
+      lead_id: updated.lead_id,
+      lead_code: updated.lead_code,
+      stage: updated.stage,
+      version: updated.version,
+      updated_at: updated.updated_at instanceof Date ? updated.updated_at : new Date(updated.updated_at),
+    };
   }
 
   /** FR-031 — hot-lead flag (volatile field). */

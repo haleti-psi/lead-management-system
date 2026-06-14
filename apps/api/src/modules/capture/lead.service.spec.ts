@@ -1,4 +1,4 @@
-import { ERROR_CODES } from '@lms/shared';
+import { ERROR_CODES, LeadStage } from '@lms/shared';
 
 import type { AuditAppender } from '../../core/audit';
 import type { DbTransaction } from '../../core/db';
@@ -602,8 +602,10 @@ describe('LeadService.bulkReassign', () => {
 });
 
 describe('LeadService frozen-interface stubs', () => {
+  // transitionStage is IMPLEMENTED by FR-052 and no longer a stub.
+  // setHotFlag (FR-031), setKycStatus (FR-070), recordEligibility (FR-080), markHandedOff (FR-081)
+  // remain stubs until their FRs land.
   it.each([
-    ['transitionStage', (s: LeadService, tx: DbTransaction) => s.transitionStage(LEAD, 'assigned', {}, 1, tx)],
     ['setHotFlag', (s: LeadService, tx: DbTransaction) => s.setHotFlag(LEAD, true, [], tx)],
     ['setKycStatus', (s: LeadService, tx: DbTransaction) => s.setKycStatus(LEAD, 'verified', tx)],
     ['recordEligibility', (s: LeadService, tx: DbTransaction) => s.recordEligibility(LEAD, 'snap-1', tx)],
@@ -618,6 +620,114 @@ describe('LeadService frozen-interface stubs', () => {
       expect(t.updateSet).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('LeadService.transitionStage (FR-052)', () => {
+  /**
+   * U03 / T01 / T16 — Verifies the 4-write atomic operation:
+   *   1. UPDATE leads (optimistic lock, version bump)
+   *   2. INSERT stage_history
+   *   3. AuditAppender.append (stage_transition)
+   *   4. OutboxService.emit (LEAD_STAGE_CHANGED)
+   *
+   * And that a stale version → CONFLICT 409 (U03).
+   * And that a mid-write DB failure leaves no partial state (T16 — tx-level guarantee).
+   */
+
+  const DEFAULT_TRANSITION_ROW = {
+    lead_id: LEAD,
+    lead_code: 'LD-2026-000042',
+    stage: 'contacted',
+    version: 3,
+    updated_at: new Date('2026-06-09T07:15:00Z'),
+    org_id: ORG,
+  };
+  function makeTransitionTx(opts: { stale?: boolean } = {}): TxFake {
+    return makeTx({ updatedRow: opts.stale ? undefined : DEFAULT_TRANSITION_ROW });
+  }
+
+  it('T01 — writes all 4 (UPDATE + stage_history + audit + outbox) on success', async () => {
+    const audit = fakeAudit();
+    const outbox = fakeOutbox();
+    const t = makeTransitionTx({ stale: false });
+    const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    const guardCtx = {
+      actor_id: 'user-rm-1',
+      from_stage: LeadStage.ASSIGNED,
+      reason: null,
+    };
+
+    const result = await service.transitionStage(LEAD, 'contacted', guardCtx, 2, t.tx);
+
+    // 1. UPDATE with optimistic lock predicate
+    expect(t.whereCalls).toHaveBeenCalledWith('version', '=', 2);
+    // 2. stage_history INSERT
+    expect(t.insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lead_id: LEAD,
+        from_stage: 'assigned',
+        to_stage: 'contacted',
+        actor_id: 'user-rm-1',
+        reason: null,
+      }),
+    );
+    // 3. Audit append
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'stage_transition',
+        entity_type: 'leads',
+        entity_id: LEAD,
+        lead_id: LEAD,
+        actor_id: 'user-rm-1',
+        detail: expect.objectContaining({
+          from_stage: 'assigned',
+          to_stage: 'contacted',
+        }),
+      }),
+      t.tx,
+    );
+    // 4. Outbox event
+    expect(outbox.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_code: 'LEAD_STAGE_CHANGED',
+        aggregate_type: 'leads',
+        aggregate_id: LEAD,
+        payload: expect.objectContaining({
+          leadId: LEAD,
+          fromStage: 'assigned',
+          toStage: 'contacted',
+          actorId: 'user-rm-1',
+        }),
+      }),
+      t.tx,
+    );
+
+    // Response shape
+    expect(result).toMatchObject({
+      lead_id: LEAD,
+      lead_code: 'LD-2026-000042',
+      stage: 'contacted',
+      version: 3,
+    });
+    expect(result.updated_at).toBeInstanceOf(Date);
+  });
+
+  it('U03 — stale expectedVersion → CONFLICT 409, no stage_history/audit/outbox written', async () => {
+    const audit = fakeAudit();
+    const outbox = fakeOutbox();
+    const t = makeTransitionTx({ stale: true }); // 0 rows updated → CONFLICT
+    const service = new LeadService(audit as unknown as AuditAppender, outbox as unknown as OutboxService);
+
+    await expect(
+      service.transitionStage(LEAD, 'contacted', { actor_id: 'user-1', from_stage: 'assigned', reason: null }, 2, t.tx),
+    ).rejects.toMatchObject({ code: ERROR_CODES.CONFLICT });
+
+    // T16 invariant: no partial writes
+    expect(t.insertValues).not.toHaveBeenCalled();
+    expect(audit.append).not.toHaveBeenCalled();
+    expect(outbox.emit).not.toHaveBeenCalled();
+  });
 });
 
 // ─────────────────────────────── FR-021 merge / unmerge mutators ────────────

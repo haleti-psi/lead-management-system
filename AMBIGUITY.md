@@ -450,3 +450,83 @@ break-glass context) — intentional; document in LLD.
 `V4__add_view_sensitive_audit_action.sql` + `@lms/shared` AuditAction +
 `types.generated.ts`). `DPO_VIEW_AUDIT_ACTION` now correctly set to
 `AuditAction.VIEW_SENSITIVE`.
+
+---
+
+# AMBIGUITY — FR-052 (Pipeline Board + Stage Transitions)
+
+## FR-052-1. Deferred guards — owning FR table
+
+The following named guards on `ready_for_handoff → handed_off` are deferred
+(return `true` until the owning module builds the child table):
+
+| Guard | Owning FR | Backing table (not yet built) |
+|---|---|---|
+| `mandatory_docs_verified` | FR-070 (M8 Documents) | `documents` |
+| `kyc_signoff` | FR-080 (M8 KYC) | `kyc_verifications` |
+| `mandatory_docs_or_waiver` | FR-070 (M8 Documents) | `documents` |
+| `kyc_sufficient` | FR-080 (M8 KYC) | `kyc_verifications` |
+
+The following guards are also deferred because they require runtime data that
+is only available at the moment of the relevant field-level action (not on the
+lead row loaded by the guard service):
+
+| Guard | Deferred reason |
+|---|---|
+| `valid_branch_product_source` | Validated at capture (FR-010); no re-check at transition |
+| `contact_logged` | Requires tasks/notes child rows (FR-104) |
+| `intent_captured` | Requires progressive-fields check (FR-050 updateLead) |
+| `progressive_fields` | Same as above |
+| `checklist_generated` | Requires doc checklist child rows (FR-070) |
+| `consent_eligibility` | Requires KYC consent step (FR-080) |
+| `eligibility_received` | Requires eligibility_snapshots (FR-090) |
+| `docs_kyc_ready` | Composite of docs + KYC (FR-070/080) |
+| `valid_payload` | Validated at DTO boundary (Zod); no additional service check |
+| `within_reopen_window` | Requires FR-025 config window |
+| `followup_due_or_reactivation` | Requires SLA/task check (FR-104) |
+| `next_followup_date` | Validated at DTO boundary (FR-052 Zod schema) |
+
+## FR-052-2. ipDevice not plumbed to LeadService mutators
+
+**Checked:** `LeadService.assignOwner`, `LeadService.bulkReassign`,
+`LeadService.transitionStage` — none accept or forward an `ipDevice` parameter
+to `AuditAppender.append`. The audit appender stores `null` in the `ip_device`
+column for all mutator-driven audit rows.
+
+**Resolution:** ipDevice capture is a cross-cutting concern. Wiring it requires
+a request-context provider (e.g. `AsyncLocalStorage`) threaded from the HTTP
+layer through every mutator call — this is not an FR-052 change but a
+project-wide plumbing pass.
+
+**Action (Dev 1 / architecture owner):** introduce a `RequestContextService`
+that stores `{ ip, user_agent }` in an `AsyncLocalStorage` context and is
+injected into `LeadService` (or the `AuditAppender` itself). FR-052 does not
+implement this; it records the gap here so the next plumbing pass covers all
+mutators uniformly.
+
+## FR-052-3. PARTNER move_stage scope mismatch (matrix vs LLD)
+
+`auth-matrix.json` grants `PARTNER.move_stage = 'P'` (partner's own
+submissions). The FR-052 LLD §Auth Check lists only RM, BM, SM as allowed roles
+for `move_stage` (no PARTNER). `pipeline-board.service.ts isInScope` returns
+`false` for `type: 'partner'`.
+
+**Implementation decision (LLD governs):** PARTNER is silently blocked at the
+scope check (`isInScope` → false → FORBIDDEN). The ABAC guard still fires
+before the service method, so a PARTNER with the capability passes `AbacGuard`
+but hits FORBIDDEN in the service scope check.
+
+**Action for arbiter:** reconcile the matrix row — either remove
+`PARTNER.move_stage` from `auth-matrix.json` (if partners cannot move stages
+per product intent) or implement the P-scope predicate in `isInScope` (PARTNER
+may move only their OWN submitted leads). The LLD says partners cannot move
+stages; updating the matrix to match is the minimal change.
+
+## FR-052-4. shadcn Sheet primitive absent from web foundation
+
+`MobileStageSelectorSheet` is built as a minimal accessible modal (role="dialog",
+aria-modal, Escape key) on Tailwind only. The shadcn `Sheet` primitive is not
+yet in the foundation (same situation as FR-051's `StatusChip` / `SectionTabs`).
+
+**Action (Dev 2):** provide the canonical `Sheet` primitive; FR-052 to swap
+`MobileStageSelectorSheet` to use it.
