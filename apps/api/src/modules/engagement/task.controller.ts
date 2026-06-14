@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 
-import { Capability, TaskStatus, TaskType } from '@lms/shared';
+import { Capability, Disposition, TaskStatus, TaskType } from '@lms/shared';
 
 import { CurrentUser, Requires } from '../../core/auth';
 import type { AuthUser } from '../../core/auth';
@@ -41,23 +41,21 @@ type ListTasksQueryDto = z.infer<typeof ListTasksQueryDto>;
  * Path param validator: UUID task id.
  */
 const TaskIdParam = z.object({
-  id: z.string().uuid('task id must be a valid UUID'),
+  id: z.string().uuid('Invalid task ID format.'),
 });
 
 /**
- * FR-100 — Task management endpoints (M11 Engagement).
+ * FR-100 + FR-102 — Task management endpoints (M11 Engagement).
  *
  * All endpoints are protected by the global JwtAuthGuard + AbacGuard
  * (`edit_lead` capability, scope-resolved per role). No `@Public()` override.
  *
- * Note on Idempotency-Key for POST /tasks (FR-100 Ambiguity 2): the header is
- * accepted but NOT enforced with Redis-backed idempotency in MVP. Document for
- * callers that network retries may create duplicate tasks; de-duplication is the
- * caller's responsibility at this stage.
- *
- * PATCH co-ownership: this controller builds the BASE update path (status,
- * disposition, geo, result_note, next_action_at, owner_id, due_at, priority).
- * FR-102 will extend disposition handling for visit/call specifics.
+ * PATCH co-ownership (FR-100 + FR-102):
+ * - If `disposition` is present in the body → FR-102 path: calls
+ *   `TaskService.logDisposition()`. This writes the task disposition, a
+ *   CommunicationLog row, an audit entry, and an outbox event in one atomic
+ *   UnitOfWork transaction. Post-commit CTI sync when CTI_ENABLED=true.
+ * - If `disposition` is absent → FR-100 path: calls `TaskService.update()`.
  */
 @Controller('tasks')
 @Requires(Capability.EDIT_LEAD, () => ({ resourceType: 'tasks' }))
@@ -96,7 +94,16 @@ export class TaskController {
   }
 
   /**
-   * PATCH /api/v1/tasks/:id — Update or complete a task.
+   * PATCH /api/v1/tasks/:id — Update or complete a task (FR-100 + FR-102).
+   *
+   * When `disposition` is present in the body, FR-102 disposition-logging path
+   * runs: atomically updates the task to `done`, inserts a CommunicationLog
+   * (channel=in_app), appends an audit entry, and emits a LEAD_STAGE_CHANGED
+   * outbox event. Post-commit CTI sync when `CTI_ENABLED=true` and
+   * `task.type='call'` (Phase 1.5).
+   *
+   * Otherwise, the FR-100 general update path runs (status, owner, due_at, etc.).
+   *
    * Returns 200 with the updated task object.
    */
   @Patch(':id')
@@ -105,6 +112,25 @@ export class TaskController {
     @Body(new ZodValidationPipe(UpdateTaskDto)) dto: UpdateTaskDto,
     @CurrentUser() user: AuthUser,
   ) {
+    // FR-102 path: disposition present → log the disposition with full side-effects
+    if (dto.disposition != null) {
+      // Validate disposition enum (Zod already did, but type-narrow here)
+      const dispositionValue = dto.disposition as typeof Disposition[keyof typeof Disposition];
+      return this.taskService.logDisposition(
+        params.id,
+        {
+          disposition: dispositionValue,
+          result_note: dto.result_note,
+          next_action_at: dto.next_action_at,
+          geo: dto.geo != null
+            ? { lat: dto.geo.lat, lng: dto.geo.lng, accuracy_m: (dto.geo as { lat: number; lng: number; accuracy_m: number }).accuracy_m }
+            : null,
+        },
+        user,
+      );
+    }
+
+    // FR-100 path: general task update (no disposition)
     return this.taskService.update(params.id, dto, user);
   }
 }

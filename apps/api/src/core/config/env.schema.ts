@@ -73,6 +73,23 @@ export const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   LOS_WEBHOOK_HMAC_SECRET: z.string().min(1).optional(),
+
+  // ── CTI / Telephony (Phase 1.5 — FR-102; OD-08; vendor TBD) ──
+  // All optional: default false/mock so dev/test never reaches a real CTI provider.
+  CTI_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  CTI_MOCK: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  CTI_BASE_URL: z.string().url().optional(),
+  CTI_API_KEY: z.string().min(1).optional(),
+  CTI_RECORDING_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 /** Fully-typed, validated environment. `ALLOWED_ORIGINS` is parsed to `string[]`. */

@@ -1,14 +1,19 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import { AuditAction, DataScope, ERROR_CODES, RoleCode, TaskStatus, TaskType } from '@lms/shared';
+import { AuditAction, DataScope, Disposition, ERROR_CODES, EventCode, IntegrationKind, RoleCode, TaskStatus, TaskType } from '@lms/shared';
 import type { ScopePredicate } from '@lms/shared';
 
 import { AuditAppender } from '../../core/audit';
 import type { AuthUser } from '../../core/auth';
+import { AppConfigService } from '../../core/config';
 import { KYSELY, UnitOfWork, type KyselyDb } from '../../core/db';
 import { DomainException } from '../../core/http';
+import { IntegrationGateway } from '../../core/integration';
+import { TELEPHONY_PORT, type TelephonyPort } from '../../core/integration/ports/telephony.port';
+import { OutboxService } from '../../core/outbox';
 import { ORG_ID_DEFAULT } from '../../core/outbox/outbox.constants';
 import { LeadService } from '../capture/lead.service';
+import { CommunicationRepository } from './communication.repository';
 import { canTransition } from './task-state-machine';
 import type { CreateTaskDto } from './dto/create-task.dto';
 import type { UpdateTaskDto } from './dto/update-task.dto';
@@ -29,9 +34,24 @@ const TEAM_SCOPE_ROLES = new Set<string>([RoleCode.SM]);
 /** Roles with branch scope (BM, KYC in auth-matrix). */
 const BRANCH_SCOPE_ROLES = new Set<string>([RoleCode.BM, RoleCode.KYC]);
 
+/** Dispositions that require `next_action_at` to be set. */
+const DISPOSITION_REQUIRES_NEXT_ACTION = new Set<string>([
+  Disposition.RESCHEDULED,
+  Disposition.CALLBACK_REQUESTED,
+]);
+
+/** Task types for which geo is permitted. */
+const GEO_PERMITTED_TYPES = new Set<string>([TaskType.CALL, TaskType.VISIT]);
+
 /**
  * FR-100 — Task Management service. Single source of business logic for
  * task create, list, and update. M11 is the SOLE writer of `tasks`.
+ *
+ * FR-102 — Adds `logDisposition()` for call/visit disposition with:
+ *   - CommunicationLog (channel='in_app') in same UnitOfWork transaction
+ *   - Audit entry (action='lead_update', entity_type='tasks')
+ *   - Outbox event (event_code='LEAD_STAGE_CHANGED')
+ *   - Optional post-commit CTI disposition sync (Phase 1.5, non-blocking)
  *
  * Auth rules:
  *  - All endpoints require JwtAuthGuard + AbacGuard `edit_lead` capability.
@@ -48,6 +68,11 @@ export class TaskService {
     private readonly audit: AuditAppender,
     private readonly leadService: LeadService,
     @Inject(KYSELY) private readonly db: KyselyDb,
+    private readonly commRepo: CommunicationRepository,
+    private readonly outbox: OutboxService,
+    private readonly gateway: IntegrationGateway,
+    @Inject(TELEPHONY_PORT) private readonly telephonyPort: TelephonyPort,
+    private readonly config: AppConfigService,
   ) {}
 
   /**
@@ -197,6 +222,188 @@ export class TaskService {
 
       return task;
     });
+  }
+
+  /**
+   * FR-102 — Log a disposition on a call or visit task.
+   *
+   * When `disposition` is present in the PATCH body, this method is called
+   * instead of (or after) the base `update()` path. It atomically:
+   *   1. Updates the task row (sets disposition, result_note, geo, next_action_at,
+   *      status → done) using a `WHERE status != 'done'` guard for idempotency.
+   *   2. Inserts a CommunicationLog row (channel='in_app', status='sent').
+   *   3. Appends an audit entry (action='lead_update', entity_type='tasks').
+   *   4. Emits a LEAD_STAGE_CHANGED outbox event.
+   *
+   * Post-commit (Phase 1.5, non-blocking): when CTI_ENABLED and task.type='call',
+   * calls IntegrationGateway.call('TelephonyPort') to sync the disposition. A CTI
+   * failure does NOT roll back the already-committed disposition; it returns 503.
+   *
+   * @throws DomainException CONFLICT (409) — task already done or cancelled.
+   * @throws DomainException VALIDATION_ERROR (400) — geo on non-call/visit task,
+   *   or next_action_at missing for rescheduled/callback_requested.
+   * @throws DomainException NOT_FOUND (404) — task does not exist.
+   * @throws DomainException UPSTREAM_UNAVAILABLE (503) — CTI port failure (Phase 1.5).
+   */
+  async logDisposition(
+    taskId: string,
+    dto: {
+      disposition: string;
+      result_note?: string | null;
+      next_action_at?: string | null;
+      geo?: { lat: number; lng: number; accuracy_m: number } | null;
+    },
+    caller: AuthUser,
+  ): Promise<TaskRow> {
+    // Load the task (with lead's branch_id for scope resolution and guards).
+    // AbacGuard already verified the caller has edit_lead on this task resource.
+    const task = await this.repo.findByIdWithLead(taskId);
+    if (!task) {
+      throw new DomainException(ERROR_CODES.NOT_FOUND);
+    }
+
+    // FR-102: only RM and BM may log disposition (auth-matrix role restriction).
+    // AbacGuard enforces capability, but other roles (SM, HEAD, KYC) also have
+    // edit_lead — we restrict disposition logging to RM/BM explicitly.
+    const callerIsRm = caller.role === RoleCode.RM;
+    const callerIsBm = caller.role === RoleCode.BM;
+    if (!callerIsRm && !callerIsBm) {
+      throw new DomainException(ERROR_CODES.FORBIDDEN);
+    }
+
+    // Guard: task must not already be done (cancelled also fails via the UPDATE guard)
+    if (task.status === TaskStatus.DONE) {
+      throw new DomainException(ERROR_CODES.CONFLICT, 'Task already completed.');
+    }
+
+    // Guard: geo only permitted for call/visit tasks
+    if (dto.geo != null && !GEO_PERMITTED_TYPES.has(task.type)) {
+      throw new DomainException(ERROR_CODES.VALIDATION_ERROR, undefined, {
+        fields: [{ field: 'geo', issue: 'geo is only permitted on call or visit tasks.' }],
+      });
+    }
+
+    // Guard: next_action_at required for rescheduled/callback_requested
+    if (DISPOSITION_REQUIRES_NEXT_ACTION.has(dto.disposition) && dto.next_action_at == null) {
+      throw new DomainException(ERROR_CODES.VALIDATION_ERROR, undefined, {
+        fields: [
+          {
+            field: 'next_action_at',
+            issue: 'next_action_at is required for rescheduled or callback_requested dispositions.',
+          },
+        ],
+      });
+    }
+
+    // Guard: next_action_at must be in the future if provided
+    if (dto.next_action_at != null) {
+      const nextAt = new Date(dto.next_action_at);
+      if (nextAt <= new Date()) {
+        throw new DomainException(ERROR_CODES.VALIDATION_ERROR, undefined, {
+          fields: [{ field: 'next_action_at', issue: 'next_action_at must be a future datetime.' }],
+        });
+      }
+    }
+
+    // All writes in one atomic transaction (LLD §Transaction Boundaries)
+    const updated = await this.uow.run(async (tx) => {
+      // 2a. UPDATE tasks: disposition, status → done, result_note, geo, next_action_at
+      // WHERE status != 'done' guards against duplicate logging (idempotency).
+      const updatedTask = await tx
+        .updateTable('tasks')
+        .set({
+          disposition: dto.disposition as TaskRow['disposition'],
+          result_note: dto.result_note ?? null,
+          geo: dto.geo != null ? JSON.stringify(dto.geo) : null,
+          next_action_at: dto.next_action_at != null ? new Date(dto.next_action_at) : null,
+          status: TaskStatus.DONE,
+          updated_at: new Date(),
+          updated_by: caller.userId,
+        })
+        .where('task_id', '=', taskId)
+        .where('org_id', '=', ORG_ID_DEFAULT)
+        .where('status', '!=', TaskStatus.DONE)
+        .returningAll()
+        .executeTakeFirst();
+
+      if (!updatedTask) {
+        // Task transitioned to done concurrently (or cancelled)
+        throw new DomainException(ERROR_CODES.CONFLICT, 'Task already completed.');
+      }
+
+      // 2b. Insert CommunicationLog — internal activity log (not a customer message).
+      // lead_id is always non-null for a scoped task (tasks always reference a lead).
+      const commLeadId = updatedTask.lead_id ?? task.lead_id;
+      if (commLeadId == null) {
+        throw new DomainException(ERROR_CODES.INTERNAL_ERROR, 'Task has no lead_id.');
+      }
+      await this.commRepo.insertInternal(
+        {
+          lead_id: commLeadId,
+          recipient: updatedTask.owner_id,
+          created_by: caller.userId,
+        },
+        tx,
+      );
+
+      // 2c. Audit entry — result_note intentionally excluded (may contain free text)
+      await this.audit.append(
+        {
+          action: AuditAction.LEAD_UPDATE,
+          entity_type: 'tasks',
+          entity_id: taskId,
+          actor_id: caller.userId,
+          org_id: ORG_ID_DEFAULT,
+          lead_id: updatedTask.lead_id ?? undefined,
+          detail: {
+            event: 'disposition_logged',
+            disposition: dto.disposition,
+            task_type: updatedTask.type,
+            has_geo: dto.geo != null,
+          },
+        },
+        tx,
+      );
+
+      // 2d. Outbox event — contactability / downstream metrics (FR-121)
+      await this.outbox.emit(
+        {
+          event_code: EventCode.LEAD_STAGE_CHANGED,
+          aggregate_type: 'tasks',
+          aggregate_id: taskId,
+          payload: {
+            lead_id: updatedTask.lead_id,
+            task_type: updatedTask.type,
+            disposition: dto.disposition,
+            actor_id: caller.userId,
+          },
+        },
+        tx,
+      );
+
+      return updatedTask;
+    });
+
+    // Phase 1.5 — CTI post-commit disposition sync (non-blocking).
+    // The transaction is already committed; a CTI failure does NOT roll back.
+    if (this.config.get('CTI_ENABLED') && task.type === TaskType.CALL) {
+      await this.gateway.call(
+        this.telephonyPort,
+        {
+          integration: IntegrationKind.CTI,
+          leadId: task.lead_id,
+          maskedRequestRef: null,
+          payload: {
+            action: 'log_disposition',
+            task_id: taskId,
+            disposition: dto.disposition,
+          },
+        },
+        { idempotencyKey: `cti-${taskId}-${dto.disposition}` },
+      );
+    }
+
+    return updated;
   }
 
   /**

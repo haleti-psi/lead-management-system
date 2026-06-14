@@ -10,12 +10,14 @@ import { CloudTasksRetryQueueAdapter } from './adapters/cloud-tasks-retry-queue.
 import { KycMockAdapter } from './adapters/kyc-mock.adapter';
 import { LosMockAdapter } from './adapters/los-mock.adapter';
 import { NoopRetryQueueAdapter } from './adapters/noop-retry-queue.adapter';
+import { TelephonyMockAdapter } from './adapters/telephony-mock.adapter';
 import { LosWebhookGuard } from './guards/los-webhook.guard';
 import { CAPTCHA_PORT } from './ports/captcha.port';
 import { KYC_PORT } from './ports/kyc.port';
 import { LOS_PORT } from './ports/los.port';
 import { MockChannelAdapter } from './ports/mock-channel.adapter';
 import { NOTIFICATION_CHANNEL_PORT } from './ports/notification-channel.port';
+import { TELEPHONY_PORT } from './ports/telephony.port';
 import { RETRY_QUEUE_PORT } from './retry-queue.port';
 
 /**
@@ -48,6 +50,10 @@ import { RETRY_QUEUE_PORT } from './retry-queue.port';
     // every environment until the vendor lands (OD-08/OD-17); the real adapter
     // will read CAPTCHA_SECRET (environment-contract.md §Provider variables).
     { provide: CAPTCHA_PORT, useClass: CaptchaMockAdapter },
+    // FR-102 — CTI telephony port (Phase 1.5; OD-08). Mock adapter in every
+    // environment until the real vendor adapter lands.
+    TelephonyMockAdapter,
+    { provide: TELEPHONY_PORT, useExisting: TelephonyMockAdapter },
     CaptchaService,
     {
       provide: RETRY_QUEUE_PORT,
@@ -72,6 +78,7 @@ import { RETRY_QUEUE_PORT } from './retry-queue.port';
     NOTIFICATION_CHANNEL_PORT,
     RETRY_QUEUE_PORT,
     CAPTCHA_PORT,
+    TELEPHONY_PORT,
   ],
 })
 export class IntegrationCoreModule {}
