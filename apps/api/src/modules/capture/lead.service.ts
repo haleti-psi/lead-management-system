@@ -578,9 +578,29 @@ export class LeadService {
     return Promise.reject(notYetWired('setHotFlag', 'FR-031'));
   }
 
-  /** FR-070/072 — derived `kyc_status` summary. */
-  setKycStatus(_leadId: string, _status: KycStatus, _tx: DbTransaction): Promise<void> {
-    return Promise.reject(notYetWired('setKycStatus', 'FR-070'));
+  /**
+   * FR-070 — derived `kyc_status` summary (state-machines.md §Lead: "recomputed
+   * on the relevant child change, never set directly"). One UPDATE setting
+   * `kyc_status` + `updated_at` only — NO version bump and no `expectedVersion`:
+   * this is a volatile system-managed field (FR-070 LLD §Data Operations 8;
+   * architecture §11.2 lists the mutator without `expectedVersion`), so a
+   * document-driven re-derivation never raises a false 409 against a concurrent
+   * RM edit. The stage is untouched. The calling DocumentService owns the
+   * derivation and emits audit + outbox in the SAME tx (owner-writes §11). Zero
+   * rows (lead absent/soft-deleted) → NOT_FOUND, never a silent no-op (matches
+   * {@link setConsentStatus}). `lead_id` is the globally-unique PK, so no org
+   * filter is needed here (the caller already scope-checked the lead).
+   */
+  async setKycStatus(leadId: string, status: KycStatus, tx: DbTransaction): Promise<void> {
+    const result = await tx
+      .updateTable('leads')
+      .set({ kyc_status: status, updated_at: new Date() })
+      .where('lead_id', '=', leadId)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+    if (result.numUpdatedRows === 0n) {
+      throw new DomainException(ERROR_CODES.NOT_FOUND);
+    }
   }
 
   /** FR-080 — eligibility snapshot reference. */

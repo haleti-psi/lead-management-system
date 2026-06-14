@@ -14,4 +14,16 @@ describe('UnavailableCustomerLinkAdapter (FR-060 seam placeholder)', () => {
     expect(args).toContain('FR-060');
     expect(args).not.toContain('secret-token'); // opaque credential never logged
   });
+
+  it('resolves NO token for the document seam (FR-070) and never logs the token', async () => {
+    const warn = jest.fn();
+    const adapter = new UnavailableCustomerLinkAdapter({ warn } as unknown as PinoLogger);
+
+    await expect(adapter.resolveForDocument('secret-token')).resolves.toBeNull();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const args = JSON.stringify(warn.mock.calls[0]);
+    expect(args).toContain('FR-060');
+    expect(args).not.toContain('secret-token');
+  });
 });

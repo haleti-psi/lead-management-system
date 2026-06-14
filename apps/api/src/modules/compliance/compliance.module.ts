@@ -31,6 +31,6 @@ import {
     UnavailableCustomerLinkAdapter,
     { provide: CUSTOMER_LINK_PORT, useExisting: UnavailableCustomerLinkAdapter },
   ],
-  exports: [ConsentService, ConsentRepository],
+  exports: [ConsentService, ConsentRepository, CUSTOMER_LINK_PORT],
 })
 export class ComplianceModule {}

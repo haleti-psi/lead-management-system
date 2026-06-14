@@ -35,6 +35,8 @@
 | `CUSTOMER_LINK_TTL_DAYS` | `7` | Tokenised link expiry |
 | `GCS_SIGNED_URL_TTL` | `600` | Signed URL seconds |
 | `MAX_UPLOAD_MB` | `10` | Upload size cap |
+| `VIRUS_SCAN_PROVIDER_URL` | _(unset → mock)_ | Virus scan vendor endpoint (FR-070) — M8 documents |
+| `VIRUS_SCAN_API_KEY` | _(unset → mock)_ | Virus scan auth + scan-result callback HMAC secret (FR-070) |
 | `DB_POOL_MIN` / `DB_POOL_MAX` | `2` / `10` | Connection pool |
 | `RATE_LIMIT_AUTH` / `_MUTATION` / `_READ` | `10` / `60` / `300` per min | Throttler |
 | `DEFAULT_PAGE_LIMIT` / `MAX_PAGE_LIMIT` | `25` / `100` | Pagination |

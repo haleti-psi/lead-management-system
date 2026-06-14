@@ -36,6 +36,16 @@ export interface ResolvedCustomerLink {
  */
 export interface CustomerLinkPort {
   resolveForConsent(token: string): Promise<ResolvedCustomerLink | null>;
+  /**
+   * Token-resolution boundary for `POST /c/{token}/documents` (FR-070 §Auth:
+   * `CustomerLinkGuard` validates the opaque token + OTP step-up, resolves the
+   * bound `lead_id`, and scopes the upload to `upload_doc:C`). Same contract as
+   * {@link resolveForConsent}: return the resolved link ONLY for a fully valid
+   * token+OTP session; `null` for anything invalid/expired/revoked/unverified
+   * (the caller maps `null` to `NOT_FOUND`, 404 — existence hidden). FR-060
+   * rebinds the real link service here once it lands.
+   */
+  resolveForDocument(token: string): Promise<ResolvedCustomerLink | null>;
 }
 
 /** DI token for {@link CustomerLinkPort} (bound in `compliance.module.ts`). */
@@ -56,6 +66,14 @@ export class UnavailableCustomerLinkAdapter implements CustomerLinkPort {
     // The token itself is never logged (opaque credential).
     this.logger.warn(
       'Customer-link resolution is not available yet (lands with FR-060); token consent request rejected as NOT_FOUND',
+    );
+    return Promise.resolve(null);
+  }
+
+  resolveForDocument(_token: string): Promise<ResolvedCustomerLink | null> {
+    // The token itself is never logged (opaque credential).
+    this.logger.warn(
+      'Customer-link resolution is not available yet (lands with FR-060); token document upload rejected as NOT_FOUND',
     );
     return Promise.resolve(null);
   }

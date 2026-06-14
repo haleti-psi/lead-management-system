@@ -149,7 +149,10 @@ describe('CustomerConsentController behaviour (T19–T21 analogues)', () => {
 
   it('T20/T21 analogue: an unresolved token (invalid/expired/revoked/OTP-incomplete) → NOT_FOUND, service untouched', async () => {
     const captureFromCustomer = jest.fn();
-    const links: CustomerLinkPort = { resolveForConsent: jest.fn().mockResolvedValue(null) };
+    const links: CustomerLinkPort = {
+      resolveForConsent: jest.fn().mockResolvedValue(null),
+      resolveForDocument: jest.fn().mockResolvedValue(null),
+    };
     const controller = new CustomerConsentController(
       { captureFromCustomer } as unknown as ConsentService,
       links,
@@ -177,7 +180,7 @@ describe('CustomerConsentController behaviour (T19–T21 analogues)', () => {
     });
     const controller = new CustomerConsentController(
       { captureFromCustomer } as unknown as ConsentService,
-      { resolveForConsent: jest.fn().mockResolvedValue(link) },
+      { resolveForConsent: jest.fn().mockResolvedValue(link), resolveForDocument: jest.fn() },
     );
 
     const result = await controller.customerConsent('tok-1', dto, req);
