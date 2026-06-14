@@ -7,6 +7,7 @@ import { ResetPasswordPage } from './reset-password/ResetPasswordPage';
 import { DocumentsPage } from './leads/documents/DocumentsPage';
 import { KycPage } from './leads/kyc/KycPage';
 import { CustomerUploadPage } from './customer/CustomerUploadPage';
+import { CustomerLinkPage } from './customer/CustomerLinkPage';
 
 // Temporary landing inside the shell until feature screens (FRs) are wired.
 function DashboardPlaceholder(): JSX.Element {
@@ -26,6 +27,7 @@ export function App(): JSX.Element {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/c/:token" element={<CustomerLinkPage />} />
       <Route path="/c/:token/upload" element={<CustomerUploadPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppShell />}>
