@@ -74,6 +74,7 @@
     "POST /api/v1/c/{token}/grievance",
     "PUT /api/v1/c/{token}/preferences",
     "GET /api/v1/c/{token}/preferences",
+    "POST /api/v1/c/{token}/data-rights",
     "GET /api/v1/health",
     "GET /api/v1/ready"
   ],
@@ -92,7 +93,8 @@
     "/api/v1/internal/sla/sweep": "Cloud Tasks queue header (InternalTaskGuard); @Public — no user JWT",
     "/api/v1/internal/tasks/overdue-sweep": "Cloud Tasks queue header (InternalTaskGuard); @Public — no user JWT",
     "/api/v1/internal/communications/dispatch": "Cloud Tasks queue header (InternalTaskGuard); @Public — no user JWT",
-    "/api/v1/internal/jobs/grievance-escalation": "Cloud Tasks OIDC service-account token verified at infra layer"
+    "/api/v1/internal/jobs/grievance-escalation": "Cloud Tasks OIDC service-account token verified at infra layer",
+    "/api/v1/c/{token}/data-rights": "opaque token + OTP step-up (CustomerLinkPort); scoped to one lead; never a JWT; customer is the data subject; @Public()"
   },
   "http_status_rules": {
     "unauthenticated": 401,
