@@ -12,6 +12,7 @@ import { GrievancePage } from './customer/GrievancePage';
 import { StatusPage } from './customer/StatusPage';
 import { PartnerManagementPage } from './admin/partners/PartnerManagementPage';
 import { PartnerLeadsPage } from './partner/PartnerLeadsPage';
+import { PartnerQualityPage } from './partner/PartnerQualityPage';
 
 // Temporary landing inside the shell until feature screens (FRs) are wired.
 function DashboardPlaceholder(): JSX.Element {
@@ -42,6 +43,7 @@ export function App(): JSX.Element {
           <Route path="/leads/:id/kyc" element={<KycPage />} />
           <Route path="/admin/partners" element={<PartnerManagementPage />} />
           <Route path="/partner/leads" element={<PartnerLeadsPage />} />
+          <Route path="/partner/:id/quality" element={<PartnerQualityPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
