@@ -60,6 +60,7 @@ function leadCtx(overrides: Partial<KycLeadContext> = {}): KycLeadContext {
     stage: 'kyc_in_progress',
     kyc_status: KycStatus.IN_PROGRESS,
     lead_identity_id: IDENT,
+    product_config_id: 'p0000000-0000-0000-0000-00000000000p',
     ...overrides,
   };
 }

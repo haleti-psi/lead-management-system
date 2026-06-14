@@ -19,6 +19,7 @@ export interface KycLeadContext {
   stage: string;
   kyc_status: string;
   lead_identity_id: string;
+  product_config_id: string;
 }
 
 /** An existing integration_logs row matched by idempotency key (LLD §Step 3). */
@@ -76,11 +77,84 @@ export class KycVerificationRepository {
         'stage',
         'kyc_status',
         'lead_identity_id',
+        'product_config_id',
       ])
       .where('lead_id', '=', leadId)
       .where('org_id', '=', orgId)
       .where('deleted_at', 'is', null)
       .executeTakeFirst();
+  }
+
+  /** Fetch a verification by id, scoped to its lead + org (FR-072 §Data Op 2). */
+  async getById(
+    kycVerificationId: string,
+    leadId: string,
+    orgId: string,
+    executor: KyselyDb | DbTransaction = this.db,
+  ): Promise<KycVerificationRow | undefined> {
+    return executor
+      .selectFrom('kyc_verifications')
+      .selectAll()
+      .where('kyc_verification_id', '=', kycVerificationId)
+      .where('lead_id', '=', leadId)
+      .where('org_id', '=', orgId)
+      .limit(1)
+      .executeTakeFirst();
+  }
+
+  /**
+   * Resolve an open KYC exception (FR-072 §Data Op 3). The `resolution_code IS
+   * NULL AND status IN (exception, failed)` guard is the concurrency lock — a
+   * concurrent resolve updates zero rows. Returns the rows-updated count.
+   * `newStatus` is `success` or `waived` (no `resolved` enum — A-5).
+   */
+  async resolveException(
+    input: {
+      kyc_verification_id: string;
+      org_id: string;
+      new_status: KycCheckStatus;
+      resolution_code: string;
+      actor_id: string;
+    },
+    tx: DbTransaction,
+  ): Promise<number> {
+    const res = await tx
+      .updateTable('kyc_verifications')
+      .set({
+        status: input.new_status,
+        resolution_code: input.resolution_code,
+        updated_by: input.actor_id,
+        updated_at: new Date(),
+      })
+      .where('kyc_verification_id', '=', input.kyc_verification_id)
+      .where('org_id', '=', input.org_id)
+      .where('resolution_code', 'is', null)
+      .where('status', 'in', ['exception', 'failed'])
+      .executeTakeFirst();
+    return Number(res.numUpdatedRows ?? 0n);
+  }
+
+  /**
+   * Whether `provider_down_manual` is permitted — the `kyc_manual_fallback_enabled`
+   * flag in `product_configs.sla_config` JSONB (AMBIGUITY FR-072-A1, best-effort
+   * location). Absent/false → not enabled.
+   */
+  async isManualFallbackEnabled(
+    productConfigId: string,
+    orgId: string,
+    flagKey: string,
+    executor: KyselyDb | DbTransaction = this.db,
+  ): Promise<boolean> {
+    const row = await executor
+      .selectFrom('product_configs')
+      .select('sla_config')
+      .where('product_config_id', '=', productConfigId)
+      .where('org_id', '=', orgId)
+      .limit(1)
+      .executeTakeFirst();
+    const config = row?.sla_config;
+    if (config == null || typeof config !== 'object') return false;
+    return (config as Record<string, unknown>)[flagKey] === true;
   }
 
   /** Active granted `kyc` consent for the lead (LLD §Step 2). Returns its id. */

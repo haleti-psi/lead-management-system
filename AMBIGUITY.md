@@ -336,3 +336,32 @@ ckyc/digilocker/aadhaar_otp/vcip are Phase-1.5; only `KycMockAdapter` is bound, 
 **Gap:** the LLD UI tree's `KycCheckList` "lists all kyc_verifications for this lead", but FR-071 contracts only `POST /leads/{id}/kyc/{type}` — there is no GET.
 **Resolution applied:** the workbench renders the fixed KYC check types (PAN enabled; ckyc/digilocker/aadhaar/vcip disabled — Phase 1.5) and reflects each check's result from the run-mutation response; the consent gate surfaces reactively on `403 CONSENT_MISSING`. The persisted-list view awaits a contracted GET (read-model/FR-072 concern).
 **Needed decision:** add `GET /leads/{id}/kyc` to the contract if a list view is required.
+
+---
+
+# AMBIGUITY — FR-072 (KYC Exception Handling)
+
+*All resolved in-code with the narrowest spec-consistent choice; listed for Dev-1/contract write-back (CLAUDE.md §9). The first two are the LLD's own A-1/A-3; A-4/A-5 are schema↔LLD conflicts found in build.*
+
+## FR-072-A5. `kyc_check_status` enum has no `resolved` value (schema wins)
+**Gap:** the LLD §Response/state-machine, `FR-072-tests` T-01/T-02/T-10, and INV-01 all use `status = 'resolved'`, but `schema.sql:64` defines `kyc_check_status AS ENUM ('initiated','success','failed','exception','waived')` — there is no `resolved`. A literal `resolved` would be rejected by the DB enum (the FR-110 `CONSENT_CAPTURED` precedent: enum wins).
+**Resolution applied:** resolving an exception maps to an existing enum value — **`waived`** for waiver-class codes (`waiver`, `name_variance_waiver`, `address_variance_waiver`), **`success`** for all other (verification-class) codes; `resolution_code` (VARCHAR(40)) records the specific code. The API response `status` reflects the enum value (`success`/`waived`), not a literal `resolved`.
+**Needed decision:** amend FR-072.md/-tests/state-machines.md to the enum mapping, or add a `resolved` value to `kyc_check_status` (schema + enum + Flyway). The T-01/T-02/T-10 `status='resolved'` assertions must be updated.
+
+## FR-072-A4. The `failed → exception` transition consumer is unbuilt (open-state seam)
+**Gap:** FR-071 persists provider mismatch/down as `status='failed'` (+ `exception_type`), and its LLD says "FR-072 transitions to 'exception' via queue", but no FR defines that KYC_EXCEPTION→`exception` consumer (nor the `exception_sla_due_at` set). FR-072's resolve guard is `WHERE status='exception'` — so against the running system nothing would ever be resolvable.
+**Resolution applied:** FR-072 treats the OPEN exception state as `status IN ('exception','failed') AND resolution_code IS NULL` (shared `deriveLeadKycStatus` agrees). T-10 (resolved) and T-11 (success) still → CONFLICT. This makes the endpoint functional against FR-071's actual output.
+**Needed decision:** build the `failed→exception` consumer (with SlaEngine due-at) and assign its owner, or ratify that `failed` (with an `exception_type`, unresolved) IS the open-exception state and drop the separate `exception` status from the model.
+
+## FR-072-A1. `kyc_manual_fallback_enabled` compliance flag has no schema home
+**Gap (LLD A-1):** the flag gating `provider_down_manual` is not a column anywhere.
+**Resolution applied:** read as a boolean key `kyc_manual_fallback_enabled` from `product_configs.sla_config` (JSONB) via the lead's `product_config_id` (the LLD's best-effort location); absent/false → FORBIDDEN. No column invented.
+**Needed decision:** ratify `product_configs.sla_config.kyc_manual_fallback_enabled`, or define an org-level compliance config and point the read there.
+
+## FR-072-A3. `resolution_code` allowed list is not a contract artefact
+**Gap (LLD A-3):** the column is `VARCHAR(40)`, not an enum; the 9-value list is LLD best-effort.
+**Resolution applied:** the list lives in `kyc.constants.ts ALLOWED_RESOLUTION_CODES` and is enforced by the Zod DTO.
+**Needed decision:** ratify the list (and the waiver-subset) in `error-taxonomy.md` or a `@shared/enums` addition.
+
+## FR-072-A6. No GET exception-queue; resolution integrated into the FR-071 workbench
+The LLD UI tree shows an `ExceptionQueue` DataTable, but no GET endpoint exists (FR-071-10). **Resolution applied:** the `ExceptionResolutionModal` is wired into the existing `KycWorkbench` — a check row in the open-exception state exposes a "Resolve" action — so no list GET is needed. Notification side-effect (LLD step 8) is deferred (NotificationDispatchService not yet wired into M8).

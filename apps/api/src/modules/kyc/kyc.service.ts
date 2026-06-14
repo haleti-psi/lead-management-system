@@ -26,6 +26,7 @@ import {
 import { OutboxService } from '../../core/outbox';
 import { LeadService } from '../capture/lead.service';
 import { leadInScope } from './document.service';
+import { deriveLeadKycStatus } from './kyc-status';
 import { KYC_ORCHESTRATOR_ROLES, KYC_RESOURCE_TYPE } from './kyc.constants';
 import {
   interpretProviderResponse,
@@ -280,7 +281,8 @@ export class KycService {
 
   /**
    * Derive `leads.kyc_status` from all of the lead's KYC verifications
-   * (LLD §computeLeadKycStatus). Read inside the tx so the just-inserted row counts.
+   * (shared {@link deriveLeadKycStatus}). Read inside the tx so the just-inserted
+   * row counts.
    */
   private async computeLeadKycStatus(
     leadId: string,
@@ -288,20 +290,7 @@ export class KycService {
     tx: DbTransaction,
   ): Promise<KycStatus> {
     const rows = await this.repo.listByLead(leadId, orgId, tx);
-    if (rows.length === 0) return KycStatus.NOT_STARTED;
-
-    const unresolvedFailure = rows.some(
-      (r) =>
-        r.status === KycCheckStatus.EXCEPTION ||
-        (r.status === KycCheckStatus.FAILED && r.resolution_code === null),
-    );
-    if (unresolvedFailure) return KycStatus.EXCEPTION;
-
-    if (rows.every((r) => r.status === KycCheckStatus.WAIVED)) return KycStatus.WAIVED;
-    if (rows.every((r) => r.status === KycCheckStatus.SUCCESS || r.status === KycCheckStatus.WAIVED)) {
-      return KycStatus.VERIFIED;
-    }
-    return KycStatus.IN_PROGRESS;
+    return deriveLeadKycStatus(rows);
   }
 
   /** Map a row to the masked response DTO (never exposes tokens — TC-017). */

@@ -15,6 +15,8 @@ import { DocumentController } from './document.controller';
 import { DocumentRepository } from './document.repository';
 import { DocumentService } from './document.service';
 import { KycController } from './kyc.controller';
+import { KycExceptionController } from './kyc-exception.controller';
+import { KycExceptionService } from './kyc-exception.service';
 import { KycService } from './kyc.service';
 import { KycVerificationRepository } from './kyc-verification.repository';
 import { ScanCallbackController } from './scan-callback.controller';
@@ -36,11 +38,18 @@ import { ScanCallbackGuard } from './scan-callback.guard';
  */
 @Module({
   imports: [ComplianceModule],
-  controllers: [DocumentController, CustomerDocumentController, ScanCallbackController, KycController],
+  controllers: [
+    DocumentController,
+    CustomerDocumentController,
+    ScanCallbackController,
+    KycController,
+    KycExceptionController,
+  ],
   providers: [
     DocumentService,
     DocumentRepository,
     KycService,
+    KycExceptionService,
     KycVerificationRepository,
     ScanCallbackGuard,
     GcsHttpAdapter,
@@ -63,6 +72,6 @@ import { ScanCallbackGuard } from './scan-callback.guard';
       inject: [AppConfigService, VirusScanHttpAdapter, VirusScanMockAdapter],
     },
   ],
-  exports: [DocumentService, KycService],
+  exports: [DocumentService, KycService, KycExceptionService],
 })
 export class KycModule {}

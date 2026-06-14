@@ -15,3 +15,18 @@ export interface KycVerificationData {
   exceptionType: KycException | null;
   createdAt: Date;
 }
+
+/**
+ * FR-072 — `PATCH /leads/{id}/kyc/{kid}/resolve` response. `status` is the
+ * `kyc_check_status` enum value the resolution maps to — `success` or `waived`;
+ * there is no `resolved` enum value (AMBIGUITY FR-072-A5).
+ */
+export interface ResolveKycExceptionData {
+  kycVerificationId: string;
+  leadId: string;
+  kycType: KycType;
+  status: KycCheckStatus;
+  exceptionType: KycException | null;
+  resolutionCode: string;
+  updatedAt: Date;
+}

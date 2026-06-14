@@ -37,3 +37,44 @@ export const KYC_ORCHESTRATOR_ROLES: ReadonlySet<string> = new Set(['KYC', 'BM']
 /** Hard LIMIT for the per-lead kyc_verifications read used to derive kyc_status
  * (LLD §computeLeadKycStatus / Assumption 4; ≤ 100, bounded by 6 check types). */
 export const KYC_VERIFICATIONS_LIMIT = 100;
+
+// ───────────────────────────────────────── FR-072 KYC exception resolution ──
+
+/** Roles permitted to resolve KYC exceptions (FR-072 §Auth — KYC/BM only; DPO
+ * holds `kyc_signoff` scope M but exception resolution is restricted to KYC/BM). */
+export const KYC_SIGNOFF_ROLES: ReadonlySet<string> = new Set(['KYC', 'BM']);
+
+/**
+ * Allowed `resolution_code` values (FR-072 §Validation — A-3 best-effort; the
+ * column is VARCHAR(40), not an enum). Confirm with compliance/product.
+ */
+export const ALLOWED_RESOLUTION_CODES = [
+  're_verified',
+  'document_replaced',
+  'name_variance_waiver',
+  'address_variance_waiver',
+  'waiver',
+  'provider_down_manual',
+  'ckyc_manual_capture',
+  'duplicate_ckyc_resolved',
+  'vcip_retaken',
+] as const;
+export type ResolutionCode = (typeof ALLOWED_RESOLUTION_CODES)[number];
+
+/**
+ * Resolution codes that WAIVE the check (→ `kyc_check_status='waived'`); all
+ * others mark the check satisfied (→ `success`). There is no `resolved` enum
+ * value (AMBIGUITY FR-072-A5).
+ */
+export const WAIVER_RESOLUTION_CODES: ReadonlySet<string> = new Set([
+  'waiver',
+  'name_variance_waiver',
+  'address_variance_waiver',
+]);
+
+/** Resolution codes that require an `evidenceRef` (FR-072 §Validation). */
+export const EVIDENCE_REQUIRED_CODES: ReadonlySet<string> = new Set(['waiver', 'provider_down_manual']);
+
+/** Compliance flag key in `product_configs.sla_config` JSONB gating
+ * `provider_down_manual` (AMBIGUITY FR-072-A1 — best-effort location). */
+export const MANUAL_FALLBACK_FLAG = 'kyc_manual_fallback_enabled';
