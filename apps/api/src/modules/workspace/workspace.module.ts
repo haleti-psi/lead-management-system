@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 
 import { BulkActionService } from './bulk-action.service';
+import { DashboardController } from './dashboard.controller';
+import { DashboardRepository } from './dashboard.repository';
+import { DashboardService } from './dashboard.service';
 import { LeadListController } from './lead-list.controller';
 import { LeadListRepository } from './lead-list.repository';
 import { LeadListService } from './lead-list.service';
@@ -16,13 +19,14 @@ import { SavedViewService } from './saved-view.service';
 
 /**
  * M6 Workspace — FR-050 (lead list, saved work queues, bulk-action gate) +
- * FR-051 (Lead-360 read aggregate) + FR-052 (pipeline board + stage transitions).
+ * FR-051 (Lead-360 read aggregate) + FR-052 (pipeline board + stage transitions)
+ * + FR-053 (role-based dashboard & home).
  * READ-ONLY on `leads` (owner-writes §11: mutations delegate to the @Global
  * CaptureModule's `LeadService`); sole writer of `saved_views`.
  * `StageGuardService` and `LeadService` are available from the @Global CaptureModule.
  */
 @Module({
-  controllers: [LeadListController, Lead360Controller, SavedViewController, PipelineBoardController],
+  controllers: [LeadListController, Lead360Controller, SavedViewController, PipelineBoardController, DashboardController],
   providers: [
     LeadScopeService,
     LeadListRepository,
@@ -33,6 +37,8 @@ import { SavedViewService } from './saved-view.service';
     SavedViewRepository,
     SavedViewService,
     PipelineBoardService,
+    DashboardRepository,
+    DashboardService,
   ],
 })
 export class WorkspaceModule {}

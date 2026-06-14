@@ -544,3 +544,41 @@ yet in the foundation (same situation as FR-051's `StatusChip` / `SectionTabs`).
 
 **Action (Dev 2):** provide the canonical `Sheet` primitive; FR-052 to swap
 `MobileStageSelectorSheet` to use it.
+---
+# AMBIGUITY — FR-053 (Role-Based Dashboard & Home)
+
+## A-FR053-1: MiniChart not implemented (SourceSummaryWidget)
+
+The LLD §UI Component Tree mentions a `MiniChart` (bar) for `SourceSummaryWidget`
+when bandwidth is not constrained. No chart library is listed in
+`docs/contracts/dependency-register.md`. `SourceSummaryWidget` renders a `<table>`
+only (the documented low-bandwidth fallback). If a chart library is approved,
+the bar variant can be added without changing any other component.
+
+## A-FR053-2: `name_masked`/`mobile_masked` columns absent from `lead_identities`
+
+LLD Query 3 references `li.name_masked` and `li.mobile_masked` as stored-masked
+columns. The actual `schema.sql` and `types.generated.ts` have only `name` and
+`mobile` (raw values). `DashboardRepository.getHotLeads()` selects raw `name` and
+`mobile`, and `DashboardService` applies `MaskingService` before serialisation —
+consistent with the FR-050 `LeadListService` pattern.
+
+## A-FR053-3: `SourceAttributions` has no `source_name` column
+
+LLD Query 5 groups by `sa.source_name`. The schema column is `source` (a
+`lead_source` enum), not `source_name`. The query groups by `sa.source` and
+aliases it `source_name` in the SELECT to preserve the response shape.
+
+## A-FR053-4: `filterWhere(sql\`...\`)` not supported by Kysely aggregate functions
+
+The LLD shows this form for conditional aggregation. Kysely's aggregate
+`filterWhere()` requires an expression-builder predicate, not a raw `sql\`\``
+template. Rewrote Query 1 to use `eb.and([...])` with typed column refs inside
+`filterWhere`, and `sql<boolean>\`...\`` only for date-trunc expressions where no
+typed form exists. All predicates remain parameterised.
+
+## A-FR053-5: KYC and DPO widget sets (LLD Ambiguities A1 and A2)
+
+Implementing best-effort resolutions from LLD: KYC sees KPI + SLA alerts only;
+DPO passes the ABAC guard (reports:M) and receives aggregate counts with all
+name/mobile fields strictly masked.
