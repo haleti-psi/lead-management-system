@@ -450,3 +450,59 @@ break-glass context) — intentional; document in LLD.
 `V4__add_view_sensitive_audit_action.sql` + `@lms/shared` AuditAction +
 `types.generated.ts`). `DPO_VIEW_AUDIT_ACTION` now correctly set to
 `AuditAction.VIEW_SENSITIVE`.
+
+---
+
+# AMBIGUITY — FR-054 (Global Search)
+
+## 1. cmdk/Command and @radix-ui/react-dialog not in dependency register
+
+**The gap (precise):** FR-054 LLD §UI specifies the `SearchPalette` be built
+using `shadcn/ui` `Command` (backed by `cmdk`) and `Dialog` (backed by
+`@radix-ui/react-dialog`). Neither `cmdk` nor `@radix-ui/react-dialog` appear
+in `docs/contracts/dependency-register.md`. Only `@radix-ui/react-slot` and
+`@radix-ui/react-label` are registered.
+
+**Resolution applied:** The palette was implemented using a native HTML
+`<dialog open>` element with `role="dialog"` and `aria-modal="true"`, providing
+equivalent semantics and full WCAG 2.1 AA keyboard accessibility. The LLD
+instruction "missing primitive → reuse a prior FR's local version or minimal
+local + AMBIGUITY note" was followed.
+
+**Action required before merge:** If `cmdk` and `@radix-ui/react-dialog` should
+be added to the dependency register, a contracts PR from Dev 1 is required first.
+The `SearchPalette` can then be migrated to the `Command`/`Dialog` primitives
+without changing any API surface.
+
+## 2. DPO task visibility in search
+
+**The gap (precise):** The auth-matrix gives DPO `view_lead: M` (masked
+compliance view) but does not explicitly list task visibility for DPO.
+
+**Resolution applied (best-effort):** DPO receives tasks scoped identically to
+leads — the `masked` predicate adds no row restriction, so DPO can see all org
+tasks linked to leads (same as their lead view). If compliance requires DPO to
+receive no task results, the `TaskSearchRepository.search` must return `[]` for
+`predicate.type === 'masked'`.
+
+## 3. PAN token lookup in search
+
+**The gap (precise):** `lead_identities.pan_token` stores a tokenised value.
+The LLD says to do PAN equality lookup when the query matches the PAN regex
+(`[A-Z]{5}[0-9]{4}[A-Z]`). No `PanTokenService` exists in `shared-utilities.md`
+to tokenise the input before lookup.
+
+**Resolution applied (best-effort):** The raw PAN regex is detected in
+`LeadSearchRepository.search` and the raw value is compared directly to
+`pan_token`. This will only work if `pan_token` stores the raw PAN (not a hash
+or vault reference). If `pan_token` is truly tokenised, the equality check will
+never match and the PAN search path is silently a no-op until a `PanTokenService`
+is registered in `shared-utilities.md`.
+
+## 4. Supertest E2E tier deferred (T01–T23)
+
+`apps/api/test/.../search.e2e-spec.ts` (T01–T23) is deferred project-wide per
+`manifest.stage7.test_strategy` (same convention as every prior FR). Unit and
+component-level tests in `*.spec.ts` are the per-FR deliverable for this wave.
+The e2e supertest suite will be built in the integration-test wave alongside
+all other deferred e2e specs.

@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   BarChart3,
@@ -15,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/use-auth';
 import { useCan, type Capability } from '@/lib/auth/capabilities';
 import { cn } from '@/lib/utils';
+import { SearchPalette } from '@/components/workspace/SearchPalette';
 
 /**
  * Authenticated app shell (ui.md §Layout shell): role-filtered left nav, a top
@@ -71,19 +73,32 @@ function Sidebar({ items }: { items: NavItem[] }): JSX.Element {
   );
 }
 
-function TopBar(): JSX.Element {
+function TopBar({ onSearchOpen }: { onSearchOpen: () => void }): JSX.Element {
   const { user, logout } = useAuth();
   return (
     <header className="flex h-14 shrink-0 items-center gap-4 border-b bg-card px-4">
-      <div className="relative hidden max-w-sm flex-1 sm:block">
-        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden />
-        <input
-          type="search"
-          aria-label="Search"
-          placeholder="Search leads, partners…"
-          className="h-9 w-full rounded-md border border-input bg-background pl-8 pr-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-      </div>
+      {/* FR-054 — Global search trigger (⌘K / Ctrl+K). */}
+      <button
+        type="button"
+        aria-label="Search (⌘K)"
+        onClick={onSearchOpen}
+        className="relative hidden h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex"
+      >
+        <Search className="h-4 w-4" aria-hidden />
+        <span>Search leads, partners…</span>
+        <kbd className="ml-auto hidden rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium sm:inline-block">
+          ⌘K
+        </kbd>
+      </button>
+      {/* Mobile search icon (shows in bottom nav region via AppShell — placeholder button for top bar). */}
+      <button
+        type="button"
+        aria-label="Search"
+        onClick={onSearchOpen}
+        className="flex h-9 w-9 items-center justify-center rounded-md border border-input sm:hidden"
+      >
+        <Search className="h-4 w-4" aria-hidden />
+      </button>
       <div className="ml-auto flex items-center gap-3">
         <span className="hidden text-sm text-muted-foreground sm:inline">
           {user?.role} · scope {user?.scope}
@@ -125,11 +140,28 @@ function MobileNav({ items }: { items: NavItem[] }): JSX.Element {
 
 export function AppShell(): JSX.Element {
   const items = useVisibleNav();
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const openSearch = useCallback(() => setSearchOpen(true), []);
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
+
+  // FR-054 — global cmd-k / ctrl-k keyboard shortcut to open the search palette.
+  useEffect(() => {
+    function onKeyDown(e: globalThis.KeyboardEvent): void {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
     <div className="flex h-[100dvh] overflow-hidden">
       <Sidebar items={items} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar />
+        <TopBar onSearchOpen={openSearch} />
         <main className="flex-1 overflow-y-auto">
           <div className="container mx-auto px-4 py-6">
             <Outlet />
@@ -137,6 +169,8 @@ export function AppShell(): JSX.Element {
         </main>
         <MobileNav items={items} />
       </div>
+      {/* FR-054 — Search palette (portal-like; rendered at AppShell level). */}
+      <SearchPalette open={searchOpen} onClose={closeSearch} />
     </div>
   );
 }
