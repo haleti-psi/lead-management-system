@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { FileUp, ShieldCheck, Info } from 'lucide-react';
+import { FileUp, ShieldCheck, Info, MessageSquareWarning } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StatusChip } from '@/components/ui/StatusChip';
 import type { CustomerOpenData } from '@/types/customer-link';
@@ -39,6 +39,14 @@ export function CustomerHome({ token, data }: { token: string; data: CustomerOpe
       {has('status') ? (
         <Card icon={<Info className="h-5 w-5" aria-hidden />} title="Application status" description="Track the progress of your application.">
           <p className="text-sm text-muted-foreground">Status: {data.lead_display.status_label}</p>
+        </Card>
+      ) : null}
+
+      {has('grievance') ? (
+        <Card icon={<MessageSquareWarning className="h-5 w-5" aria-hidden />} title="Raise a grievance" description="Let us know about any concern with your application.">
+          <Button asChild variant="outline" className="w-full">
+            <Link to={`/c/${token}/grievance`}>Raise a grievance</Link>
+          </Button>
         </Card>
       ) : null}
     </div>
