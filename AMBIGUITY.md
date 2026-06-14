@@ -473,3 +473,27 @@ BM list/get filters `branch_id = userBranch OR branch_id IS NULL` (org-wide part
 
 ## FR-090-A6. Status-change restricted to ADMIN/HEAD; query grammar
 Suspend/expire requires role ∈ {ADMIN, HEAD} (BM may edit metadata for in-scope partners but not change status) → FORBIDDEN otherwise. Query grammar follows the FR-050 codebase convention (`filter[status]`/`filter[type]` object, `sort=field:dir`) rather than the LLD's `sort=-created_at`; `limit` clamps to 100. `contact_mobile` is masked (`98xxxxxx10`) in list responses and in audit detail.
+
+---
+
+# AMBIGUITY — FR-091 (Partner Lead Submission)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9).*
+
+## FR-091-A1. Reuses `CaptureService.createLead` (not a re-implemented insert chain)
+The LLD §Step E lists the identity/attribution/lead/product_detail/idempotency inserts directly. **Resolution applied:** FR-091 delegates the whole atomic write to the @Global `CaptureService.createLead` (FR-010 owner of those M2 writes — owner-writes), passing a forced partner source + `channel='partner'` + `actorRole=PARTNER`. This reuses the existing dedupe gate, PARTNER cross-partner check, audit, outbox, and **idempotency** (CaptureService's Redis `CaptureIdempotencyService`). So the LLD's `integration_logs` idempotency record (and the open `integration_kind='partner_intake'` enum question) is **moot** — no `integration_logs` row is written by FR-091.
+
+## FR-091-A2. Partner-active gate at the FR-091 layer → FORBIDDEN
+FR-091 resolves the partner by `partner_id` (from the AbacGuard `partner`-scope predicate) and rejects absent / `suspended` / `expired` / past-`valid_until` with FORBIDDEN (403), per the LLD. `CaptureService.resolvePartnerId` ALSO rejects a non-active partner (as `VALIDATION_ERROR` "Partner is not active") as a backstop — FR-091's explicit gate gives the LLD-specified 403 first.
+
+## FR-091-A3. Non-PARTNER callers → FORBIDDEN via the partner predicate
+`create_lead`/`view_lead` are held by several roles at different scopes, so the AbacGuard admits e.g. RM (scope O). FR-091 restricts to PARTNER by requiring the resolved predicate to be `type='partner'` (→ `partner_id`); any other predicate type → FORBIDDEN. A PARTNER with no `partner_id` likewise → FORBIDDEN.
+
+## FR-091-A4. Forced source: DSA (partner type DSA) else Dealer
+`lead_source` has no "Partner" literal; partner leads use `DSA` (type DSA) or `Dealer` (all other types) — both satisfy `ck_source_attr_partner` — with `partner_code` forced from the partner and `channel='partner'`. Matches the LLD assumption 2 and capture's `resolvePartnerId`.
+
+## FR-091-A5. Create response omits `created_at`
+`CaptureService` returns `LeadCaptureData` (masked, no `created_at`); the FR-091 create response maps those fields and omits `created_at` (the LLD example includes it). `created_at` is available via `GET /partners/leads`. Idempotent replay returns the original payload at HTTP **201** (per the LLD — create replay stays 201; the `replayed` flag is not surfaced).
+
+## FR-091-A6. Partner document submission out of scope (LLD AMB)
+No partner document-upload route is added; partner documents go through the standard M8 endpoints (FR-060/070) once the lead exists. Masking: list `name`→`Ramesh xxxxx`, `mobile`→`98xxxxxx10` (PARTNER projection omits score/owner/internal fields — AC2).
