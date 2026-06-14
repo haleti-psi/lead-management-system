@@ -1,0 +1,4 @@
+# Compiled output of `tsc -b` (vite.config.ts → .js/.d.ts) — generated, never committed
+vite.config.js
+vite.config.d.ts
+*.tsbuildinfo
