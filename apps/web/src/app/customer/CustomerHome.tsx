@@ -38,7 +38,9 @@ export function CustomerHome({ token, data }: { token: string; data: CustomerOpe
 
       {has('status') ? (
         <Card icon={<Info className="h-5 w-5" aria-hidden />} title="Application status" description="Track the progress of your application.">
-          <p className="text-sm text-muted-foreground">Status: {data.lead_display.status_label}</p>
+          <Button asChild variant="outline" className="w-full">
+            <Link to={`/c/${token}/status`}>View status</Link>
+          </Button>
         </Card>
       ) : null}
 

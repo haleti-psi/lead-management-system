@@ -9,6 +9,7 @@ import { KycPage } from './leads/kyc/KycPage';
 import { CustomerUploadPage } from './customer/CustomerUploadPage';
 import { CustomerLinkPage } from './customer/CustomerLinkPage';
 import { GrievancePage } from './customer/GrievancePage';
+import { StatusPage } from './customer/StatusPage';
 
 // Temporary landing inside the shell until feature screens (FRs) are wired.
 function DashboardPlaceholder(): JSX.Element {
@@ -31,6 +32,7 @@ export function App(): JSX.Element {
       <Route path="/c/:token" element={<CustomerLinkPage />} />
       <Route path="/c/:token/upload" element={<CustomerUploadPage />} />
       <Route path="/c/:token/grievance" element={<GrievancePage />} />
+      <Route path="/c/:token/status" element={<StatusPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppShell />}>
           <Route path="/" element={<DashboardPlaceholder />} />
