@@ -686,6 +686,10 @@ export type EventCode = typeof EventCode[keyof typeof EventCode];
 export { ScoreReasonCode } from './score-reason-code.enum';
 export type { ScoreReasonCode as ScoreReasonCodeType } from './score-reason-code.enum';
 
+// ── 16. Hot-lead rules (FR-031) ──────────────────────────────
+export { HotReasonCode } from './score-reason-code.enum';
+export type { HotReasonCode as HotReasonCodeType } from './score-reason-code.enum';
+
 export const AuditAction = {
   LOGIN: 'login',
   LOGOUT: 'logout',

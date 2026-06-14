@@ -22,10 +22,14 @@ import { ScoringService } from './scoring.service';
  * acyclic: allocation imports nothing from capture at the module level; only the
  * port token/types and `LeadService` (via the global exports) cross the boundary.
  *
- * FR-011 wiring: AllocationModule provides {@link ScoringService} +
+ * FR-011 + FR-031 wiring: AllocationModule provides {@link ScoringService} +
  * {@link ScoringRepository} + {@link ScoringAdapter} and rebinds the
  * {@link SCORING_PORT} token that `CaptureModule` registered as a no-op. Because
  * `AllocationModule` is `@Global` the binding is visible org-wide.
+ * FR-031 extends `ScoringAdapter.evaluateAsync` to also call
+ * `evaluateHotRules` and `LeadService.setHotFlag` (+ HOT_LEAD outbox on
+ * false→true transition). `OutboxService` is injected from the global
+ * `OutboxModule`.
  */
 @Global()
 @Module({

@@ -222,6 +222,55 @@ describe('LeadService.setScore', () => {
   });
 });
 
+describe('LeadService.setHotFlag (FR-031)', () => {
+  it('writes is_hot without bumping version (volatile field) and emits audit', async () => {
+    const t = makeTx({ selectedRow: { org_id: ORG }, updatedRows: 1n });
+    const audit = fakeAudit();
+    const service = new LeadService(audit as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await expect(service.setHotFlag(LEAD, true, ['PRIORITY_HIGH'] as never, t.tx)).resolves.toBeUndefined();
+
+    expect(t.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ is_hot: true }),
+    );
+    // Must not bump version (volatile field rule)
+    const setArg = t.updateSet.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(setArg).not.toHaveProperty('version');
+    // Audit must fire
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'lead_update',
+        entity_type: 'leads',
+        entity_id: LEAD,
+        lead_id: LEAD,
+        detail: expect.objectContaining({ field: 'is_hot', is_hot: true }),
+      }),
+      t.tx,
+    );
+  });
+
+  it('throws NOT_FOUND when zero rows updated (lead absent or soft-deleted)', async () => {
+    const t = makeTx({ selectedRow: { org_id: ORG }, updatedRows: 0n });
+    const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await expect(service.setHotFlag(LEAD, false, ['COOLED'] as never, t.tx)).rejects.toMatchObject({
+      code: ERROR_CODES.NOT_FOUND,
+    });
+  });
+
+  it('writes is_hot=false for cool-down path', async () => {
+    const t = makeTx({ selectedRow: { org_id: ORG }, updatedRows: 1n });
+    const audit = fakeAudit();
+    const service = new LeadService(audit as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await expect(service.setHotFlag(LEAD, false, ['COOLED'] as never, t.tx)).resolves.toBeUndefined();
+
+    expect(t.updateSet).toHaveBeenCalledWith(
+      expect.objectContaining({ is_hot: false }),
+    );
+  });
+});
+
 describe('LeadService.recomputeDuplicateStatus (FR-020)', () => {
   function makeService(): LeadService {
     return new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
@@ -604,7 +653,7 @@ describe('LeadService.bulkReassign', () => {
 describe('LeadService frozen-interface stubs', () => {
   it.each([
     ['transitionStage', (s: LeadService, tx: DbTransaction) => s.transitionStage(LEAD, 'assigned', {}, 1, tx)],
-    ['setHotFlag', (s: LeadService, tx: DbTransaction) => s.setHotFlag(LEAD, true, [], tx)],
+    // setHotFlag implemented by FR-031 — removed from stub list
     ['setKycStatus', (s: LeadService, tx: DbTransaction) => s.setKycStatus(LEAD, 'verified', tx)],
     ['recordEligibility', (s: LeadService, tx: DbTransaction) => s.recordEligibility(LEAD, 'snap-1', tx)],
     ['markHandedOff', (s: LeadService, tx: DbTransaction) => s.markHandedOff(LEAD, 'LOS-1', 1, tx)],

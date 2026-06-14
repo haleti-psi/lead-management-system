@@ -1,3 +1,17 @@
+# AMBIGUITY — FR-031 (Hot-Lead Flag)
+
+## FR-031-A1: NotificationDispatchService not yet built (M11 deferred)
+
+**The gap (precise):** FR-031.md §Step 12 requires `NotificationDispatchService.send(lead, 'HOT_LEAD_ALERT', ['in_app', 'sms'])` be called post-commit when `is_hot` transitions `false → true`. The LLD explicitly notes: "This is a post-commit async call — failure here does not roll back the lead write or scoring." M11 (engagement module) is not yet built — `NotificationDispatchService` does not exist.
+
+**FR-021 precedent:** FR-021 (merge) had the same gap; the precedent is to skip the call and document it here.
+
+**What was built:** The `HOT_LEAD` outbox event IS emitted (via `OutboxService`) on false→true transition. The downstream engagement module (M11/FR-100/101/102) will subscribe to that event via Pub/Sub and trigger in-app/SMS notification when built. The `ScoringAdapter` does NOT call `NotificationDispatchService` directly — the coupling is deferred to M11's Pub/Sub consumer.
+
+**Needed action (Wave 3 / M11):** When `NotificationDispatchService` is built, wire it into `ScoringAdapter.evaluateAsync` as a post-commit call (after `uow.run` completes). No code change is needed in FR-031's boundary — `OutboxService` already emits the event that M11 consumes.
+
+---
+
 # AMBIGUITY — FR-010 (Omnichannel Lead Capture)
 
 ## 1. Bulk-import XLSX parsing has no register-approved library

@@ -19,3 +19,23 @@ export const ScoreReasonCode = {
   ASSET_DETAILS_PRESENT: 'asset_details_present',
 } as const;
 export type ScoreReasonCode = typeof ScoreReasonCode[keyof typeof ScoreReasonCode];
+
+/**
+ * FR-031 — Hot-lead rule reason codes. One value per hot rule (H1–H8) plus
+ * the COOLED code for the cool-down path. Carried in the `audit_logs.detail`
+ * entry and the HOT_LEAD outbox event payload only — NOT written to
+ * `leads.score_reasons` (FR-011 owns that column; FR-031 writes `is_hot`).
+ * Never redefine locally; import from `@lms/shared`.
+ */
+export const HotReasonCode = {
+  PRIORITY_HIGH: 'PRIORITY_HIGH',
+  AMOUNT_ABOVE_THRESHOLD: 'AMOUNT_ABOVE_THRESHOLD',
+  RETURNING_CUSTOMER: 'RETURNING_CUSTOMER',
+  PARTNER_VERIFIED: 'PARTNER_VERIFIED',
+  CUSTOMER_SUBMITTED_DOCS: 'CUSTOMER_SUBMITTED_DOCS',
+  POSITIVE_LOS_INDICATIVE: 'POSITIVE_LOS_INDICATIVE',
+  HIGH_INTENT_EVENT: 'HIGH_INTENT_EVENT',
+  AMOUNT_ABOVE_DEFAULT_THRESHOLD: 'AMOUNT_ABOVE_DEFAULT_THRESHOLD',
+  COOLED: 'COOLED',
+} as const;
+export type HotReasonCode = typeof HotReasonCode[keyof typeof HotReasonCode];

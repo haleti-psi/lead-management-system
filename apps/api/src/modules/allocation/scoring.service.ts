@@ -1,10 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { InjectPinoLogger, type PinoLogger } from 'nestjs-pino';
 
-import { ScoreReasonCode, type ScoringResult } from '@lms/shared';
+import { HotReasonCode, ScoreReasonCode, type ScoringResult } from '@lms/shared';
 
 import type { KyselyDb, DbTransaction } from '../../core/db';
 import { ScoringRepository, type ScoringConfig, type ScoringContext } from './scoring.repository';
+
+/** Result of {@link ScoringService.evaluateHotRules}. */
+export interface HotRuleResult {
+  isHot: boolean;
+  hotReasons: HotReasonCode[];
+}
 
 /**
  * Built-in default scoring weights and parameters (FR-011 LLD §317-335).
@@ -69,6 +75,12 @@ export class ScoringService {
    * or single-row joins). The `db` parameter accepts either a transaction handle
    * (for in-transaction scoring) or the plain pool (for post-commit scoring).
    *
+   * `preloadedContext` is optional: when the caller has already called
+   * `ScoringRepository.loadContext` (e.g. ScoringAdapter loads it once and passes
+   * it here so FR-031 hot-rule evaluation reuses the same rows — fixing the
+   * double-load defect). When omitted, context is loaded internally as before,
+   * preserving the FR-011 behaviour when evaluate() is called standalone.
+   *
    * Returns `{ score: null, reasons: null }` on any internal error — callers must
    * not throw this upward; a structured log entry is emitted at level 'error'.
    */
@@ -76,9 +88,10 @@ export class ScoringService {
     leadId: string,
     db: KyselyDb | DbTransaction,
     orgId: string,
+    preloadedContext?: ScoringContext,
   ): Promise<ScoringResult> {
     try {
-      const context = await this.repo.loadContext(leadId, db);
+      const context = preloadedContext ?? await this.repo.loadContext(leadId, db);
       const dbConfig = await this.repo.loadActiveScoringConfig(orgId, db);
       const config = this.mergeConfig(dbConfig);
       return this.computeScore(context, config);
@@ -229,5 +242,81 @@ export class ScoringService {
   /** Get the numeric weight for a factor key; returns 0 if not found. */
   private weight(factors: Record<string, number>, key: string): number {
     return factors[key] ?? 0;
+  }
+
+  /**
+   * FR-031 — Evaluate the eight hot rules (H1–H8) for the given scoring context.
+   * Returns `{ isHot, hotReasons }`. A lead is hot if ANY rule fires. On cool-down
+   * (no rule fires) `isHot=false` and `hotReasons=['COOLED']`. Never throws —
+   * designed to be called from `evaluateAsync` after FR-011 score evaluation.
+   */
+  evaluateHotRules(context: ScoringContext): HotRuleResult {
+    const hotReasons: HotReasonCode[] = [];
+    const threshold = this.hotAmountThreshold(context.sla_config);
+    const amount = context.requested_amount ?? 0;
+
+    // H1 — Priority high
+    if (context.priority === 'high') {
+      hotReasons.push(HotReasonCode.PRIORITY_HIGH);
+    }
+
+    // H2 — Amount above product threshold (sla_config.hot_amount_threshold)
+    // H8 — Amount above default threshold (fallback when product config absent)
+    // Both use the same resolved threshold; the reason code differs by source.
+    if (amount > 0) {
+      const slaThreshold = this.resolvedHotThresholdSource(context.sla_config);
+      if (amount > threshold) {
+        hotReasons.push(
+          slaThreshold === 'product' ? HotReasonCode.AMOUNT_ABOVE_THRESHOLD : HotReasonCode.AMOUNT_ABOVE_DEFAULT_THRESHOLD,
+        );
+      }
+    }
+
+    // H3 — Returning customer
+    if (context.is_existing_customer === true) {
+      hotReasons.push(HotReasonCode.RETURNING_CUSTOMER);
+    }
+
+    // H4 — Partner verified (partner_id set, quality_score >= 70, status active)
+    if (
+      context.partner_id != null &&
+      context.partner_quality_score != null &&
+      context.partner_quality_score >= 70 &&
+      context.partner_status === 'active'
+    ) {
+      hotReasons.push(HotReasonCode.PARTNER_VERIFIED);
+    }
+
+    // H5 — Customer submitted docs (M8 not yet built → count=0, rule won't fire)
+    if (context.customer_doc_count > 0) {
+      hotReasons.push(HotReasonCode.CUSTOMER_SUBMITTED_DOCS);
+    }
+
+    // H6 — Positive LOS indicative (M9 not yet built → false, rule won't fire)
+    if (context.has_positive_eligibility) {
+      hotReasons.push(HotReasonCode.POSITIVE_LOS_INDICATIVE);
+    }
+
+    // H7 — High-intent callback event (M7 not yet built → false, rule won't fire)
+    if (context.has_callback_task) {
+      hotReasons.push(HotReasonCode.HIGH_INTENT_EVENT);
+    }
+
+    if (hotReasons.length > 0) {
+      return { isHot: true, hotReasons };
+    }
+
+    // Cool-down: was hot but no rule fires now
+    return { isHot: false, hotReasons: [HotReasonCode.COOLED] };
+  }
+
+  /**
+   * Returns 'product' when sla_config contains a valid hot_amount_threshold,
+   * 'default' otherwise. Used to pick the correct HotReasonCode (H2 vs H8).
+   */
+  private resolvedHotThresholdSource(slaConfig: Record<string, unknown> | null): 'product' | 'default' {
+    if (slaConfig == null) return 'default';
+    const v = slaConfig['hot_amount_threshold'];
+    return typeof v === 'number' && v > 0 ? 'product' : 'default';
   }
 }
