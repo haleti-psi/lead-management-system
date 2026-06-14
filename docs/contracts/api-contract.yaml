@@ -51,7 +51,7 @@ x-fr-coverage:
   FR-103: "PUT /preferences"
   FR-104: "GET/POST /admin/sla-policies"
   FR-110: "GET/POST /leads/{id}/consents"
-  FR-111: "cross-cutting: data minimisation in services + data_sharing_logs (consents, eligibility, handoff)"
+  FR-111: "cross-cutting: data minimisation in services + data_sharing_logs (consents, eligibility, handoff); GET /leads/{id}/sharing-logs"
   FR-112: "GET/POST /data-rights, PATCH /data-rights/{id}"
   FR-113: "GET/POST/PATCH /compliance/dla"
   FR-114: "GET/POST /grievances, PATCH /grievances/{id}"
@@ -262,6 +262,20 @@ paths:
   /leads/{id}/consents:
     get: { summary: "Consent history (append-only)", operationId: listConsents, tags: [Compliance], x-frs: [FR-110], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
     post: { summary: "Capture consent (append-only)", operationId: captureConsent, tags: [Compliance], x-frs: [FR-110, FR-111], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' } } }
+  /leads/{id}/sharing-logs:
+    get:
+      summary: "DPO oversight view — data-sharing audit log for a lead (DPO only)"
+      operationId: listLeadSharingLogs
+      tags: [Compliance]
+      x-frs: [FR-111]
+      parameters:
+        - { $ref: '#/components/parameters/PathId' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        "200": { $ref: '#/components/responses/Ok' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
   /data-rights:
     get: { summary: "List data-rights requests (DPO)", operationId: listDataRights, tags: [Compliance], x-frs: [FR-112], responses: { "200": { $ref: '#/components/responses/Ok' } } }
     post: { summary: "Raise data-rights request", operationId: createDataRights, tags: [Compliance], x-frs: [FR-112], responses: { "201": { $ref: '#/components/responses/Created' } } }
