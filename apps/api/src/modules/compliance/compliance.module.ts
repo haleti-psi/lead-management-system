@@ -15,6 +15,9 @@ import { DataSharingLogsController } from './data-sharing-logs.controller';
 import { DataSharingLogsRepository } from './data-sharing-logs.repository';
 import { DataSharingLogsService } from './data-sharing-logs.service';
 import { DataSharingService } from './data-sharing.service';
+import { DlaRegistryController } from './dla-registry.controller';
+import { DlaRegistryRepository } from './dla-registry.repository';
+import { DlaRegistryService } from './dla-registry.service';
 import { GrievanceCodeGenerator } from './code-generator-grievance.service';
 import { GrievanceController } from './grievance.controller';
 import { GrievanceEscalationJob } from './grievance-escalation.job';
@@ -30,10 +33,11 @@ import {
 /**
  * M12 Compliance — FR-110 (purpose-wise consent ledger) + FR-111 (data
  * minimisation & resource-access controls) + FR-112 (data-principal rights
- * workflow) + FR-114 (grievance workflow).
+ * workflow) + FR-113 (DLA/LSP registry) + FR-114 (grievance workflow).
  *
  * Owns `consent_records` (append-only), `data_sharing_logs` (append-only),
- * and `grievances` (full lifecycle). Depends only on the global core modules
+ * `grievances` (full lifecycle), and `dla_registry` (FR-113). Depends only on the
+ * global core modules
  * (DB/UnitOfWork, audit, outbox, auth-core, sla, logging) plus the @Global
  * CaptureModule's `LeadService`.
  *
@@ -68,6 +72,7 @@ import {
     CustomerDataRightsController,
     DataRightsController,
     DataSharingLogsController,
+    DlaRegistryController,
     GrievanceController,
     GrievanceEscalationJob,
   ],
@@ -88,6 +93,10 @@ import {
     DataRightsService,
     DataRightsRepository,
     DataRightsIdempotencyService,
+
+    // FR-113 — DLA/LSP registry
+    DlaRegistryService,
+    DlaRegistryRepository,
 
     // FR-114 — grievance
     GrievanceService,

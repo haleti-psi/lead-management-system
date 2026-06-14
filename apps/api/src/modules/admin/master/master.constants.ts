@@ -35,6 +35,7 @@ export const MASTER_AGGREGATE_TYPE = 'configuration_versions';
 // NOTE: ownership of partners/communication-templates/retention is pending
 // cross-FR review (other modules may claim these); left here as-is.
 // `allocation-rules` was claimed by FR-030 (M4 owns allocation_rules).
+// `dla-registry` is owned by M12 FR-113 /compliance/dla — claimed out, like allocation_rules/FR-030.
 export const MASTER_SLUGS = [
   'regions',
   'branches',
@@ -43,7 +44,6 @@ export const MASTER_SLUGS = [
   'retention-policies',
   'partners',
   'communication-templates',
-  'dla-registry',
 ] as const;
 
 export type MasterSlug = (typeof MASTER_SLUGS)[number];

@@ -36,7 +36,8 @@ describe('MasterResourceRegistry', () => {
 
   it('EXCLUDES every resource owned by another FR (route-ownership split)', () => {
     // FR-130 users/roles/teams; FR-040 products; FR-104 sla-policies;
-    // FR-140 webhooks/integrations; FR-003 break-glass.
+    // FR-140 webhooks/integrations; FR-003 break-glass;
+    // FR-113 M12 dla-registry (claimed out like allocation-rules/FR-030).
     const owned = [
       'users',
       'roles',
@@ -48,6 +49,7 @@ describe('MasterResourceRegistry', () => {
       'webhook-subscriptions',
       'integrations',
       'break-glass',
+      'dla-registry',
     ];
     for (const slug of owned) {
       expect(registry.has(slug)).toBe(false);
