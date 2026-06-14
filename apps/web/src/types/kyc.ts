@@ -25,3 +25,22 @@ export interface RunKycBody {
   consentId?: string;
   idempotencyKey?: string;
 }
+
+/** FR-072 — resolve-exception request body. */
+export interface ResolveKycExceptionBody {
+  resolutionCode: string;
+  remarks: string;
+  evidenceRef?: string | null;
+}
+
+/** FR-072 — resolve-exception response. `status` is the mapped enum value
+ * (`success`/`waived`) — there is no `resolved` value (AMBIGUITY FR-072-A5). */
+export interface ResolveKycExceptionData {
+  kycVerificationId: string;
+  leadId: string;
+  kycType: KycType;
+  status: KycCheckStatus;
+  exceptionType: KycException | null;
+  resolutionCode: string;
+  updatedAt: string;
+}

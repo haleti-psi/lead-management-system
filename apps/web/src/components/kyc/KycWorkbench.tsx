@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ConsentGateBanner } from '@/components/kyc/ConsentGateBanner';
 import { KycExceptionBanner } from '@/components/kyc/KycExceptionBanner';
 import { KycCheckRow } from '@/components/kyc/KycCheckRow';
+import { ExceptionResolutionModal } from '@/components/kyc/ExceptionResolutionModal';
 import { isApiClientError } from '@/lib/api';
 import { useCan } from '@/lib/auth/capabilities';
 import { useRunKyc } from '@/hooks/use-kyc';
@@ -29,12 +30,14 @@ const CHECKS: ReadonlyArray<{ type: KycType; label: string; enabled: boolean; re
 export function KycWorkbench({ leadId }: { leadId: string }): JSX.Element {
   const can = useCan();
   const canVerify = can('verify_doc');
+  const canResolve = can('kyc_signoff');
   const run = useRunKyc(leadId);
 
   const [results, setResults] = React.useState<Partial<Record<KycType, KycVerificationData>>>({});
   const [consentMissing, setConsentMissing] = React.useState(false);
   const [exceptionMessage, setExceptionMessage] = React.useState<string | null>(null);
   const [pendingType, setPendingType] = React.useState<KycType | null>(null);
+  const [resolveTarget, setResolveTarget] = React.useState<{ type: KycType; label: string } | null>(null);
 
   const hasException =
     exceptionMessage != null ||
@@ -106,11 +109,31 @@ export function KycWorkbench({ leadId }: { leadId: string }): JSX.Element {
               result={results[check.type]}
               isPending={run.isPending && pendingType === check.type}
               canVerify={canVerify}
+              canResolve={canResolve}
               onVerify={(panValue) => verify(check.type, panValue)}
+              onResolve={() => setResolveTarget({ type: check.type, label: check.label })}
             />
           ))}
         </ul>
       </CardContent>
+
+      {resolveTarget && results[resolveTarget.type] ? (
+        <ExceptionResolutionModal
+          open
+          leadId={leadId}
+          kycVerificationId={results[resolveTarget.type]!.kycVerificationId}
+          exceptionLabel={resolveTarget.label}
+          onClose={() => setResolveTarget(null)}
+          onResolved={(data) => {
+            const type = resolveTarget.type;
+            setResults((prev) => {
+              const current = prev[type];
+              return current ? { ...prev, [type]: { ...current, status: data.status } } : prev;
+            });
+            setExceptionMessage(null);
+          }}
+        />
+      ) : null}
     </Card>
   );
 }

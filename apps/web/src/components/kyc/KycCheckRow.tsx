@@ -6,6 +6,11 @@ import { MaskedField } from '@/components/ui/MaskedField';
 import { kycCheckStatusDisplay } from '@/components/kyc/status-display';
 import type { KycVerificationData } from '@/types/kyc';
 
+/** A check result is an open exception when the provider mismatched / was down. */
+function isOpenException(result?: KycVerificationData): boolean {
+  return result?.status === 'failed' || result?.status === 'exception';
+}
+
 /**
  * FR-071 §UI — one KYC check row (status chip + action). PAN is MVP-enabled with
  * an inline PAN entry; the Phase-1.5 types render disabled with a hint. The masked
@@ -19,7 +24,9 @@ export function KycCheckRow({
   result,
   isPending,
   canVerify,
+  canResolve,
   onVerify,
+  onResolve,
 }: {
   label: string;
   enabled: boolean;
@@ -27,7 +34,9 @@ export function KycCheckRow({
   result?: KycVerificationData;
   isPending: boolean;
   canVerify: boolean;
+  canResolve: boolean;
   onVerify: (panValue?: string) => void;
+  onResolve: () => void;
 }): JSX.Element {
   const [pan, setPan] = React.useState('');
   const display = result
@@ -55,6 +64,11 @@ export function KycCheckRow({
             className="h-9 w-36 uppercase"
             maxLength={10}
           />
+        ) : null}
+        {isOpenException(result) && canResolve ? (
+          <Button variant="secondary" size="sm" onClick={onResolve}>
+            Resolve
+          </Button>
         ) : null}
         <Button
           variant="outline"
