@@ -14,7 +14,8 @@
 - **B5** partner doc-upload → standard `POST /leads/{id}/documents`.
 
 **OPEN** — business/legal sign-off before go-live (config/seed, not code structure):
-- **D1–D4** scoring/duplicate seed values; **OD-06** consent-bootstrap legal basis; **OD-08/OD-17** vendor selection.
+- **OD-06** consent-bootstrap legal basis; **OD-08/OD-17** vendor selection; **D3** penalised-source values (placeholder seeded, factor inert).
+- *(D1/D2/D4 signed off 2026-06-12 — `docs/decisions/seed-config-decisions.md`: D1 seed via V3 migration at status='active'; D2 = `sla_config.hot_amount_threshold`, FR-031 amended; D4 = constants, shipped in FR-020. Score ownership: FR-011 owns `leads.score`, FR-031 owns `is_hot` only.)*
 
 ## A. Data-model (schema.sql) gaps — need a Flyway migration + BRD §5 amendment
 | # | Gap | Found in | Suggested resolution |
