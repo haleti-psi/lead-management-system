@@ -25,6 +25,41 @@ export interface InsertCommLogParams {
 export class CommunicationRepository {
   constructor(@Inject(KYSELY) private readonly db: KyselyDb) {}
 
+  /**
+   * FR-102 — Insert an internal activity log row (channel='in_app', status='sent').
+   * Used when an RM/BM logs a disposition on a call/visit task. The `recipient`
+   * is the acting user's user_id (internal actor; not a customer contact).
+   * No template_id or consent_basis for internal activity (per LLD §Assumption 2).
+   */
+  async insertInternal(
+    params: {
+      lead_id: string;
+      recipient: string;
+      created_by: string;
+    },
+    tx: DbTransaction,
+  ): Promise<CommLogRow> {
+    return tx
+      .insertInto('communication_logs')
+      .values({
+        communication_log_id: randomUUID(),
+        org_id: ORG_ID_DEFAULT,
+        lead_id: params.lead_id,
+        template_id: null,
+        channel: 'in_app',
+        recipient: params.recipient,
+        consent_basis: null,
+        status: 'sent',
+        provider_ref: null,
+        failure_reason: null,
+        sent_at: new Date(),
+        created_by: params.created_by,
+        updated_by: params.created_by,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+  }
+
   /** Insert a new communication_log row with status = 'queued'. */
   async insert(params: InsertCommLogParams, tx?: DbTransaction): Promise<CommLogRow> {
     const db: KyselyDb = tx ?? this.db;

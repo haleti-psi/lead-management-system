@@ -171,6 +171,45 @@ export class TaskRepository {
     return row ?? null;
   }
 
+  /**
+   * FR-102 — Fetch task + its lead's branch_id for scope resolution.
+   * Used by the ABAC scope resolver before the guard runs.
+   * Returns null when task does not exist in the org.
+   */
+  async findByIdWithLead(
+    taskId: string,
+  ): Promise<(TaskRow & { branch_id: string | null; lead_owner_id: string | null }) | null> {
+    const row = await this.db
+      .selectFrom('tasks')
+      .innerJoin('leads', 'leads.lead_id', 'tasks.lead_id')
+      .select([
+        'tasks.task_id',
+        'tasks.org_id',
+        'tasks.lead_id',
+        'tasks.type',
+        'tasks.status',
+        'tasks.owner_id',
+        'tasks.disposition',
+        'tasks.result_note',
+        'tasks.geo',
+        'tasks.next_action_at',
+        'tasks.priority',
+        'tasks.sla_policy_id',
+        'tasks.due_at',
+        'tasks.created_at',
+        'tasks.updated_at',
+        'tasks.created_by',
+        'tasks.updated_by',
+        'leads.branch_id',
+        'leads.owner_id as lead_owner_id',
+      ])
+      .where('tasks.task_id', '=', taskId)
+      .where('tasks.org_id', '=', ORG_ID_DEFAULT)
+      .limit(1)
+      .executeTakeFirst();
+    return row ?? null;
+  }
+
   /** Update a task row. Runs in the caller's UnitOfWork transaction. */
   async update(
     taskId: string,

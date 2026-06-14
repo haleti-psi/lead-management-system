@@ -30,24 +30,18 @@ import { DispatchCommunicationWorker } from './workers/dispatch-communication.wo
 
 /**
  * M11 Engagement — FR-104 SLA + FR-100 Tasks + FR-101 Communication Templates & Audit
- *                  + FR-103 Notification Preference Centre.
+ *                  + FR-102 Telephony & Visit Logging + FR-103 Notification Preference Centre.
  *
- * Extends the Wave-1 module with:
- *  - TemplateController / TemplateService / TemplateRepository (GET/POST /admin/templates)
- *  - CommunicationController / NotificationDispatchService / CommunicationRepository
- *    (POST /leads/{id}/communications — consent-gated send, 202 queued)
- *  - PreferenceController / PreferenceService / PreferenceRepository
- *    (PUT/GET /preferences — batch upsert + read for internal staff)
- *  - CustomerPreferenceController
- *    (PUT/GET /c/{token}/preferences — self-service via opaque link token)
- *  - NotificationChannelPort resolves from the global IntegrationCoreModule.
+ * FR-102 adds disposition logging to the PATCH /tasks/{id} endpoint:
+ *  - TaskService.logDisposition() writes task disposition + CommunicationLog +
+ *    audit + outbox event in one UnitOfWork transaction.
+ *  - Post-commit CTI sync via TelephonyPort (Phase 1.5; IntegrationGateway).
  *
  * LeadService resolves from the global @Global CaptureModule — do NOT re-provide.
+ * IntegrationGateway, TELEPHONY_PORT, OutboxService resolve from global modules.
  * NOTIFICATION_CHANNEL_PORT resolves from the global IntegrationCoreModule — do NOT re-provide.
  *
- * CUSTOMER_LINK_PORT: FR-060 seam (same adapter as ComplianceModule). When FR-060
- * lands, rebind `UnavailableCustomerLinkAdapter` to the real link service here
- * (one-line change, same as compliance.module.ts).
+ * CUSTOMER_LINK_PORT: FR-060 seam (same adapter as ComplianceModule).
  */
 @Module({
   controllers: [
