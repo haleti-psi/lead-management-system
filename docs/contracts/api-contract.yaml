@@ -52,7 +52,7 @@ x-fr-coverage:
   FR-104: "GET/POST /admin/sla-policies"
   FR-110: "GET/POST /leads/{id}/consents"
   FR-111: "cross-cutting: data minimisation in services + data_sharing_logs (consents, eligibility, handoff); GET /leads/{id}/sharing-logs"
-  FR-112: "GET/POST /data-rights, PATCH /data-rights/{id}"
+  FR-112: "GET/POST /data-rights (DPO staff), PATCH /data-rights/{id}, POST /c/{token}/data-rights (customer)"
   FR-113: "GET/POST/PATCH /compliance/dla"
   FR-114: "GET/POST /grievances, PATCH /grievances/{id}"
   FR-115: "GET/POST /admin/retention-policies, POST /admin/retention/run"
@@ -200,6 +200,8 @@ paths:
     post: { summary: "Customer requests callback slot", operationId: customerCallback, tags: [SelfService], security: [], x-frs: [FR-062], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "201": { $ref: '#/components/responses/Created' } } }
   /c/{token}/grievance:
     post: { summary: "Customer raises grievance", operationId: customerGrievance, tags: [SelfService], security: [], x-frs: [FR-061], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "201": { $ref: '#/components/responses/Created' } } }
+  /c/{token}/data-rights:
+    post: { summary: "Customer raises data-rights request", operationId: customerRaiseDataRights, tags: [Compliance], security: [], x-frs: [FR-112], parameters: [{ $ref: '#/components/parameters/Token' }], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' } } }
 
   # ---------- M8 KYC & Documents ----------
   /leads/{id}/documents:

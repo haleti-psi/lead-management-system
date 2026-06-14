@@ -5,7 +5,12 @@ import { ConsentController } from './consent.controller';
 import { ConsentRepository } from './consent.repository';
 import { ConsentService } from './consent.service';
 import { CustomerConsentController } from './customer-consent.controller';
+import { CustomerDataRightsController } from './customer-data-rights.controller';
 import { DataMinimisationService } from './data-minimisation.service';
+import { DataRightsController } from './data-rights.controller';
+import { DataRightsIdempotencyService } from './data-rights-idempotency.service';
+import { DataRightsRepository } from './data-rights.repository';
+import { DataRightsService } from './data-rights.service';
 import { DataSharingLogsController } from './data-sharing-logs.controller';
 import { DataSharingLogsRepository } from './data-sharing-logs.repository';
 import { DataSharingLogsService } from './data-sharing-logs.service';
@@ -24,7 +29,8 @@ import {
 
 /**
  * M12 Compliance — FR-110 (purpose-wise consent ledger) + FR-111 (data
- * minimisation & resource-access controls) + FR-114 (grievance workflow).
+ * minimisation & resource-access controls) + FR-112 (data-principal rights
+ * workflow) + FR-114 (grievance workflow).
  *
  * Owns `consent_records` (append-only), `data_sharing_logs` (append-only),
  * and `grievances` (full lifecycle). Depends only on the global core modules
@@ -59,6 +65,8 @@ import {
   controllers: [
     ConsentController,
     CustomerConsentController,
+    CustomerDataRightsController,
+    DataRightsController,
     DataSharingLogsController,
     GrievanceController,
     GrievanceEscalationJob,
@@ -75,6 +83,11 @@ import {
     DataSharingLogsService,
     DataSharingLogsRepository,
     DataMinimisationService,
+
+    // FR-112 — data-principal rights workflow
+    DataRightsService,
+    DataRightsRepository,
+    DataRightsIdempotencyService,
 
     // FR-114 — grievance
     GrievanceService,
