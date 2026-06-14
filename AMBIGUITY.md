@@ -873,3 +873,89 @@ data-sharing-specific value. LLD Ambiguities #4 notes this explicitly.
 with `entity_type: 'data_sharing_logs'` as a proxy. When a `data_share` (or
 `data_share_logged`) value is added via Flyway migration + enum update, the service
 should be updated to use it.
+
+---
+
+# AMBIGUITY — FR-103 (Notification Preference & Opt-Out Centre)
+
+## FR-103-A1: Customer-link preference endpoints not in auth-matrix.json or api-contract.yaml
+
+**The gap (precise):** `PUT /api/v1/c/{token}/preferences` and
+`GET /api/v1/c/{token}/preferences` were absent from both `auth-matrix.json`
+`public_endpoints` and `api-contract.yaml` at the start of FR-103 coding.
+The LLD Ambiguity 1 called this out explicitly.
+
+**Resolution applied:** Both paths were added to:
+- `docs/contracts/api-contract.yaml` (operationIds: `putCustomerPreferences`,
+  `getCustomerPreferences`; `security: []`; `x-frs: [FR-103]`).
+- `docs/contracts/auth-matrix.json` `public_endpoints` list.
+- `endpoint_auth_notes` (CustomerLinkPort validation details).
+
+The FR-103 coverage map line in `api-contract.yaml` was updated to include
+all four endpoints.
+
+**Needed action (Dev 1 / contracts owner):** Gate B re-sign or tracked amendment
+noting these additions; ratify in contracts review.
+
+## FR-103-A2: audit_action enum has no pref_change value
+
+**The gap (precise):** The `audit_action` enum (schema.sql / `@lms/shared`
+`AuditAction`) has no preference-specific value. LLD Ambiguity 3 notes this.
+
+**Resolution applied (enum rule wins, per CORRECTIONS.md):**
+`PreferenceService.upsertBatch` appends `action: AuditAction.LEAD_UPDATE`
+with `entity_type: 'notification_preferences'` and `detail.op: 'pref_change'`.
+Consistent with the FR-050, FR-100, FR-111 precedents.
+
+**Needed action (Dev 1):** Add `pref_change` to `audit_action` in schema.sql +
+Flyway migration + `@lms/shared` `AuditAction`, then replace `LEAD_UPDATE` +
+`detail.op` with the dedicated enum value in `preference.service.ts`.
+
+## FR-103-A3: auth-matrix resource_governance marks notification_preferences as system_managed
+
+**The gap (precise):** LLD Ambiguity 4 notes that `notification_preferences`
+appears in the `system_managed` resource governance bucket. The BRD grants
+write access to RM/BM/CUSTOMER via `customer_comm` capability.
+
+**Resolution applied:** `PreferenceService` writes under the `customer_comm`
+capability (enforced by `@Requires(Capability.CUSTOMER_COMM, ...)` on the
+controller). The resource_governance entry was not changed (it is contracts-owned).
+
+**Needed action (Dev 1 / contracts owner):** Update `resource_governance` for
+`notification_preferences` to reflect M11's `PreferenceService` as the writer
+and `customer_comm` as the governing capability.
+
+## FR-103-A4: CustomerLinkPort seam — customer-link preference routes blocked until FR-060
+
+**The gap:** `PUT/GET /c/{token}/preferences` return NOT_FOUND for every request
+because `UnavailableCustomerLinkAdapter` resolves no token until FR-060 lands.
+
+**What was built:** `CustomerPreferenceController` is fully implemented behind
+the port seam. `EngagementModule` provides its own `UnavailableCustomerLinkAdapter`
++ `CUSTOMER_LINK_PORT` binding (same pattern as `ComplianceModule`). When FR-060
+is built, rebind the port in BOTH `compliance.module.ts` and `engagement.module.ts`.
+
+## FR-103-A5: isAllowed seam for FR-101 adoption
+
+**Current state:** `NotificationDispatchService` (FR-101) queries
+`notification_preferences` directly with a raw Kysely query and applies
+hardcoded defaults (marketing = block, transactional = allow).
+
+**Seam provided:** `PreferenceService.isAllowed(subjectRef, channel, purpose, orgId)`
+is exported from `EngagementModule`. It encapsulates the same default logic
+(marketing = false, others = true for absent rows) and will return the persisted
+value when a preference row exists.
+
+**Needed action (next FR-101 touch):** Replace the inline Kysely query in
+`NotificationDispatchService.send` (step 5b, lines ~119–133) with:
+```ts
+const allowed = await this.preferenceService.isAllowed(
+  customerProfileId,  // or leadId for backwards-compat
+  dto.channel,
+  dto.consent_basis,
+  orgId,
+);
+if (!allowed) throw new DomainException('FORBIDDEN', '...', { detail: { reason: 'OPT_OUT' } });
+```
+Inject `PreferenceService` into `NotificationDispatchService` and update
+`engagement.module.ts` provider list accordingly.
