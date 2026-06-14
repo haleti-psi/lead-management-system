@@ -289,3 +289,50 @@ would re-implement shared components, violating shared-utilities reuse).
 3. bulk-action secondary denials (disallowed predicate type / target-owner out of scope) return FORBIDDEN without abac_deny audit — add audits (primary capability denial IS guard-audited).
 4. (pre-existing) LeadService.bulkReassign sets updated_by/audit actor_id to the NEW OWNER (pinned signature has no actor param) — same fix as the FR-010 actorId item.
 5. FR-050-tests INV-3 query (action='bulk_action') must be amended to the detail.sub_action mapping.
+
+---
+
+# AMBIGUITY — FR-071 (KYC Verification Orchestration)
+
+*All resolved in-code with the narrowest spec-consistent choice; listed for Dev-1/contract write-back (CLAUDE.md §9). The LLD pseudocode pre-dates the real FR-140 IntegrationGateway API.*
+
+## FR-071-1. Gateway does not return the `integration_log_id`
+**Gap:** LLD §Step 5a sets `kyc_verifications.integration_log_id = providerResult.integrationLogId`, but `IntegrationGateway.call` returns only `{ httpStatus, body, idempotent }` (no log id). INV-4 requires the id on every non-manual row.
+**Resolution applied:** the service pre-creates the `integration_logs` row via `IntegrationLogRepository.createLog(...)`, passes its id as `GatewayOptions.integrationLogId` (the gateway reuses it), and stores it on `kyc_verifications`. Clean and INV-4/INV-8-safe.
+
+## FR-071-2. `KycMockAdapter` returns a generic body (no KYC outcome)
+**Gap:** the bound mock returns `{ mock:'kyc', integration }` with only `status`/`fail` directives — it cannot express a business **mismatch** (TC-002). The real PAN/CKYC/… adapters are Phase-1.5/unbuilt (LLD Assumption 2).
+**Resolution applied:** KYC outcome interpretation lives in `kyc-provider.ts` (per kyc.port.ts: the calling module masks/interprets). A 2xx with no explicit `body.outcome` is treated as a successful `valid` check; `body.outcome:'mismatch'` → failed + `exceptionType`. Unit tests mock the gateway to drive both paths.
+**Needed decision:** extend `KycMockAdapter` with an `outcome` directive (and a KYC-shaped body) so the deferred integration-test wave can exercise mismatch/exception over real HTTP.
+
+## FR-071-3. `pan_token` / `aadhaar_ref_token` / `ckyc_id` source
+**Gap:** the LLD reads these off `providerResult.*`, but the mock returns none, and raw values must never be persisted (BRD §2.4 / INV-1/INV-2).
+**Resolution applied:** the service generates OPAQUE, non-reversible surrogate tokens (`pan_…`, `aadhaar_…`) and a masked PAN (`ABCDE****F`); the raw PAN/Aadhaar are sent to the provider but never stored. A real provider/vault returns its own token — swap in the adapter.
+
+## FR-071-4. TC-071-025 (optimistic-lock CONFLICT on `setKycStatus`) is unsatisfiable
+**Gap:** the test expects `LeadService.setKycStatus` to fail on a stale `expectedVersion`, but the frozen signature is `setKycStatus(leadId, status, tx)` with NO version bump (volatile derived field, per FR-070 / FR-110-4). `leads.version` is never consulted for kyc_status.
+**Resolution applied:** no optimistic lock on kyc_status (matches the frozen mutator). TC-071-025 omitted at the unit tier.
+**Needed decision:** strike TC-071-025 from FR-071-tests, or add an `expectedVersion` overload to `setKycStatus` (cross-FR contract change).
+
+## FR-071-5. Provider-down 503 envelope cannot carry `data`
+**Gap:** LLD §Response shows the 503 carrying BOTH `data.kycVerificationId` and `error`; the standard `AllExceptionsFilter` sets `data:null` on any error.
+**Resolution applied:** the exception `kyc_verifications` row is persisted (FR-072 resolves it) and the service throws `UPSTREAM_UNAVAILABLE` (503, standard envelope). The id isn't surfaced in the 503 body; the UI reloads the KYC list to show the exception row.
+
+## FR-071-6. `IDEMPOTENT_REPLAY` reason has no success-envelope channel
+A success replay returns the original verification (200, identical `kycVerificationId`); the standard success envelope `{data,meta,error}` has no `detail.reason` slot, so the `IDEMPOTENT_REPLAY` marker is omitted (informational only).
+
+## FR-071-7. `data_sharing_logs.consent_id` uses the resolved active consent
+To guarantee INV-5 referential integrity, the log records the resolved active granted `kyc` consent id (not the raw body `consentId`). TC-022 holds because the test's body `consentId` is the active one. **Needed decision:** ratify, or specify that the body `consentId` must equal the active consent.
+
+## FR-071-8. Phase-1.5 types run through the mock
+ckyc/digilocker/aadhaar_otp/vcip are Phase-1.5; only `KycMockAdapter` is bound, so they currently succeed via the mock (LLD Assumption 5's "VcipAdapter returns phase-not-enabled" is an unbuilt-adapter behaviour). The web UI gates these as disabled until enabled.
+
+## FR-071-9. `consentId` made optional (server resolves the active consent)
+**Gap:** the LLD/DTO mark `consentId` required for all types, but the service never reads it — the `kyc` consent gate and `data_sharing_logs.consent_id` use the server-resolved active granted consent. The web KYC workbench has no way to obtain a consent id (the consent ledger GET is FR-110's domain and isn't wired here).
+**Resolution applied:** `consentId` is OPTIONAL in the body (validated as a UUID when present); the server resolves the active consent authoritatively. Decouples the UI from a consent-id lookup with no behavioural change (TC-022 still holds — the resolved id equals the active one).
+**Needed decision:** ratify optional `consentId` in FR-071.md/api-contract, or wire an FR-110 "active kyc consent" read the UI can call.
+
+## FR-071-10. No GET for the KYC verification list (web workbench)
+**Gap:** the LLD UI tree's `KycCheckList` "lists all kyc_verifications for this lead", but FR-071 contracts only `POST /leads/{id}/kyc/{type}` — there is no GET.
+**Resolution applied:** the workbench renders the fixed KYC check types (PAN enabled; ckyc/digilocker/aadhaar/vcip disabled — Phase 1.5) and reflects each check's result from the run-mutation response; the consent gate surfaces reactively on `403 CONSENT_MISSING`. The persisted-list view awaits a contracted GET (read-model/FR-072 concern).
+**Needed decision:** add `GET /leads/{id}/kyc` to the contract if a list view is required.

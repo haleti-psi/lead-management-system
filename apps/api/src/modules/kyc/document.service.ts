@@ -680,9 +680,19 @@ function isApplicantScope(value: unknown): value is ApplicantScope {
   return typeof value === 'string' && Object.values(ApplicantScope).includes(value as ApplicantScope);
 }
 
+/** Minimal lead shape the ABAC scope check reads — so non-document callers
+ * (FR-071 KYC) can reuse {@link leadInScope} without the checklist context. */
+export interface ScopableLead {
+  lead_id: string;
+  org_id: string;
+  owner_id: string | null;
+  branch_id: string | null;
+  partner_id: string | null;
+}
+
 /** Lead-in-scope per the AbacGuard-resolved predicate (FR-002 contract). */
 export function leadInScope(
-  lead: LeadChecklistContext,
+  lead: ScopableLead,
   predicate: ScopePredicate | undefined,
 ): boolean {
   if (!predicate) {

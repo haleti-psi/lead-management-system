@@ -21,3 +21,19 @@ export const DOCUMENTS_LIST_LIMIT = 100;
 
 /** GCS object-key prefix for lead documents. */
 export const DOCUMENT_STORAGE_PREFIX = 'leads';
+
+// ───────────────────────────────────────────── FR-071 KYC orchestration ──
+
+/** ABAC resource type for the KYC verification endpoint (auth-matrix `resources`). */
+export const KYC_RESOURCE_TYPE = 'kyc_verifications';
+
+/**
+ * Roles permitted to run KYC orchestration (LLD §Auth — KYC/BM only). RM holds
+ * `verify_doc` scope O for preliminary document checks but is excluded from KYC
+ * provider orchestration at the capability-condition level.
+ */
+export const KYC_ORCHESTRATOR_ROLES: ReadonlySet<string> = new Set(['KYC', 'BM']);
+
+/** Hard LIMIT for the per-lead kyc_verifications read used to derive kyc_status
+ * (LLD §computeLeadKycStatus / Assumption 4; ≤ 100, bounded by 6 check types). */
+export const KYC_VERIFICATIONS_LIMIT = 100;
