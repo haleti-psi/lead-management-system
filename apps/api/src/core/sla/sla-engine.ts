@@ -151,6 +151,7 @@ export class SlaEngine {
   async setGrievanceDue(
     grievance: {
       grievance_id: string;
+      org_id: string;
       branch_id?: string | null;
       region_id?: string | null;
       actor_id: string;
@@ -167,7 +168,12 @@ export class SlaEngine {
     );
     if (!computed) return;
     await this.requireGrievanceWriter().setSlaDueAt(
-      { grievanceId: grievance.grievance_id, dueAt: computed.dueAt, actorId: grievance.actor_id },
+      {
+        grievanceId: grievance.grievance_id,
+        orgId: grievance.org_id,
+        dueAt: computed.dueAt,
+        actorId: grievance.actor_id,
+      },
       tx,
     );
   }

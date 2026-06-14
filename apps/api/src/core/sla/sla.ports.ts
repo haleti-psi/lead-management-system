@@ -69,7 +69,7 @@ export interface KycSlaWriterPort {
 /** Narrow write surface over `grievances` (owner: M12). */
 export interface GrievanceSlaWriterPort {
   setSlaDueAt(
-    args: { grievanceId: string; dueAt: Date; actorId: string },
+    args: { grievanceId: string; orgId: string; dueAt: Date; actorId: string },
     tx: DbTransaction,
   ): Promise<void>;
 }

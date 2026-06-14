@@ -76,12 +76,14 @@
     "GET /api/v1/ready"
   ],
   "service_to_service_only": [
-    "POST /api/v1/los/webhooks/status"
+    "POST /api/v1/los/webhooks/status",
+    "POST /api/v1/internal/jobs/grievance-escalation"
   ],
   "endpoint_auth_notes": {
     "/api/v1/public/leads": "captcha + per-IP rate limit",
     "/api/v1/c/{token}/*": "opaque token + OTP step-up (CustomerLinkGuard); scoped to one lead; never a JWT",
-    "/api/v1/los/webhooks/status": "HMAC-signature verified (no user session)"
+    "/api/v1/los/webhooks/status": "HMAC-signature verified (no user session)",
+    "/api/v1/internal/jobs/grievance-escalation": "Cloud Tasks OIDC service-account token verified at infra layer"
   },
   "http_status_rules": {
     "unauthenticated": 401,
