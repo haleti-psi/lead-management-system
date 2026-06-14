@@ -21,6 +21,8 @@ import type { KyselyDb } from '../../core/db';
  * A fully-enriched lead context (T01 fixture).
  * requested_amount is set BELOW the default high_amount threshold (500_000) so
  * the high_amount factor does NOT fire — matching FR-011-tests.md T01 spec value 65.
+ * FR-031 hot-rule fields default to safe non-firing values so FR-011 score
+ * assertions remain correct.
  */
 const FULL_CONTEXT = {
   lead_id: 'lead-001',
@@ -28,6 +30,8 @@ const FULL_CONTEXT = {
   product_config_id: 'pc-001',
   pin_code: '411001',
   requested_amount: 200_000,
+  priority: 'normal',
+  is_hot: false,
   pan_token: 'BBBPK1234C',
   mobile: '9876543210',
   preferred_language: 'Hindi',
@@ -43,6 +47,11 @@ const FULL_CONTEXT = {
     asset_type: 'new',
     customer_type: 'individual',
   },
+  // FR-031 hot-rule auxiliary fields — safe defaults that do not fire hot rules
+  is_existing_customer: null,
+  customer_doc_count: 0,
+  has_positive_eligibility: false,
+  has_callback_task: false,
 };
 
 function makeRepo(

@@ -8,13 +8,14 @@ import {
   ERROR_CODES,
   EventCode,
   LeadStage,
-  ScoreReasonCode,
   type AllocationMethod,
   type ConsentStatus,
   type CreationChannel,
+  type HotReasonCode,
   type KycStatus,
   type Priority,
   type ProductCode,
+  type ScoreReasonCode,
 } from '@lms/shared';
 
 import { AuditAppender } from '../../core/audit';
@@ -641,9 +642,62 @@ export class LeadService {
     return Promise.reject(notYetWired('transitionStage', 'FR-052'));
   }
 
-  /** FR-031 — hot-lead flag (volatile field). */
-  setHotFlag(_leadId: string, _isHot: boolean, _reasons: unknown, _tx: DbTransaction): Promise<void> {
-    return Promise.reject(notYetWired('setHotFlag', 'FR-031'));
+  /**
+   * FR-031 — hot-lead flag (volatile system field, §11.2). This is a side-effect
+   * write from `ScoringService.evaluateHotRules()` — it does NOT use
+   * `expectedVersion` and does NOT bump `version`. This is intentional: concurrent
+   * RM edits and a background hot-rule re-evaluation must never raise false 409s.
+   *
+   * - Updates `leads.is_hot` only (FR-011 owns `score`/`score_reasons`).
+   * - Emits a `lead_update` audit entry in the same tx.
+   * - Zero rows (lead absent/soft-deleted) → NOT_FOUND, never a silent no-op.
+   */
+  async setHotFlag(
+    leadId: string,
+    isHot: boolean,
+    reasons: HotReasonCode[],
+    tx: DbTransaction,
+  ): Promise<void> {
+    // Read org_id for the audit row — no PII, single parameterised read.
+    // executeTakeFirstOrThrow guarantees lead is non-null; zero rows = NOT_FOUND.
+    const lead = await tx
+      .selectFrom('leads')
+      .select(['org_id'])
+      .where('lead_id', '=', leadId)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+
+    if (!lead) {
+      throw new DomainException(ERROR_CODES.NOT_FOUND);
+    }
+
+    const result = await tx
+      .updateTable('leads')
+      .set({
+        is_hot: isHot,
+        updated_at: new Date(),
+        updated_by: SYSTEM_ACTOR_ID,
+      })
+      .where('lead_id', '=', leadId)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+
+    if (result.numUpdatedRows === 0n) {
+      throw new DomainException(ERROR_CODES.NOT_FOUND);
+    }
+
+    await this.audit.append(
+      {
+        action: AuditAction.LEAD_UPDATE,
+        entity_type: LEADS_RESOURCE_TYPE,
+        entity_id: leadId,
+        actor_id: SYSTEM_ACTOR_ID,
+        org_id: lead.org_id,
+        lead_id: leadId,
+        detail: { field: 'is_hot', is_hot: isHot, reason_codes: reasons },
+      },
+      tx,
+    );
   }
 
   /** FR-070/072 — derived `kyc_status` summary. */
