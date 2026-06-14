@@ -5,6 +5,11 @@ import { ConsentController } from './consent.controller';
 import { ConsentRepository } from './consent.repository';
 import { ConsentService } from './consent.service';
 import { CustomerConsentController } from './customer-consent.controller';
+import { DataMinimisationService } from './data-minimisation.service';
+import { DataSharingLogsController } from './data-sharing-logs.controller';
+import { DataSharingLogsRepository } from './data-sharing-logs.repository';
+import { DataSharingLogsService } from './data-sharing-logs.service';
+import { DataSharingService } from './data-sharing.service';
 import { GrievanceCodeGenerator } from './code-generator-grievance.service';
 import { GrievanceController } from './grievance.controller';
 import { GrievanceEscalationJob } from './grievance-escalation.job';
@@ -18,11 +23,22 @@ import {
 } from './ports/customer-link.port';
 
 /**
- * M12 Compliance — FR-110 (purpose-wise consent ledger) + FR-114 (grievance workflow).
+ * M12 Compliance — FR-110 (purpose-wise consent ledger) + FR-111 (data
+ * minimisation & resource-access controls) + FR-114 (grievance workflow).
  *
- * Owns `consent_records` (append-only) and `grievances` (full lifecycle).
- * Depends only on the global core modules (DB/UnitOfWork, audit, outbox,
- * auth-core, sla, logging) plus the @Global CaptureModule's `LeadService`.
+ * Owns `consent_records` (append-only), `data_sharing_logs` (append-only),
+ * and `grievances` (full lifecycle). Depends only on the global core modules
+ * (DB/UnitOfWork, audit, outbox, auth-core, sla, logging) plus the @Global
+ * CaptureModule's `LeadService`.
+ *
+ * **FR-111 reuse seams:**
+ * - `DataSharingService.logShare(input, tx)` is exported for FR-080
+ *   (EligibilityService), FR-081 (HandoffService), and FR-071 (KycService) to
+ *   call inside their own UnitOfWork transactions. Each consuming FR must
+ *   inject `DataSharingService` from this module (import ComplianceModule).
+ * - `DataMinimisationService.assertAllowed(productConfigId, fields)` is
+ *   exported for `LeadService` (FR-010) and document-capture services to call
+ *   before persisting custom field values.
  *
  * **FR-114 reuse seam for FR-061:** `GrievanceService.create(dto, ctx)` is
  * exported and will be called by the self-service module (M7/FR-061) with
@@ -36,13 +52,14 @@ import {
  * `CUSTOMER_LINK_PORT` is the FR-060 seam: every `/c/{token}/consent` request
  * → 404 until FR-060 rebinds the port in this module.
  *
- * `ConsentService` and `GrievanceService` are exported for consumers
- * (stage-guard hand-off checks, FR-061 customer intake).
+ * `ConsentService`, `GrievanceService`, `DataSharingService`, and
+ * `DataMinimisationService` are exported for consumers.
  */
 @Module({
   controllers: [
     ConsentController,
     CustomerConsentController,
+    DataSharingLogsController,
     GrievanceController,
     GrievanceEscalationJob,
   ],
@@ -52,6 +69,12 @@ import {
     ConsentRepository,
     UnavailableCustomerLinkAdapter,
     { provide: CUSTOMER_LINK_PORT, useExisting: UnavailableCustomerLinkAdapter },
+
+    // FR-111 — data minimisation & data-sharing audit
+    DataSharingService,
+    DataSharingLogsService,
+    DataSharingLogsRepository,
+    DataMinimisationService,
 
     // FR-114 — grievance
     GrievanceService,
@@ -64,6 +87,13 @@ import {
       useExisting: GrievanceSlaWriterAdapter,
     },
   ],
-  exports: [ConsentService, ConsentRepository, GrievanceService],
+  exports: [
+    ConsentService,
+    ConsentRepository,
+    GrievanceService,
+    // FR-111 exports — consumed by FR-010, FR-071, FR-080, FR-081
+    DataSharingService,
+    DataMinimisationService,
+  ],
 })
 export class ComplianceModule {}

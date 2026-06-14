@@ -748,3 +748,54 @@ above, not an oversight.
    ```
 3. Update `T34` in `grievance.service.spec.ts` to assert `outbox.emit` is called
    once per escalated grievance with `event_code: EventCode.GRIEVANCE_ESCALATED`.
+
+---
+
+# AMBIGUITY — FR-111 (Data Minimisation & Resource-Access Controls)
+
+## FR-111-A1: `GET /leads/{id}/sharing-logs` not in `api-contract.yaml`
+
+**The gap (precise):** `api-contract.yaml` marks FR-111 as `"cross-cutting"` with no
+dedicated path entry. The LLD infers `GET /api/v1/leads/{id}/sharing-logs` from
+the resource name and AC-5 (DPO oversight).
+
+**Resolution applied (review fix):** Path entry added to `api-contract.yaml` under
+`# M12 Compliance` with `operationId: listLeadSharingLogs`, `tags: [Compliance]`,
+`x-frs: [FR-111]`, parameters PathId + Page + Limit, responses 200/403/404.
+The x-fr-coverage map line for FR-111 is updated to reference the endpoint.
+
+## FR-111-A2: `ProductFieldSchema.allowedFields` shape not defined in schema.sql
+
+**The gap (precise):** `product_configs.field_schema` is JSONB; its internal structure
+(`allowedFields: string[]`) is not defined in `schema.sql` — it is an FR-040 (M5)
+concern. `DataMinimisationService` reads `field_schema.allowedFields as string[]` per
+the LLD Ambiguities #2.
+
+**Resolution applied (review fix — safe permissive default):** When
+`field_schema` is null OR `allowedFields` is absent or empty, `assertAllowed`
+now returns immediately (allow all) instead of rejecting every field. The
+minimisation guard is a no-op until FR-040 populates `allowedFields` on at
+least one product config. Once populated, reject-with-VALIDATION_ERROR behaviour
+is unchanged. Wire `assertAllowed` into `LeadService` only after FR-040
+confirms the JSONB shape and populates at least one product's `allowedFields`.
+If FR-040 uses a different property name, update the `ProductFieldSchema` interface
+in `data-minimisation.service.ts`.
+
+## FR-111-A3: Callers of `DataSharingService.logShare` not yet implemented
+
+**The gap:** FR-080 (EligibilityService), FR-081 (HandoffService), FR-071 (KycService)
+must inject `DataSharingService` and call `logShare` inside their own UoW transactions.
+These FRs are Wave 3/4.
+
+**Resolution applied:** `DataSharingService` is exported from `ComplianceModule` with
+the full contract documented in the module JSDoc. Consuming FRs import `ComplianceModule`.
+
+## FR-111-A4: `audit_action` enum has no `data_share` value
+
+**The gap:** The `audit_action` enum (schema.sql / `@lms/shared` `AuditAction`) has no
+data-sharing-specific value. LLD Ambiguities #4 notes this explicitly.
+
+**Resolution applied:** `DataSharingService.logShare` appends `AuditAction.LEAD_UPDATE`
+with `entity_type: 'data_sharing_logs'` as a proxy. When a `data_share` (or
+`data_share_logged`) value is added via Flyway migration + enum update, the service
+should be updated to use it.
