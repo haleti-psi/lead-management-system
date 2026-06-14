@@ -30,6 +30,7 @@ import { IdentityModule } from './modules/identity/identity.module';
 import { IntegrationModule } from './modules/integration/integration.module';
 import { KycModule } from './modules/kyc/kyc.module';
 import { ProductConfigModule } from './modules/product-config/product-config.module';
+import { PartnerModule } from './modules/partner/partner.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { SelfServiceModule } from './modules/self-service/self-service.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
@@ -115,6 +116,8 @@ import { HealthController } from './health.controller';
     // FR-050 (M6 workspace). Read-only lead list + saved views + the bulk-action
     // gate; `leads` mutations delegate to the @Global CaptureModule's LeadService.
     WorkspaceModule,
+    // FR-090 (M10 partner). Partner master CRUD; sole writer of `partners`.
+    PartnerModule,
   ],
   controllers: [HealthController],
   providers: [

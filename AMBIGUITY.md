@@ -449,3 +449,27 @@ The LLD marks `Idempotency-Key` required on the callback POST; FR-062 treats it 
 
 ## FR-062-A6. No external GET-status caching / LOS status label
 `los_status_label` is always `null` (LOS status surfacing is M9/FR-08x). The status view is a live read; no stage transition occurs.
+
+---
+
+# AMBIGUITY — FR-090 (Partner Master & Onboarding Metadata)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9). LLD Ambiguities 1–3 carried with what was applied.*
+
+## FR-090-A1. (LLD Ambiguity 1) SM has no `configuration` capability → denied
+The BRD lists SM as an allowed role but `auth-matrix.json` does not grant SM the `configuration` capability. **Resolution applied (contracts win):** SM is denied (403). Add SM to the `configuration` capability_matrix if SM access is intended. *Observation (Dev-1):* the matrix ALSO grants `configuration` to KYC/DPO, so they can reach partner endpoints — broader than the LLD's ADMIN/HEAD/BM table; the implementation follows the machine-readable matrix. Reconcile the LLD or the matrix.
+
+## FR-090-A2. `audit_action` has no `partner_*` value → `config_change`
+Partner create/update/status-change audits use `action='config_change'` with `entity_type='partner'` and a `detail.event` (`partner_created`/`partner_updated`/`partner_status_changed`) discriminator. Add `partner_*` audit_action values (schema + enum + Flyway) and switch, or ratify the mapping.
+
+## FR-090-A3. `EventCode` has no `PARTNER_CREATED` → outbox omitted
+The LLD emits `PARTNER_CREATED` on create, but it isn't an `EventCode` value and has no consumer in scope (FR-091 checks `partners.status` directly at submission). **Resolution applied:** the outbox emit is omitted (the audit log records the create). Add `PARTNER_CREATED` if a partner-created event is needed.
+
+## FR-090-A4. (LLD Ambiguity 2) BM list scope = in-branch + org-wide
+BM list/get filters `branch_id = userBranch OR branch_id IS NULL` (org-wide partners visible to all BMs). Out-of-branch partners → NOT_FOUND (existence hidden). Narrow to in-branch-only if intended.
+
+## FR-090-A5. (LLD Ambiguity 3) reactivation needs no reason
+`statusReason` is required only for `suspended`/`expired` (not for `suspended → active` reactivation). Ratify or extend.
+
+## FR-090-A6. Status-change restricted to ADMIN/HEAD; query grammar
+Suspend/expire requires role ∈ {ADMIN, HEAD} (BM may edit metadata for in-scope partners but not change status) → FORBIDDEN otherwise. Query grammar follows the FR-050 codebase convention (`filter[status]`/`filter[type]` object, `sort=field:dir`) rather than the LLD's `sort=-created_at`; `limit` clamps to 100. `contact_mobile` is masked (`98xxxxxx10`) in list responses and in audit detail.
