@@ -28,7 +28,7 @@
     "HEAD":    { "create_lead": "A", "view_lead": "A", "allocate": "A", "bulk_action": "A", "reports": "A", "export": "A", "consent_ledger": "A", "audit_trail": "A", "configuration": "A" },
     "KYC":     { "view_lead": "B", "edit_lead": "B", "upload_doc": "B", "verify_doc": "B", "kyc_signoff": "B", "move_stage": "B", "hand_off": "B", "bulk_action": "B", "customer_comm": "B", "reports": "B", "export": "B", "consent_ledger": "B", "audit_trail": "B", "configuration": "B" },
     "DPO":     { "view_lead": "M", "kyc_signoff": "M", "hand_off": "M", "reports": "M", "export": "M", "consent_ledger": "A", "audit_trail": "A", "configuration": "B", "break_glass": "M" },
-    "PARTNER": { "create_lead": "P", "view_lead": "P", "edit_lead": "P", "upload_doc": "P", "move_stage": "P", "customer_comm": "P", "reports": "P", "export": "P", "consent_ledger": "P", "audit_trail": "P" },
+    "PARTNER": { "create_lead": "P", "view_lead": "P", "edit_lead": "P", "upload_doc": "P", "customer_comm": "P", "reports": "P", "export": "P", "consent_ledger": "P", "audit_trail": "P" },
     "ADMIN":   { "user_mgmt": "A", "configuration": "A", "audit_trail": "A", "export": "A", "consent_ledger": "A", "customer_comm": "A", "break_glass": "A" },
     "CUSTOMER":{ "create_lead": "C", "view_lead": "C", "edit_lead": "C", "upload_doc": "C", "customer_comm": "C", "consent_ledger": "C", "audit_trail": "C", "export": "C" }
   },

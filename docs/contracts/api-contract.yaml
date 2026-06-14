@@ -426,7 +426,7 @@ components:
               notice_version: { type: string }
     StageChange:
       type: object
-      required: [to]
+      required: [to, expected_version]
       properties:
         to: { type: string }
         reason: { type: string }

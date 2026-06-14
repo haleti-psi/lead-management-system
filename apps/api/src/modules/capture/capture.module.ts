@@ -12,6 +12,7 @@ import { CustomerProfileRepository } from './customer-profile.repository';
 import { ImportProcessorService } from './import-processor.job';
 import { LeadIdentityRepository } from './lead-identity.repository';
 import { LeadService } from './lead.service';
+import { StageGuardService } from './stage-guard.service';
 import { PublicCaptureController } from './public-capture.controller';
 import { SourceAttributionRepository } from './source-attribution.repository';
 import { GcsImportFileStoreAdapter } from './ports/gcs-import-file-store.adapter';
@@ -43,6 +44,7 @@ import { InlineImportDispatchAdapter } from './ports/inline-import-dispatch.adap
   controllers: [CaptureController, PublicCaptureController],
   providers: [
     LeadService,
+    StageGuardService,
     CaptureService,
     CaptureIdempotencyService,
     CodeGenerator,
@@ -76,6 +78,7 @@ import { InlineImportDispatchAdapter } from './ports/inline-import-dispatch.adap
   ],
   exports: [
     LeadService,
+    StageGuardService,
     CaptureService,
     LeadSlaWriterAdapter,
     LeadReassignmentAdapter,
