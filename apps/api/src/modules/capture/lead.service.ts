@@ -795,6 +795,26 @@ export class LeadService {
     );
   }
 
+  /**
+   * FR-100 — update `leads.nurture_next_at` when a nurture task is completed
+   * with `next_action_at`. Volatile system-managed field (architecture §11.2):
+   * no version bump, no `expectedVersion`, consistent with `setScore` /
+   * `setConsentStatus`. Zero rows → NOT_FOUND, never a silent no-op.
+   * Called by `TaskService` inside the SAME UnitOfWork transaction as the task
+   * status update (atomicity requirement — FR-100 LLD §Transaction Boundaries).
+   */
+  async setNurtureNextAt(leadId: string, nextAt: Date, tx: DbTransaction): Promise<void> {
+    const result = await tx
+      .updateTable('leads')
+      .set({ nurture_next_at: nextAt, updated_at: new Date() })
+      .where('lead_id', '=', leadId)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+    if (result.numUpdatedRows === 0n) {
+      throw new DomainException(ERROR_CODES.NOT_FOUND);
+    }
+  }
+
   /** FR-070/072 — derived `kyc_status` summary. */
   setKycStatus(_leadId: string, _status: KycStatus, _tx: DbTransaction): Promise<void> {
     return Promise.reject(notYetWired('setKycStatus', 'FR-070'));
