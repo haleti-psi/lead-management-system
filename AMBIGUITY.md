@@ -365,3 +365,36 @@ ckyc/digilocker/aadhaar_otp/vcip are Phase-1.5; only `KycMockAdapter` is bound, 
 
 ## FR-072-A6. No GET exception-queue; resolution integrated into the FR-071 workbench
 The LLD UI tree shows an `ExceptionQueue` DataTable, but no GET endpoint exists (FR-071-10). **Resolution applied:** the `ExceptionResolutionModal` is wired into the existing `KycWorkbench` — a check row in the open-exception state exposes a "Resolve" action — so no list GET is needed. Notification side-effect (LLD step 8) is deferred (NotificationDispatchService not yet wired into M8).
+
+---
+
+# AMBIGUITY — FR-060 (Secure Customer Action Link)
+
+*Resolved in-code with the narrowest spec-consistent choice; listed for Dev-1/contract write-back (CLAUDE.md §9). The LLD's AMB-1..4 are carried here with what was applied.*
+
+## FR-060-1. `CUSTOMER_LINK_PORT` rebind moved to a @Global SelfServiceModule
+The seam was provided+exported by `compliance.module` (`UnavailableCustomerLinkAdapter`). FR-060 owns the real adapter (M7), so the binding moved: the @Global `SelfServiceModule` now provides `{ CUSTOMER_LINK_PORT → CustomerLinkAdapter }`, and `compliance.module` no longer provides/exports it (its consumers resolve the global). `UnavailableCustomerLinkAdapter` is left in `ports/customer-link.port.ts` as the documented fallback. Verified: FR-070/FR-110 customer endpoints still green (1037 tests).
+
+## FR-060-2. OTP gate on /documents & /consent returns 404, not 401 (port-based)
+The LLD §Auth describes a guard returning `AUTH_REQUIRED` (401) when the OTP session is missing on the upload/consent endpoints. But those endpoints (built in FR-070/FR-110) resolve via `CustomerLinkPort` (binary `ResolvedCustomerLink | null`), not `CustomerLinkGuard`. **Resolution applied:** the adapter returns `null` (→ NOT_FOUND 404) for token-invalid/expired/no-OTP-session/wrong-purpose — uniformly hiding existence (arguably stronger than 401). The landing (`GET /c/{token}`) and `POST /c/{token}/otp` use the guard (no OTP gate, by design).
+**Needed decision:** ratify 404-for-all on the port path, or enrich the port to signal "valid-but-unverified" so the controllers can return 401.
+
+## FR-060-3. Purpose gating on /documents & /consent → 404 (not 403)
+The LLD wants `FORBIDDEN` (403) when the action isn't in the link's `purpose`. The port adapter folds this into the same `null`→404 (binary contract). Ratify or enrich the port.
+
+## FR-060-4. (LLD AMB-2) `CUSTOMER_LINK_*` event code absent → `DOC_REQUEST`
+Applied per the LLD: link creation emits `DOC_REQUEST` (closest `event_code`). Add a `CUSTOMER_LINK_CREATED` value if a distinct event is wanted.
+
+## FR-060-5. (LLD AMB-1) OTP resend endpoint not built
+`POST /c/{token}/otp/resend` is not in the contract; deferred. The OTP is generated+dispatched at link create; a customer whose 10-min OTP TTL lapses currently needs a staff resend (new link). Add the resend endpoint if required.
+
+## FR-060-6. (LLD AMB-4) `link_status='used'` left unset
+Links remain `active` until expiry or staff revoke (resend revokes the prior). The auto-`used` transition (all purposes complete) is not implemented (LLD default). Ratify.
+
+## FR-060-7. `lead_display.product_display_name` uses `product_code`
+`product_configs` has no display-name column, so the customer landing shows `product_code` as the product name and a stage→label map for `status_label`. Add a display-name column/config if a friendlier product label is required.
+
+## FR-060-8. `ResolvedCustomerLink.channel = 'api'` (resolves FR-110-2)
+The adapter sets the consent `channel` to `CreationChannel.API` for customer self-service (the FR-110-2 open question on the channel source). Ratify, or carry the delivery channel (sms/whatsapp/email) through instead.
+
+*Reused, not rebuilt (already shipped):* customer document upload (FR-070 `POST /c/{token}/documents` + VirusScanPort — LLD AMB-3 is moot), customer consent (FR-110 `POST /c/{token}/consent`), the `CustomerUploadPage`. FR-060 adds the token/OTP machinery + landing that make them reachable.
