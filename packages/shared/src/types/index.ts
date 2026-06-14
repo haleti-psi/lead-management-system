@@ -18,9 +18,15 @@ export interface PaginationMeta {
   total: number;
 }
 
+export interface ApiMetaWarning {
+  field: string;
+  message: string;
+}
+
 export interface ApiMeta {
   correlation_id: string;
   pagination?: PaginationMeta;
+  warnings?: ApiMetaWarning[];
 }
 
 export interface ApiFieldError {

@@ -48,7 +48,7 @@ x-fr-coverage:
   FR-100: "GET/POST /tasks, PATCH /tasks/{id}"
   FR-101: "GET/POST /admin/templates, GET/POST /leads/{id}/communications, POST /internal/communications/dispatch"
   FR-102: "PATCH /tasks/{id} (visit/call disposition)"
-  FR-103: "PUT /preferences"
+  FR-103: "PUT /preferences, GET /preferences, PUT /c/{token}/preferences, GET /c/{token}/preferences"
   FR-104: "GET/POST /admin/sla-policies"
   FR-110: "GET/POST /leads/{id}/consents"
   FR-111: "cross-cutting: data minimisation in services + data_sharing_logs (consents, eligibility, handoff); GET /leads/{id}/sharing-logs"
@@ -256,7 +256,11 @@ paths:
     get: { summary: "List communication templates", operationId: listTemplates, tags: [Admin], x-frs: [FR-101], responses: { "200": { $ref: '#/components/responses/Ok' } } }
     post: { summary: "Create/version template", operationId: createTemplate, tags: [Admin], x-frs: [FR-101], responses: { "201": { $ref: '#/components/responses/Created' } } }
   /preferences:
-    put: { summary: "Upsert notification preferences", operationId: putPreferences, tags: [Communication], x-frs: [FR-103], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+    put: { summary: "Upsert notification preferences (batch)", operationId: putPreferences, tags: [Communication], x-frs: [FR-103], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' }, "401": { $ref: '#/components/responses/Unauthenticated' }, "403": { $ref: '#/components/responses/Forbidden' }, "429": { $ref: '#/components/responses/RateLimited' } } }
+    get: { summary: "Read current notification preferences for a subject", operationId: getPreferences, tags: [Communication], x-frs: [FR-103], parameters: [{ name: subject_type, in: query, required: true, schema: { type: string, enum: [user, customer] } }, { name: subject_ref, in: query, required: true, schema: { type: string, format: uuid } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' }, "401": { $ref: '#/components/responses/Unauthenticated' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /c/{token}/preferences:
+    put: { summary: "Customer self-service: upsert notification preferences via opaque link", operationId: putCustomerPreferences, tags: [CustomerLink], security: [], x-frs: [FR-103], parameters: [{ name: token, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' }, "404": { $ref: '#/components/responses/NotFound' }, "429": { $ref: '#/components/responses/RateLimited' } } }
+    get: { summary: "Customer self-service: read notification preferences via opaque link", operationId: getCustomerPreferences, tags: [CustomerLink], security: [], x-frs: [FR-103], parameters: [{ name: token, in: path, required: true, schema: { type: string } }, { name: subject_type, in: query, required: true, schema: { type: string } }, { name: subject_ref, in: query, required: true, schema: { type: string, format: uuid } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "404": { $ref: '#/components/responses/NotFound' } } }
   /admin/sla-policies:
     get: { summary: "List SLA policies", operationId: listSla, tags: [Admin], x-frs: [FR-104], responses: { "200": { $ref: '#/components/responses/Ok' } } }
     post: { summary: "Create/update SLA policy", operationId: createSla, tags: [Admin], x-frs: [FR-104], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' } } }
