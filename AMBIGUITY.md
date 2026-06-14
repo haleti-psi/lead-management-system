@@ -636,3 +636,71 @@ is registered in `shared-utilities.md`.
 component-level tests in `*.spec.ts` are the per-FR deliverable for this wave.
 The e2e supertest suite will be built in the integration-test wave alongside
 all other deferred e2e specs.
+
+---
+
+# AMBIGUITY — FR-100 (Task Management)
+
+## FR-100-A1: audit_action enum has no task_created / task_updated values
+
+**The gap (precise):** FR-100.md §Data Operations and §Backend Flow specify
+`AuditAppender.append({ action: 'task_created', ... })` and
+`AuditAppender.append({ action: 'task_updated', ... })` but `audit_action`
+(schema.sql line 112 / `@lms/shared` `AuditAction`) has no such values.
+
+**Resolution applied (enum rule wins, per CORRECTIONS.md):**
+- Task create appends `action: AuditAction.LEAD_UPDATE`, `entity_type: 'tasks'`,
+  `detail.op: 'task_create'`, `detail.task_id`, `detail.type`, `detail.owner_id`,
+  `detail.due_at`.
+- Task update appends `action: AuditAction.LEAD_UPDATE`, `entity_type: 'tasks'`,
+  `detail.op: 'task_update'`, `detail.from_status`, `detail.to_status`,
+  `detail.disposition`.
+  Consistent with the FR-050 precedent (`detail.sub_action='bulk_action'`).
+
+**Needed action (Dev 1):** add `task_create` and `task_update` to `audit_action`
+in schema.sql + Flyway migration + `@lms/shared` `AuditAction` + update
+CORRECTIONS.md. Once added, replace `AuditAction.LEAD_UPDATE` + `detail.op` with
+the dedicated enum values in `task.service.ts`.
+
+## FR-100-A2: EventCode has no TASK_OVERDUE value
+
+**The gap (precise):** FR-100.md §Overdue Sweep Job specifies
+`OutboxService.emit('TASK_OVERDUE', {...}, tx)` but `event_code` enum
+(schema.sql / `@lms/shared` `EventCode`) has no `TASK_OVERDUE` value.
+`OutboxService.emit` validates against this enum and would throw INTERNAL_ERROR.
+
+**Resolution applied:** `TaskOverdueSweepJob` emits a structured pino `warn`
+log listing the overdue task IDs instead of the outbox event. The status update
+to `overdue` completes correctly. The outbox emit is commented out with a TODO.
+
+**Needed action (Dev 1):** add `TASK_OVERDUE = 'TASK_OVERDUE'` to `event_code`
+enum in schema.sql + Flyway migration + `@lms/shared` `EventCode`, then
+uncomment the `OutboxService.emit` block in `task-overdue-sweep.job.ts`.
+
+## FR-100-A3: LeadService.setNurtureNextAt does not exist
+
+**The gap (precise):** FR-100.md §Data Operations and §Ambiguities 1 requires
+`LeadService.setNurtureNextAt(leadId, nextAt, tx)` to update
+`leads.nurture_next_at` when a nurture task is completed. This method was absent
+from `apps/api/src/modules/capture/lead.service.ts`.
+
+**Resolution applied:** Added `setNurtureNextAt(leadId, nextAt, tx)` to
+`LeadService` — no version bump (volatile field, same pattern as `setScore` and
+`setDuplicateStatus`). The implementation uses a single parameterised UPDATE
+`WHERE lead_id = ? AND deleted_at IS NULL`.
+
+**Needed action (Dev 1):** ratify and write `setNurtureNextAt` back into
+`docs/contracts/shared-utilities.md` §LeadService interface.
+
+## FR-100-A4: owner_id scope validation on create (FR-100 Ambiguity 3)
+
+**The gap (precise):** the LLD Ambiguities §3 asks whether an RM may assign a
+task to another RM. Resolution: only BM/SM may assign to users other than
+themselves (`owner_id != caller.userId`). An RM attempting to create a task with
+`owner_id` different from their own `userId` receives `FORBIDDEN` (403).
+
+## FR-100-A5: Supertest E2E tier deferred
+
+FR-100-tests.md T01–T13 are API component tests; the Playwright UI tests
+UI-01..UI-05 and SQL invariant tests are deferred per `manifest.stage7.test_strategy`.
+Unit tests T14–T20 are implemented as Jest unit specs.
