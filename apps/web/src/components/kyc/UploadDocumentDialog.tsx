@@ -59,7 +59,7 @@ export function UploadDocumentDialog({
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
         <Upload className="h-4 w-4" aria-hidden />
-        {item.version && item.version > 0 ? 'Re-upload' : 'Upload'}
+        {item.document_id ? 'Re-upload' : 'Upload'}
       </Button>
 
       <Modal

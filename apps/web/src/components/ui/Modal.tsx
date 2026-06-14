@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 /**
  * Lightweight accessible modal dialog (ui.md §Modals). Hand-rolled rather than
  * pulling `@radix-ui/react-dialog` (not in the dependency register) — it covers
- * the FR-070 needs: focus moves into the dialog on open, Escape and backdrop
- * click close it, the title is wired via `aria-labelledby`, and `aria-modal`
- * marks the rest of the page inert to assistive tech.
+ * the FR-070 needs: focus moves into the dialog on open and is TRAPPED inside it
+ * (Tab/Shift+Tab cycle within), Escape and backdrop click close it, focus is
+ * restored to the trigger on close, and the title/description are wired via
+ * `aria-labelledby`/`aria-describedby` under `aria-modal`.
  */
 export function Modal({
   open,
@@ -29,12 +30,50 @@ export function Modal({
 
   React.useEffect(() => {
     if (!open) return;
+    const panel = panelRef.current;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    const focusable = (): HTMLElement[] =>
+      panel
+        ? Array.from(
+            panel.querySelectorAll<HTMLElement>(
+              'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            ),
+          ).filter((el) => el.offsetParent !== null)
+        : [];
+
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const items = focusable();
+      if (items.length === 0) {
+        e.preventDefault();
+        panel?.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || active === panel)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
+
     document.addEventListener('keydown', onKey);
-    panelRef.current?.focus();
-    return () => document.removeEventListener('keydown', onKey);
+    // Move focus into the dialog (first focusable element, else the panel).
+    (focusable()[0] ?? panel)?.focus();
+
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previouslyFocused?.focus?.();
+    };
   }, [open, onClose]);
 
   if (!open) return null;
