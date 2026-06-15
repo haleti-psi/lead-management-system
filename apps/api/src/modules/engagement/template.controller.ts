@@ -5,6 +5,7 @@ import { Capability } from '@lms/shared';
 import { CurrentUser, Requires } from '../../core/auth';
 import type { AuthUser } from '../../core/auth';
 import { ZodValidationPipe } from '../../core/common';
+import { paginated } from '../../core/http';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { ListTemplatesDto } from './dto/list-templates.dto';
 import { TemplateService } from './template.service';
@@ -31,7 +32,10 @@ export class TemplateController {
     @Query(new ZodValidationPipe(ListTemplatesDto)) query: ListTemplatesDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.templateService.list(query, user);
+    // Wrap as PaginatedResult so ResponseEnvelopeInterceptor hoists pagination
+    // into meta; returning { data, meta } directly would double-wrap.
+    const { data, meta } = await this.templateService.list(query, user);
+    return paginated(data, meta);
   }
 
   /**

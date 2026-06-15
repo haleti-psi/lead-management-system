@@ -50,13 +50,9 @@ export class PipelineBoardController {
     @Body(new ZodValidationPipe(StageTransitionDtoSchema)) dto: StageTransitionDto,
     @CurrentUser() user: AuthUser,
     @Req() req: AbacRequestContext,
-  ): Promise<{ data: StageTransitionResult }> {
-    const result = await this.board.transitionStage(
-      id,
-      dto,
-      user,
-      req[SCOPE_PREDICATE_KEY],
-    );
-    return { data: result };
+  ): Promise<StageTransitionResult> {
+    // Return the raw result; ResponseEnvelopeInterceptor wraps it as
+    // { data, meta, error }. Returning { data: result } here double-wraps.
+    return this.board.transitionStage(id, dto, user, req[SCOPE_PREDICATE_KEY]);
   }
 }

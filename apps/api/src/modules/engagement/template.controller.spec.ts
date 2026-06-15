@@ -87,7 +87,7 @@ describe('TemplateController', () => {
       const result = await controller.list({ page: 1, limit: 25 }, ADMIN_USER);
       expect(service.list).toHaveBeenCalled();
       expect(result.data).toHaveLength(1);
-      expect(result.meta.total).toBe(1);
+      expect(result.pagination.total).toBe(1);
     });
   });
 

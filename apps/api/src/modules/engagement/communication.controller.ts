@@ -6,6 +6,7 @@ import { Capability } from '@lms/shared';
 import { CurrentUser, Requires } from '../../core/auth';
 import type { AuthUser } from '../../core/auth';
 import { PaginationParams, ZodValidationPipe } from '../../core/common';
+import { paginated } from '../../core/http';
 import { ORG_ID_DEFAULT } from '../../core/outbox/outbox.constants';
 import { CommunicationRepository } from './communication.repository';
 import { SendCommunicationDto } from './dto/send-communication.dto';
@@ -58,10 +59,7 @@ export class CommunicationController {
       recipient: null as null,
     }));
 
-    return {
-      data,
-      meta: { page: pagination.page, limit: pagination.limit, total },
-    };
+    return paginated(data, { page: pagination.page, limit: pagination.limit, total });
   }
 
   /**
