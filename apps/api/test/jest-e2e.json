@@ -1,0 +1,17 @@
+{
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "testRegex": ".*\\.e2e-spec\\.ts$",
+  "moduleFileExtensions": ["ts", "js", "json"],
+  "setupFiles": ["<rootDir>/test/setup-env.ts"],
+  "transform": {
+    "^.+\\.ts$": ["ts-jest", { "tsconfig": "<rootDir>/tsconfig.json" }]
+  },
+  "moduleNameMapper": {
+    "^@lms/shared$": "<rootDir>/../../packages/shared/dist/index.js",
+    "^@lms/shared/(.*)$": "<rootDir>/../../packages/shared/dist/$1"
+  },
+  "testTimeout": 120000,
+  "maxWorkers": 1,
+  "clearMocks": true
+}

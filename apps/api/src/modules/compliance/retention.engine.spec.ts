@@ -407,7 +407,8 @@ describe('RetentionEngine.applyRun', () => {
     expect(updatedValues.length).toBeGreaterThan(0);
     const identityUpdate = updatedValues[0];
     expect(identityUpdate?.['name']).toBe('ANONYMISED');
-    expect(identityUpdate?.['mobile']).toBe('0000000000');
+    // constraint-valid scrub value (ck_lead_identities_mobile `^[6-9][0-9]{9}$`)
+    expect(identityUpdate?.['mobile']).toBe('9000000000');
     expect(identityUpdate?.['email']).toBeNull();
     expect(identityUpdate?.['pan_token']).toBeNull();
     expect(identityUpdate?.['dob']).toBeNull();
