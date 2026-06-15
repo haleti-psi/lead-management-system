@@ -80,6 +80,7 @@
   ],
   "service_to_service_only": [
     "POST /api/v1/los/webhooks/status",
+    "POST /api/v1/internal/los/reconcile",
     "POST /api/v1/internal/sla/sweep",
     "POST /api/v1/internal/tasks/overdue-sweep",
     "POST /api/v1/internal/communications/dispatch",
@@ -90,6 +91,7 @@
     "/api/v1/c/{token}/*": "opaque token + OTP step-up (CustomerLinkGuard); scoped to one lead; never a JWT",
     "/api/v1/c/{token}/preferences": "FR-103: CustomerLinkPort validates token + OTP step-up; subject_ref must match token's customer_profile_id",
     "/api/v1/los/webhooks/status": "HMAC-signature verified (no user session)",
+    "/api/v1/internal/los/reconcile": "Cloud Scheduler OIDC service-account token verified at infra layer (internal-only Cloud Run ingress); @Public — no user JWT (FR-082)",
     "/api/v1/internal/sla/sweep": "Cloud Tasks queue header (InternalTaskGuard); @Public — no user JWT",
     "/api/v1/internal/tasks/overdue-sweep": "Cloud Tasks queue header (InternalTaskGuard); @Public — no user JWT",
     "/api/v1/internal/communications/dispatch": "Cloud Tasks queue header (InternalTaskGuard); @Public — no user JWT",

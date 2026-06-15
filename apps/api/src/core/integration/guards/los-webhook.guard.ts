@@ -13,7 +13,7 @@ import { AppConfigService } from '../../config';
 import { DomainException } from '../../http/domain-exception';
 import { readHeader, type HttpRequestLike } from '../../http/http-types';
 
-/** Header LOS sends the SHA-256 HMAC (hex) of the raw request body in. */
+/** Header LOS sends the SHA-256 HMAC of the raw request body in (`sha256=<hex>` or bare hex). */
 const SIGNATURE_HEADER = 'x-los-signature';
 
 /** Request augmented with the raw body buffer (NestJS `rawBody: true`). */
@@ -53,12 +53,18 @@ export class LosWebhookGuard implements CanActivate {
       throw this.reject();
     }
 
-    const signature = readHeader(request, SIGNATURE_HEADER);
+    const rawSignature = readHeader(request, SIGNATURE_HEADER);
     const rawBody = request.rawBody;
-    if (typeof signature !== 'string' || signature.length === 0 || !Buffer.isBuffer(rawBody)) {
+    if (typeof rawSignature !== 'string' || rawSignature.length === 0 || !Buffer.isBuffer(rawBody)) {
       this.logger.warn('LOS webhook rejected: missing signature or raw body');
       throw this.reject();
     }
+
+    // LOS sends `X-LOS-Signature: sha256=<hex>` (FR-082 LLD §Auth). Strip the
+    // optional scheme prefix before comparing; a bare hex value is also accepted.
+    const signature = rawSignature.startsWith('sha256=')
+      ? rawSignature.slice('sha256='.length)
+      : rawSignature;
 
     const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
 

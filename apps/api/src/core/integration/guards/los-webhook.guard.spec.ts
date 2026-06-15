@@ -48,6 +48,16 @@ describe('LosWebhookGuard', () => {
     expect(guard.canActivate(contextFor(body, signature))).toBe(true);
   });
 
+  // T10b — a correct signature carrying the `sha256=` scheme prefix passes
+  // (the LOS sends `X-LOS-Signature: sha256=<hex>`; the guard strips the prefix).
+  it('accepts a correct signature carrying the `sha256=` scheme prefix', () => {
+    const body = Buffer.from('{"foo":"bar"}');
+    const signature = `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`;
+    const guard = makeGuard(SECRET);
+
+    expect(guard.canActivate(contextFor(body, signature))).toBe(true);
+  });
+
   // T09 — a wrong signature is rejected with FORBIDDEN.
   it('rejects an inbound webhook with a wrong HMAC signature (FORBIDDEN)', () => {
     const body = Buffer.from('{"foo":"bar"}');
