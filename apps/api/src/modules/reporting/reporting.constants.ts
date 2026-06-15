@@ -9,13 +9,47 @@ import type { MaskableField } from '../../core/masking';
  * an unknown code (LLD §Error Cases).
  */
 export const REPORT_CODES = [
+  // FR-120 core pack
   'funnel_conversion',
   'source_performance',
   'rm_performance',
   'rejection_summary',
+  // FR-121 differentiator pack
+  'first_contact_sla',
+  'kyc_doc_ageing',
+  'dsa_dealer_quality',
+  'duplicate_leakage',
+  'handoff_failure',
+  'source_roi',
+  'contactability',
+  'consent_privacy_ops',
+  'product_branch_heatmap',
+  'rm_capacity_load',
 ] as const;
 
 export type ReportCode = typeof REPORT_CODES[number];
+
+/**
+ * FR-121 differentiator report codes only. Used for role-restriction checks
+ * (DPO consent gating, etc.).
+ */
+export const DIFFERENTIATOR_REPORT_CODES = [
+  'first_contact_sla',
+  'kyc_doc_ageing',
+  'dsa_dealer_quality',
+  'duplicate_leakage',
+  'handoff_failure',
+  'source_roi',
+  'contactability',
+  'consent_privacy_ops',
+  'product_branch_heatmap',
+  'rm_capacity_load',
+] as const;
+
+/** Reports the DPO role (masked scope M) is permitted to access (FR-121 §Auth Check). */
+export const DPO_ALLOWED_REPORT_CODES: ReadonlySet<string> = new Set([
+  'consent_privacy_ops',
+]);
 
 /**
  * FR-123 constants for the audit explorer (M13). Centralised so the DTO,

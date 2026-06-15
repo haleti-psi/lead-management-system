@@ -19,8 +19,9 @@ yarn-error.log*
 # Test coverage
 coverage/
 
-# Hook-generated reports
-reports/
+# Hook-generated reports (root-level only — must NOT match the web source dir
+# apps/web/src/pages/reports/, which is real application code)
+/reports/
 
 # Local Claude Code settings (personal, machine-specific overrides)
 .claude/settings.local.json

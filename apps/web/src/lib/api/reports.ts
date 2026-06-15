@@ -7,10 +7,22 @@ import type { QueryParams } from './apiClient';
  */
 
 export type ReportCode =
+  // FR-120 core pack
   | 'funnel_conversion'
   | 'source_performance'
   | 'rm_performance'
-  | 'rejection_summary';
+  | 'rejection_summary'
+  // FR-121 differentiator pack
+  | 'first_contact_sla'
+  | 'kyc_doc_ageing'
+  | 'dsa_dealer_quality'
+  | 'duplicate_leakage'
+  | 'handoff_failure'
+  | 'source_roi'
+  | 'contactability'
+  | 'consent_privacy_ops'
+  | 'product_branch_heatmap'
+  | 'rm_capacity_load';
 
 export interface ReportScope {
   branch_id: string | null;
@@ -62,11 +74,118 @@ export interface RejectionSummaryRow {
   rejected_count: number;
 }
 
+// ── FR-121 differentiator row types ─────────────────────────────────────────
+
+export interface FirstContactSlaRow {
+  branch_id: string;
+  branch_name: string;
+  total: number;
+  contacted: number;
+  breached: number;
+  compliance_pct: string;
+}
+
+export interface KycDocAgeingRow {
+  doc_type: string;
+  product_code: string;
+  avg_age_days: string;
+  doc_count: number;
+  verified_count: number;
+  pending_count: number;
+}
+
+export interface DsaDealerQualityRow {
+  partner_id: string;
+  legal_name: string;
+  type: string;
+  quality_score: number | null;
+  insufficient_data: boolean;
+  metrics: Record<string, unknown>;
+}
+
+export interface DuplicateLeakageRow {
+  source: string;
+  partner_id: string | null;
+  confidence: string;
+  action: string;
+  status: string;
+  count: number;
+}
+
+export interface HandoffFailureRow {
+  integration: string;
+  error_code: string | null;
+  http_status: number | null;
+  failure_count: number;
+  avg_retries: string;
+  last_seen_at: string;
+}
+
+export interface SourceRoiRow {
+  source: string;
+  campaign_code: string | null;
+  partner_id: string | null;
+  total_leads: number;
+  converted: number;
+  rejected: number;
+  conversion_rate_pct: string;
+  cost_data_available: false;
+}
+
+export interface ContactabilityRow {
+  source: string;
+  partner_id: string | null;
+  channel: string;
+  failure_reason: string | null;
+  total_attempts: number;
+  delivered: number;
+  failed: number;
+  contactability_rate_pct: string;
+}
+
+export interface ConsentPrivacyOpsRow {
+  type: 'consent_status' | 'data_rights_request' | 'grievance';
+  data: Record<string, unknown>;
+}
+
+export interface ProductBranchHeatmapRow {
+  product_code: string;
+  branch_id: string;
+  branch_name: string;
+  volume: number;
+  converted: number;
+  rejected: number;
+  conversion_rate_pct: string;
+  avg_tat_hrs: string | null;
+}
+
+export interface RmCapacityLoadRow {
+  user_id: string;
+  full_name: string;
+  branch_id: string;
+  team_id: string | null;
+  active_leads: number;
+  early_stage_leads: number;
+  open_tasks: number;
+  overdue_tasks: number;
+}
+
 export type ReportRow =
   | FunnelConversionRow
   | SourcePerformanceRow
   | RmPerformanceRow
-  | RejectionSummaryRow;
+  | RejectionSummaryRow
+  // FR-121 differentiator rows
+  | FirstContactSlaRow
+  | KycDocAgeingRow
+  | DsaDealerQualityRow
+  | DuplicateLeakageRow
+  | HandoffFailureRow
+  | SourceRoiRow
+  | ContactabilityRow
+  | ConsentPrivacyOpsRow
+  | ProductBranchHeatmapRow
+  | RmCapacityLoadRow;
 
 export interface ReportData {
   report_code: ReportCode;
