@@ -66,7 +66,10 @@ export const CB_OPEN_ERROR_CODE = 'CB_OPEN';
 /**
  * The synthetic system actor for IntegrationGateway-owned writes. The gateway
  * runs outside any user request (it is also driven by Cloud Tasks retries), so
- * `created_by`/`updated_by` on `integration_logs` reference the seed system user
- * (schema.sql org/user seed `…0001`). Kept here so every gateway write agrees.
+ * `created_by`/`updated_by` on `integration_logs`/`los_application_mirrors`/
+ * `eligibility_snapshots` must reference the RESERVED SYSTEM USER seeded in V1
+ * (`…0000`). NOTE: `…0001` is the org id — using it here violated the users FK
+ * at commit (caught by the §14.7 integration tests). Kept here so every gateway
+ * write agrees.
  */
-export const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000001';
+export const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000';
