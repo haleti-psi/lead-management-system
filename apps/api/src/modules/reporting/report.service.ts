@@ -16,6 +16,7 @@ import type {
   DsaDealerQualityRow,
 } from './dto/report-response.dto';
 import type { ReportFilters } from './report.repository';
+export type { ReportFilters };
 import { ReportRepository } from './report.repository';
 import { DifferentiatorRepository } from './differentiator.repository';
 import { DPO_ALLOWED_REPORT_CODES } from './reporting.constants';
@@ -240,6 +241,29 @@ export class ReportService {
       period,
       pagination: { page: query.page, limit: query.limit },
     };
+  }
+
+  /**
+   * FR-122 — public entry point for the async export worker. Executes a single
+   * page of a report using the pre-validated predicate and filters from the
+   * export job (scope is already enforced at job-create time; we just replay it).
+   */
+  async fetchExportRows(
+    code: ReportCode,
+    orgId: string,
+    predicate: ScopePredicate,
+    filters: ReportFilters,
+    page: number,
+    limit: number,
+  ): Promise<{ rows: ReportRow[]; total: number }> {
+    return this.dispatch(code, {
+      orgId,
+      predicate,
+      filters,
+      scope: { branch_id: null, team_id: null, owner_id: null },
+      period: { from: null, to: null },
+      pagination: { page, limit },
+    });
   }
 
   private async dispatch(code: ReportCode, ctx: ReportScopeContext & { orgId: string }): Promise<{ rows: ReportRow[]; total: number }> {

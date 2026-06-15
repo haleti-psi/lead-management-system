@@ -64,6 +64,12 @@ export const envSchema = z.object({
   MERGE_UNMERGE_WINDOW_HOURS: intFrom(24, { min: 1 }),
   DASHBOARD_CACHE_TTL_SECONDS: intFrom(60, { min: 1 }),
   REPORT_TIMEOUT_MS: intFrom(8000, { min: 1000 }),
+  // ── FR-122 Export Governance ─────────────────────────────────
+  EXPORT_APPROVAL_ROW_THRESHOLD: intFrom(5000, { min: 1 }),
+  EXPORT_REQUIRE_APPROVAL_ON_THRESHOLD: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 
   // ── Provider variables (environment-contract.md §Provider variables) ──
   // Optional in the schema: required only where the real provider/inbound
