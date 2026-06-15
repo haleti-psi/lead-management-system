@@ -43,6 +43,7 @@
 | `DASHBOARD_CACHE_TTL_SECONDS` | `60` | Dashboard widget cache TTL in seconds (FR-053) |
 | `RETENTION_BATCH_SIZE` | `100` | Max rows per batch in the retention engine (FR-115) |
 | `RETENTION_CRON_SCHEDULE` | `0 20 * * *` | Cron schedule (UTC) for the scheduled retention run — default daily at 02:00 IST (20:30 UTC previous day ≈ 02:00 IST); adjust for DST (FR-115) |
+| `REPORT_TIMEOUT_MS` | `8000` | Max ms a report aggregate query may run before the controller returns INTERNAL_ERROR (FR-120) |
 
 ## Provider variables (production; vendors open per OD-08/OD-17; all calls go through ports/IntegrationGateway)
 | Variable | Required in | Description |
