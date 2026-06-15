@@ -1,6 +1,29 @@
 # Cross-FR Integration Review
 *Date: 2026-06-15 | Scope: ~35 FRs built across 15 modules | Branch: feature/FR-092 (chain off master)*
 
+---
+
+## ⟳ REFRESH — 2026-06-15 (Stage 9, all 49 FRs merged · API 1814 / web 269)
+
+**Verdict: PASS** (0 CRITICAL, 0 HIGH). This full re-run across all 49 FRs on `master` supersedes the interim pass below (~35 FRs). The Dev-3 bucket (M9 LOS, M11 engagement, M12 compliance, M13 reporting) introduced four new owner-writes findings; all are resolved:
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| C1 — `RetentionEngine` wrote `leads` directly | CRITICAL | **Fixed** — routed via new `LeadService.softDeleteForRetention` (version bump; §11.2). |
+| H3 — `RetentionEngine` writes 6 PII tables it doesn't own | HIGH | **Sanctioned exemption** — documented as a privileged DPDP-erasure writer (architecture §11.6), like the §11.4 `AuditChainConsumer`: pure PII-nulling, single scheduled actor, atomic per-lead tx, hold/DRR/grievance-excluded. |
+| H4 — `communication_templates` dual-writer (FR-131 generic master + FR-101) | HIGH | **Fixed** — removed `communication-templates` from `MASTER_SLUGS`/`MASTER_DESCRIPTORS`; M11 `TemplateService` is sole writer. |
+| H5 — `retention_policies` dual-writer (FR-131 + FR-115) | HIGH | **Fixed** — removed `retention-policies` from the generic master; M12 `RetentionPolicyController` is sole writer. |
+| M5 — `grievances` two INSERT paths (M7 intake + M12 lifecycle) | MEDIUM | **Accepted seam** — the self-service intake INSERT is complete (code-gen + SLA + outbox + audit in one UoW); M12 owns every lifecycle UPDATE. Documented like `consent_records`. |
+| M7 — `data_sharing_logs` written by M8 KYC + M12 | MEDIUM | **Accepted seam** — the KYC share-log INSERT requires a mandatory `consent_id` (consent linkage structurally enforced); M12 `DataSharingService` owns the general path. |
+| M8 — grievance-escalation job `@Public()` without app-layer guard | MEDIUM | **Fixed** — added `@UseGuards(InternalTaskGuard)` + `@SkipThrottle()` (matches every other internal job). |
+| M10 — `TASK_OVERDUE` event undeliverable (enum missing) | MEDIUM | **Fixed** — added `TASK_OVERDUE` to the `event_code` enum (migration V5 + `@shared` + generated types) and wired the overdue-sweep outbox emit. |
+
+The owner-writes matrix is otherwise clean (`leads` sole-writer + optimistic lock intact; `audit_logs`/`event_outbox` single-writer; M9 `los_application_mirrors`/`eligibility_snapshots` and M13 `export_jobs` single-writer). State machines, auth-guard coverage, outbox-in-tx, and port-based external I/O all hold. No FR is left only-specced; §14.7 integration/e2e coverage is mapped for the deferred test wave (Phase 2).
+
+The carried MEDIUM seams (M1 sla_policies activator, M2 consent_records 3-writer, M3 tasks) remain documented/accepted. Detailed analysis retained below for the audit trail.
+
+---
+
 > **Interim review.** The strict trigger ("all FRs `merged`") is **not** met — the project is mid-Stage-7. Wave 1 (foundation) is on `master`; Waves 2–5 are partially built and chained on `feature/FR-092`. This pass covers every FR with generated code present in the working tree. Re-run after the remaining FRs and the deferred integration-test wave land.
 
 > **Update 2026-06-15 — H1 and H2 resolved.** Both HIGH findings have been fixed and verified (API `tsc` clean; 1083 tests pass). H1: `partners` removed from the FR-131 master registry — `PartnerService` (FR-090) is now the sole writer. H2: `lead_identities` enrichment moved to the capture-owned `LeadIdentityRepository.enrich()`, called by KYC through the `@Global` CaptureModule seam. Details in the findings below and `AMBIGUITY.md › XFR-H1/H2`. **Effective verdict now: PASS** (0 CRITICAL, 0 HIGH; 4 MEDIUM tracked).

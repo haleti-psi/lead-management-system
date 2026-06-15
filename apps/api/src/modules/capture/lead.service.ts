@@ -841,6 +841,33 @@ export class LeadService {
   }
 
   /**
+   * FR-115 — retention soft-delete. The M12 `RetentionEngine` is the sole caller;
+   * routing the `leads` write through `LeadService` preserves the single-writer
+   * invariant (§11) for the aggregate root. Sets `deleted_at` and bumps `version`
+   * (a deletion must invalidate any stale optimistic-lock read). No stage
+   * transition occurs — the lead is already terminal — so no `stage_history`/outbox
+   * is written here; the engine appends its retention audit in the SAME tx. No
+   * `expectedVersion` (system batch path). Zero rows (already deleted) → NOT_FOUND,
+   * which the engine's per-lead try/catch treats as a skip.
+   */
+  async softDeleteForRetention(leadId: string, actorId: string, tx: DbTransaction): Promise<void> {
+    const result = await tx
+      .updateTable('leads')
+      .set({
+        deleted_at: new Date(),
+        version: sql`version + 1`,
+        updated_at: new Date(),
+        updated_by: actorId,
+      })
+      .where('lead_id', '=', leadId)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+    if (result.numUpdatedRows === 0n) {
+      throw new DomainException(ERROR_CODES.NOT_FOUND);
+    }
+  }
+
+  /**
    * FR-080 — eligibility snapshot reference (pinned mutator, §11.2).
    *
    * Records the eligibility request reference on the lead row as a volatile

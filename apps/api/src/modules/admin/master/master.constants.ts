@@ -33,18 +33,16 @@ export const MASTER_AGGREGATE_TYPE = 'configuration_versions';
  * pattern (collision avoidance). It deliberately excludes every resource owned by
  * a concrete controller in another FR (see file header).
  */
-// NOTE: ownership of communication-templates/retention is pending cross-FR review
-// (M11/M12 may claim these); left here as-is. Claimed-out by their owning FR and
-// removed from this allow-list: `allocation-rules` → FR-030 (M4),
-// `dla-registry` → FR-113 (M12 /compliance/dla), `partners` → FR-090 (M10
-// PartnerService) [per cross-FR review H1].
+// Claimed-out by their owning FR and removed from this allow-list:
+// `allocation-rules` → FR-030 (M4), `dla-registry` → FR-113 (M12 /compliance/dla),
+// `partners` → FR-090 (M10 PartnerService) [cross-FR review H1],
+// `retention-policies` → FR-115 (M12 RetentionPolicyController) and
+// `communication-templates` → FR-101 (M11 TemplateService) [cross-FR review H4/H5].
 export const MASTER_SLUGS = [
   'regions',
   'branches',
   'rejection-reasons',
   'business-calendars',
-  'retention-policies',
-  'communication-templates',
 ] as const;
 
 export type MasterSlug = (typeof MASTER_SLUGS)[number];

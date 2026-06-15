@@ -7,6 +7,7 @@ import { AuditAction, DataCategory, LeadOutcome, LeadStage, type RetentionAction
 import { AuditAppender } from '../../core/audit';
 import { AppConfigService } from '../../core/config';
 import { KYSELY, UnitOfWork, type KyselyDb } from '../../core/db';
+import { LeadService } from '../capture/lead.service';
 import type { DryRunCategoryCount, DryRunPreview, RetentionMode } from './retention-policy.dto';
 import type { RetentionPolicyRow } from './retention-policy.repository';
 
@@ -58,6 +59,7 @@ export class RetentionEngine {
     @Inject(KYSELY) private readonly db: KyselyDb,
     private readonly uow: UnitOfWork,
     private readonly audit: AuditAppender,
+    private readonly leadService: LeadService,
     _config: AppConfigService,
     @InjectPinoLogger(RetentionEngine.name) private readonly logger: PinoLogger,
   ) {
@@ -355,17 +357,11 @@ export class RetentionEngine {
       }
 
       case DataCategory.IDENTITY:
-        // Purge action on identity: anonymise PII + soft-delete the lead
+        // Purge action on identity: anonymise PII + soft-delete the lead.
+        // The `leads` write goes through LeadService (sole writer, §11); it bumps
+        // version so a concurrent optimistic-lock read detects the deletion.
         await this.anonymise(category, lead, tx);
-        await tx
-          .updateTable('leads')
-          .set({
-            deleted_at: new Date(),
-            updated_at: new Date(),
-            updated_by: SYSTEM_ACTOR_ID,
-          })
-          .where('lead_id', '=', lead.lead_id)
-          .execute();
+        await this.leadService.softDeleteForRetention(lead.lead_id, SYSTEM_ACTOR_ID, tx);
         break;
 
       default:

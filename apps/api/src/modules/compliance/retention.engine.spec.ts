@@ -40,6 +40,7 @@ import type { AppConfigService } from '../../core/config';
 import type { UnitOfWork, KyselyDb } from '../../core/db';
 import type { DbTransaction } from '../../core/db';
 import { DomainException } from '../../core/http';
+import { LeadService } from '../capture/lead.service';
 import { RetentionEngine, type LeadCandidate } from './retention.engine';
 import {
   CreateRetentionPolicyDto,
@@ -83,14 +84,18 @@ function buildEngine(overrides: {
   db?: Partial<KyselyDb>;
   uow?: Partial<UnitOfWork>;
   audit?: Partial<AuditAppender>;
+  leadService?: Partial<LeadService>;
 } = {}): RetentionEngine {
   const db = overrides.db as unknown as KyselyDb;
   const uow = overrides.uow as unknown as UnitOfWork;
   const audit = (overrides.audit ?? { append: jest.fn().mockResolvedValue(undefined) }) as unknown as AuditAppender;
+  const leadService = (overrides.leadService ?? {
+    softDeleteForRetention: jest.fn().mockResolvedValue(undefined),
+  }) as unknown as LeadService;
   const config = {} as unknown as AppConfigService;
 
   // Create engine instance; inject mocks via constructor
-  const engine = new RetentionEngine(db, uow, audit, config, {
+  const engine = new RetentionEngine(db, uow, audit, leadService, config, {
     info: jest.fn(),
     error: jest.fn(),
     warn: jest.fn(),
@@ -480,6 +485,37 @@ describe('RetentionEngine.applyRun', () => {
     expect(tablesUpdated).not.toContain('consent_records');
     expect(tablesUpdated).not.toContain('audit_logs');
     expect(tablesUpdated).not.toContain('stage_history');
+  });
+
+  // C1 (cross-FR) — the leads soft-delete must go through LeadService (sole writer §11)
+  it('C1 — purge of identity routes the leads soft-delete through LeadService, not a direct write', async () => {
+    const policy = makePolicy({ action: 'purge', data_category: DataCategory.IDENTITY });
+    const candidate = { lead_id: LEAD_A, lead_identity_id: IDENTITY_A, customer_profile_id: null, terminal_at: NOW };
+
+    const tablesUpdated: string[] = [];
+    const txMock = {
+      updateTable: jest.fn().mockImplementation((table: string) => {
+        tablesUpdated.push(table);
+        return { set: jest.fn().mockReturnThis(), where: jest.fn().mockReturnThis(), execute: jest.fn().mockResolvedValue([]) };
+      }),
+      insertInto: jest.fn().mockReturnValue({ values: jest.fn().mockReturnThis(), execute: jest.fn().mockResolvedValue([]) }),
+    };
+    const uowMock = { run: jest.fn().mockImplementation((fn: (tx: unknown) => Promise<unknown>) => fn(txMock)) };
+    const softDelete = jest.fn().mockResolvedValue(undefined);
+
+    const dbMock = buildDbMock(policy, [candidate]);
+    const engine = buildEngine({
+      db: dbMock as unknown as KyselyDb,
+      uow: uowMock as unknown as UnitOfWork,
+      audit: { append: jest.fn().mockResolvedValue(undefined) } as unknown as AuditAppender,
+      leadService: { softDeleteForRetention: softDelete } as unknown as Partial<LeadService>,
+    });
+
+    await engine.applyRun(randomUUID(), ORG);
+
+    // The leads write is delegated; the engine never issues a direct updateTable('leads').
+    expect(tablesUpdated).not.toContain('leads');
+    expect(softDelete).toHaveBeenCalledWith(LEAD_A, expect.any(String), txMock);
   });
 
   // T08 — audit_logs rows never modified or deleted

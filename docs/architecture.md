@@ -247,6 +247,9 @@ The `audit_logs` chain (`prev_audit_hash`) requires serial append, which conflic
 ### 11.5 Idempotency & outbox
 `IntegrationGateway` dedups on `Idempotency-Key`/`IntegrationLog.idempotency_key` (Redis + unique index). `event_outbox` rows are written in the state-change transaction; a publisher worker relays to Pub/Sub (at-least-once; idempotent consumers).
 
+### 11.6 Retention/erasure — privileged cross-table writer  *(resolves cross-FR review H3)*
+Data-principal erasure (DPDP "right to erasure", FR-115) inherently spans every PII table. The M12 **`RetentionEngine`** is therefore a *sanctioned privileged writer* of the PII columns it anonymises/purges across `lead_identities`, `customer_profiles`, `lead_product_details`, `communication_logs`, `documents`, and `kyc_verifications` — analogous to the §11.4 single-writer `AuditChainConsumer`. This is a bounded, documented exception to owner-writes (§4.8.3), justified because it is a single scheduled actor (no concurrent races), each lead is processed in its own `UnitOfWork` transaction, candidates under `legal_hold`/open-DRR/open-grievance are excluded, and the writes null PII only (no state-machine or `version` transition). The one carve-out: the **`leads`** aggregate root is never written directly — its retention soft-delete goes through `LeadService.softDeleteForRetention` (§11.2) so the optimistic `version` is bumped. `audit_logs`, `consent_records`, and `stage_history` are never touched by retention.
+
 ## 12. Module Build Order & Dependencies  *(resolves council "foundation-then-fan-out")*
 
 The §13.2 increment plan is reordered so cross-cutting foundations exist before the consumer waves (the §14.2 dependency map and the council both require this).
