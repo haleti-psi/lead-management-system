@@ -867,9 +867,82 @@ export class LeadService {
     );
   }
 
-  /** FR-081 — LOS hand-off terminal write. */
-  markHandedOff(_leadId: string, _losAppId: string, _expectedVersion: number, _tx: DbTransaction): Promise<void> {
-    return Promise.reject(notYetWired('markHandedOff', 'FR-081'));
+  /**
+   * FR-081 — LOS hand-off terminal write (§11.2 pinned mutator; sole writer of
+   * `leads` on the handed_off path). In ONE transaction:
+   *  1. UPDATE leads → stage='handed_off', los_application_id, version++ under
+   *     optimistic lock (stale → CONFLICT 409).
+   *  2. INSERT stage_history (ready_for_handoff → handed_off).
+   *  3. AuditAppender.append handoff_success.
+   *  4. OutboxService.emit LEAD_HANDED_OFF (object form per CORRECTIONS §FR-081;
+   *     aggregate_type='Lead').
+   *
+   * @param actorId   Actor who initiated the hand-off (BM/KYC/RM).
+   */
+  async markHandedOff(
+    leadId: string,
+    losApplicationId: string,
+    expectedVersion: number,
+    actorId: string,
+    tx: DbTransaction,
+  ): Promise<void> {
+    const updated = await tx
+      .updateTable('leads')
+      .set((eb) => ({
+        stage: LeadStage.HANDED_OFF,
+        los_application_id: losApplicationId,
+        version: eb('version', '+', 1),
+        updated_at: new Date(),
+        updated_by: actorId,
+      }))
+      .where('lead_id', '=', leadId)
+      .where('version', '=', expectedVersion)
+      .where('deleted_at', 'is', null)
+      .returning(['lead_id', 'org_id', 'version'])
+      .executeTakeFirst();
+
+    if (!updated) {
+      // Zero rows → optimistic lock stale (concurrent writer).
+      throw new DomainException(ERROR_CODES.CONFLICT);
+    }
+
+    // stage_history INSERT (append-only; M2 owns)
+    await this.appendStageHistory(
+      {
+        org_id: updated.org_id,
+        lead_id: leadId,
+        from_stage: LeadStage.READY_FOR_HANDOFF,
+        to_stage: LeadStage.HANDED_OFF,
+        actor_id: actorId,
+        reason: 'LOS hand-off completed',
+      },
+      tx,
+    );
+
+    // audit intent (handoff_success)
+    await this.audit.append(
+      {
+        action: AuditAction.HANDOFF_SUCCESS,
+        entity_type: LEADS_RESOURCE_TYPE,
+        entity_id: leadId,
+        actor_id: actorId,
+        org_id: updated.org_id,
+        lead_id: leadId,
+        detail: { losApplicationId },
+      },
+      tx,
+    );
+
+    // outbox event — CORRECTIONS §FR-081: object form; aggregate_type='Lead'
+    await this.outbox.emit(
+      {
+        event_code: EventCode.LEAD_HANDED_OFF,
+        aggregate_type: 'Lead',
+        aggregate_id: leadId,
+        payload: { losApplicationId, actorId },
+      },
+      tx,
+    );
   }
 
   /**
