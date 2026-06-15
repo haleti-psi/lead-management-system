@@ -92,6 +92,27 @@ async function parse<T>(res: Response): Promise<T> {
   return (envelope ? envelope.data : null) as T;
 }
 
+/** Parse one Response into the full envelope (success) or throw ApiClientError. */
+async function parseEnvelope<T>(res: Response): Promise<ApiEnvelope<T>> {
+  const text = await res.text();
+  let envelope: ApiEnvelope<T> | null = null;
+  if (text.length > 0) {
+    try {
+      envelope = JSON.parse(text) as ApiEnvelope<T>;
+    } catch {
+      envelope = null;
+    }
+  }
+
+  if (envelope?.error) {
+    throw fromApiError(envelope.error, res.status, envelope.meta?.correlation_id);
+  }
+  if (!res.ok) {
+    throw fromStatus(res.status);
+  }
+  return envelope as ApiEnvelope<T>;
+}
+
 let refreshInFlight: Promise<void> | null = null;
 /** Single-flight `POST /auth/refresh`; concurrent 401s share one refresh. The
  * response carries a new access token (cookie-based refresh) which replaces the
@@ -138,6 +159,33 @@ async function rawFetch<T>(
   return parse<T>(res);
 }
 
+/** One network round-trip returning the full envelope (no refresh logic). */
+async function rawFetchEnvelope<T>(
+  method: string,
+  path: string,
+  body: unknown,
+  opts: RequestOptions | undefined,
+): Promise<ApiEnvelope<T>> {
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, opts?.query), {
+      method,
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...opts?.headers,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: opts?.signal,
+    });
+  } catch (cause) {
+    throw fromNetwork(cause);
+  }
+  return parseEnvelope<T>(res);
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -166,8 +214,38 @@ async function request<T>(
   }
 }
 
+async function requestEnvelope<T>(
+  method: string,
+  path: string,
+  body: unknown,
+  opts: RequestOptions | undefined,
+): Promise<ApiEnvelope<T>> {
+  try {
+    return await rawFetchEnvelope<T>(method, path, body, opts);
+  } catch (err) {
+    const unauthenticated = err instanceof ApiClientError && err.status === 401;
+    if (!unauthenticated || opts?.skipAuthRefresh) throw err;
+
+    try {
+      await refreshSession();
+    } catch {
+      onUnauthorized?.();
+      throw err;
+    }
+    try {
+      return await rawFetchEnvelope<T>(method, path, body, { ...opts, skipAuthRefresh: true });
+    } catch (retryErr) {
+      if (retryErr instanceof ApiClientError && retryErr.status === 401) onUnauthorized?.();
+      throw retryErr;
+    }
+  }
+}
+
 export const apiClient = {
   get: <T>(path: string, opts?: RequestOptions): Promise<T> => request<T>('GET', path, undefined, opts),
+  /** Like `get` but resolves the full `ApiEnvelope<T>` (data + meta). */
+  getEnvelope: <T>(path: string, opts?: RequestOptions): Promise<ApiEnvelope<T>> =>
+    requestEnvelope<T>('GET', path, undefined, opts),
   post: <T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> =>
     request<T>('POST', path, body, opts),
   put: <T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> =>
