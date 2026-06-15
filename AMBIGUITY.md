@@ -959,3 +959,81 @@ if (!allowed) throw new DomainException('FORBIDDEN', '...', { detail: { reason: 
 ```
 Inject `PreferenceService` into `NotificationDispatchService` and update
 `engagement.module.ts` provider list accordingly.
+
+---
+
+# AMBIGUITY — FR-115 (Data Retention, Purge & Anonymisation Engine)
+
+## FR-115-A1: ERASURE_APPROVED outbox event — no event-driven consumer built
+
+**The gap (precise):** FR-112 (Data Rights Request workflow) emits an `ERASURE_APPROVED`
+outbox event when a DRR is approved. FR-115's LLD does not specify an event-driven
+consumer for this event. The question is whether approved erasures should be actioned
+immediately (event-driven) or on the next scheduled retention run.
+
+**Path chosen (LLD-consistent — scheduled run):**
+
+FR-115.md §Backend Flow and §State Machine describe only a scheduled job path. There
+is no event-driven consumer endpoint, no Cloud Tasks handler, and no `@Public` worker
+in the FR-115 LLD. Therefore:
+
+- When a DRR is approved (`status` transitions to `approved` or an equivalent
+  non-open state), it is no longer `status IN ('open', 'in_review')`.
+- `fetchCandidates` uses a `NOT EXISTS` correlated subquery filtering on those two
+  open statuses. An approved DRR's lead is therefore NO LONGER excluded from the
+  candidate set on the next scheduled run.
+- The scheduled retention run (cron, `RETENTION_CRON_SCHEDULE`) will pick up and
+  purge/anonymise the approved lead in its next batch.
+- Maximum delay: one scheduled run cycle (daily by default — up to 24 hours).
+
+**What was NOT built:** An event-driven immediate-erasure consumer endpoint. The
+`ERASURE_APPROVED` event is emitted but not consumed by FR-115.
+
+**Needed action (Wave C / compliance owner):** If immediate erasure on approval is
+a regulatory requirement (e.g. DPDP Act timelines), a Cloud Tasks worker endpoint
+must be added:
+1. Add `POST /internal/retention/apply-erasure` to `api-contract.yaml` with
+   `service_to_service_only: true` in `auth-matrix.json`.
+2. Implement a minimal controller (`@Public()` + Cloud Tasks origin header check)
+   that calls `RetentionEngine.applyRun(runId, orgId, undefined)` scoped to the
+   approved lead's org.
+3. Subscribe to `ERASURE_APPROVED` in the Pub/Sub listener and enqueue a Cloud
+   Tasks job to that endpoint carrying `{ leadId, orgId }`.
+
+---
+
+## FR-115-A2: GCS object deletion on kyc_doc purge — deferred (no GCS delete port)
+
+**The gap (precise):** FR-115.md §External Service Calls states that for `kyc_doc`
+purge action, GCS object deletion happens after the DB transaction commits, best-effort,
+using `@google-cloud/storage` directly. The LLD also notes: "If GCS deletion fails,
+the DB row already has `storage_ref = NULL` and `deleted_at` set — the file becomes
+orphaned and a Cloud Monitoring alert fires."
+
+**Current state:** The only GCS adapter in the codebase is
+`apps/api/src/modules/capture/ports/gcs-import-file-store.adapter.ts` which provides
+`put` and `get` operations for import files — it has no `delete` method.
+The `RetentionEngine.purge(DataCategory.KYC_DOC)` nullifies `storage_ref` and sets
+`deleted_at` in the DB transaction, but does NOT call GCS delete because no delete
+port/method exists.
+
+**What this means:** PII document files in GCS are orphaned after kyc_doc purge
+until the reconciliation sweep is built. The DB row is correctly soft-deleted and
+`storage_ref` is null, so the application no longer serves the file; only the raw
+GCS object remains.
+
+**Structured warn logged per skipped object:** `retention.engine.ts` logs a
+structured `warn` (no PII — only the `lead_id` and `policyId`) at the point where
+GCS deletion would have been called, so orphaned objects are traceable via Cloud
+Logging.
+
+**Needed action (integration wave / Wave C):**
+1. Add a `delete(ref: string): Promise<void>` method to `GcsImportFileStoreAdapter`
+   (or create a dedicated `GcsDocumentStoreAdapter` if the LLD calls for separation).
+2. Register the adapter/port in the compliance module.
+3. In `RetentionEngine.purge(DataCategory.KYC_DOC)`, after the DB `UnitOfWork.run`
+   commits, call `gcsStore.delete(doc.storage_ref)` for each document whose
+   `storage_ref` was non-null. Wrap in `try/catch`; log structured error on failure
+   (no PII, no rethrow — the DB purge already committed).
+4. Build the orphan-reconciliation sweep (background job) that scans GCS for objects
+   with no matching non-deleted `documents` row and deletes them.

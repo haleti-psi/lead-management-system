@@ -41,6 +41,8 @@
 | `BREAK_GLASS_MAX_WINDOW_HOURS` | `48` | Max break-glass grant window (FR-003) |
 | `MERGE_UNMERGE_WINDOW_HOURS` | `24` | Lead unmerge window (FR-021) |
 | `DASHBOARD_CACHE_TTL_SECONDS` | `60` | Dashboard widget cache TTL in seconds (FR-053) |
+| `RETENTION_BATCH_SIZE` | `100` | Max rows per batch in the retention engine (FR-115) |
+| `RETENTION_CRON_SCHEDULE` | `0 20 * * *` | Cron schedule (UTC) for the scheduled retention run — default daily at 02:00 IST (20:30 UTC previous day ≈ 02:00 IST); adjust for DST (FR-115) |
 
 ## Provider variables (production; vendors open per OD-08/OD-17; all calls go through ports/IntegrationGateway)
 | Variable | Required in | Description |
