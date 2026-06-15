@@ -1,4 +1,4 @@
-import type { ApiEnvelope } from '@lms/shared';
+import type { ApiEnvelope, PaginationMeta } from '@lms/shared';
 import { ApiClientError, fromApiError, fromNetwork, fromStatus } from './errors';
 
 /**
@@ -70,8 +70,9 @@ function buildUrl(path: string, query?: QueryParams): string {
   return qs ? `${url}?${qs}` : url;
 }
 
-/** Parse one Response into either `data` (success) or a thrown ApiClientError. */
-async function parse<T>(res: Response): Promise<T> {
+/** Read one Response into the uniform envelope, throwing ApiClientError on any
+ * `error` body or non-2xx. Shared by `parse` (data only) and `getPage` (data + meta). */
+async function readEnvelope<T>(res: Response): Promise<ApiEnvelope<T>> {
   const text = await res.text();
   let envelope: ApiEnvelope<T> | null = null;
   if (text.length > 0) {
@@ -88,8 +89,13 @@ async function parse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     throw fromStatus(res.status);
   }
+  return envelope ?? ({ data: null, meta: { correlation_id: '' }, error: null } as ApiEnvelope<T>);
+}
+
+/** Parse one Response into `data` (success) or a thrown ApiClientError. */
+async function parse<T>(res: Response): Promise<T> {
   // Success: `data` may legitimately be null (e.g. 204-style envelopes).
-  return (envelope ? envelope.data : null) as T;
+  return (await readEnvelope<T>(res)).data as T;
 }
 
 /** Parse one Response into the full envelope (success) or throw ApiClientError. */
@@ -159,6 +165,34 @@ async function rawFetch<T>(
   return parse<T>(res);
 }
 
+/** Run `attempt`; on a 401 (and not opted out), refresh once and retry once.
+ * Shared by `request` (data calls), `getPage` (paginated reads), and
+ * `requestEnvelope`/`getEnvelope` (full-envelope reads). */
+async function withAuthRetry<R>(
+  opts: RequestOptions | undefined,
+  attempt: (o: RequestOptions | undefined) => Promise<R>,
+): Promise<R> {
+  try {
+    return await attempt(opts);
+  } catch (err) {
+    const unauthenticated = err instanceof ApiClientError && err.status === 401;
+    if (!unauthenticated || opts?.skipAuthRefresh) throw err;
+
+    try {
+      await refreshSession();
+    } catch {
+      onUnauthorized?.();
+      throw err;
+    }
+    try {
+      return await attempt({ ...opts, skipAuthRefresh: true });
+    } catch (retryErr) {
+      if (retryErr instanceof ApiClientError && retryErr.status === 401) onUnauthorized?.();
+      throw retryErr;
+    }
+  }
+}
+
 /** One network round-trip returning the full envelope (no refresh logic). */
 async function rawFetchEnvelope<T>(
   method: string,
@@ -186,63 +220,56 @@ async function rawFetchEnvelope<T>(
   return parseEnvelope<T>(res);
 }
 
-async function request<T>(
+function request<T>(
   method: string,
   path: string,
   body: unknown,
   opts: RequestOptions | undefined,
 ): Promise<T> {
-  try {
-    return await rawFetch<T>(method, path, body, opts);
-  } catch (err) {
-    const unauthenticated = err instanceof ApiClientError && err.status === 401;
-    if (!unauthenticated || opts?.skipAuthRefresh) throw err;
-
-    // 401 on a normal call: refresh once, then retry once.
-    try {
-      await refreshSession();
-    } catch {
-      onUnauthorized?.();
-      throw err;
-    }
-    try {
-      return await rawFetch<T>(method, path, body, { ...opts, skipAuthRefresh: true });
-    } catch (retryErr) {
-      if (retryErr instanceof ApiClientError && retryErr.status === 401) onUnauthorized?.();
-      throw retryErr;
-    }
-  }
+  return withAuthRetry(opts, (o) => rawFetch<T>(method, path, body, o));
 }
 
-async function requestEnvelope<T>(
+/** Like `request` but resolves the full `ApiEnvelope<T>` (data + meta). */
+function requestEnvelope<T>(
   method: string,
   path: string,
   body: unknown,
   opts: RequestOptions | undefined,
 ): Promise<ApiEnvelope<T>> {
-  try {
-    return await rawFetchEnvelope<T>(method, path, body, opts);
-  } catch (err) {
-    const unauthenticated = err instanceof ApiClientError && err.status === 401;
-    if (!unauthenticated || opts?.skipAuthRefresh) throw err;
+  return withAuthRetry(opts, (o) => rawFetchEnvelope<T>(method, path, body, o));
+}
 
-    try {
-      await refreshSession();
-    } catch {
-      onUnauthorized?.();
-      throw err;
-    }
-    try {
-      return await rawFetchEnvelope<T>(method, path, body, { ...opts, skipAuthRefresh: true });
-    } catch (retryErr) {
-      if (retryErr instanceof ApiClientError && retryErr.status === 401) onUnauthorized?.();
-      throw retryErr;
-    }
+/** A paginated list result: the `data` array plus the `meta.pagination` block. */
+export interface PageResult<T> {
+  data: T[];
+  pagination?: PaginationMeta;
+}
+
+/** GET that preserves `meta.pagination` (for server-paginated DataTable lists). */
+async function rawFetchPage<T>(path: string, opts: RequestOptions | undefined): Promise<PageResult<T>> {
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, opts?.query), {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...opts?.headers,
+      },
+      signal: opts?.signal,
+    });
+  } catch (cause) {
+    throw fromNetwork(cause);
   }
+  const envelope = await readEnvelope<T[]>(res);
+  return { data: (envelope.data ?? []) as T[], pagination: envelope.meta.pagination };
 }
 
 export const apiClient = {
   get: <T>(path: string, opts?: RequestOptions): Promise<T> => request<T>('GET', path, undefined, opts),
+  getPage: <T>(path: string, opts?: RequestOptions): Promise<PageResult<T>> =>
+    withAuthRetry(opts, (o) => rawFetchPage<T>(path, o)),
   /** Like `get` but resolves the full `ApiEnvelope<T>` (data + meta). */
   getEnvelope: <T>(path: string, opts?: RequestOptions): Promise<ApiEnvelope<T>> =>
     requestEnvelope<T>('GET', path, undefined, opts),

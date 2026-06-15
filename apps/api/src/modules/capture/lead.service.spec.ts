@@ -344,6 +344,32 @@ describe('LeadService.setConsentStatus (FR-110)', () => {
   });
 });
 
+describe('LeadService.setKycStatus (FR-070)', () => {
+  it('updates kyc_status + updated_at only — no version bump, stage untouched', async () => {
+    const t = makeTx({ updatedRows: 1n });
+    const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+
+    await service.setKycStatus(LEAD, 'verified', t.tx);
+
+    const patch = t.updateSet.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(patch['kyc_status']).toBe('verified');
+    expect(patch['updated_at']).toBeInstanceOf(Date);
+    // Volatile system-managed derived field: no version bump (FR-070 LLD §8).
+    expect(Object.keys(patch).sort()).toEqual(['kyc_status', 'updated_at']);
+    expect(t.whereCalls).toHaveBeenCalledWith('lead_id', '=', LEAD);
+    expect(t.whereCalls).toHaveBeenCalledWith('deleted_at', 'is', null);
+    expect(t.whereCalls).not.toHaveBeenCalledWith('version', '=', expect.anything());
+  });
+
+  it('throws NOT_FOUND when the lead is absent or soft-deleted (never a silent no-op)', async () => {
+    const t = makeTx({ updatedRows: 0n });
+    const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
+    await expect(service.setKycStatus(LEAD, 'verified', t.tx)).rejects.toMatchObject({
+      code: ERROR_CODES.NOT_FOUND,
+    });
+  });
+});
+
 describe('LeadService.assignOwner', () => {
   const baseRow = {
     lead_id: LEAD,
@@ -648,24 +674,6 @@ describe('LeadService.bulkReassign', () => {
     setFn(eb);
     expect(eb).toHaveBeenCalledWith('version', '+', 1);
   });
-});
-
-describe('LeadService frozen-interface stubs', () => {
-  // transitionStage (FR-052), setHotFlag (FR-031), recordEligibility (FR-080),
-  // and markHandedOff (FR-081) are now IMPLEMENTED — no longer stubs.
-  // setKycStatus (FR-070) remains a stub until its FR lands.
-  it.each([
-    ['setKycStatus', (s: LeadService, tx: DbTransaction) => s.setKycStatus(LEAD, 'verified', tx)],
-  ] as Array<[string, (s: LeadService, tx: DbTransaction) => Promise<void>]>)(
-    '%s throws a typed INTERNAL_ERROR until its FR lands (never a silent no-op)',
-    async (_name, call) => {
-      const t = makeTx();
-      const service = new LeadService(fakeAudit() as unknown as AuditAppender, fakeOutbox() as unknown as OutboxService);
-      await expect(call(service, t.tx)).rejects.toMatchObject({ code: ERROR_CODES.INTERNAL_ERROR });
-      expect(t.insertValues).not.toHaveBeenCalled();
-      expect(t.updateSet).not.toHaveBeenCalled();
-    },
-  );
 });
 
 describe('LeadService.transitionStage (FR-052)', () => {

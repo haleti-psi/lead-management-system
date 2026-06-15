@@ -91,6 +91,13 @@ export const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+
+  // FR-070 — GCS document upload + virus scan (integration-map.md §GcsPort /
+  // §VirusScanPort). Optional: dev/test bind the mock adapters and never read
+  // them; prod injects them via Secret Manager. The scan-result callback HMAC
+  // reuses VIRUS_SCAN_API_KEY (service-to-service, no JWT).
+  VIRUS_SCAN_PROVIDER_URL: z.string().url().optional(),
+  VIRUS_SCAN_API_KEY: z.string().min(1).optional(),
 });
 
 /** Fully-typed, validated environment. `ALLOWED_ORIGINS` is parsed to `string[]`. */

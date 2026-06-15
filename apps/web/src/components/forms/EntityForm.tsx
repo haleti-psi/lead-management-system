@@ -13,6 +13,7 @@ import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { isApiClientError } from '@/lib/api';
 
 /**
@@ -102,6 +103,118 @@ export function FormField({ name, label, required, className, ...inputProps }: F
         className={className}
         {...register(name)}
         {...inputProps}
+      />
+      {error ? (
+        <p id={errorId} role="alert" aria-live="polite" className="text-sm text-destructive">
+          {String(error.message ?? 'Invalid value')}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Select sibling of {@link FormField} — same label/error wiring, bound to the
+ * surrounding EntityForm via react-hook-form context. */
+interface FormSelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+  name: string;
+  label: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  placeholder?: string;
+}
+
+export function FormSelect({
+  name,
+  label,
+  options,
+  placeholder,
+  required,
+  className,
+  ...selectProps
+}: FormSelectProps): React.ReactElement {
+  const {
+    register,
+    formState: { errors },
+  } = useFormContext();
+  const error = errors[name];
+  const errorId = `${name}-error`;
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={name}>
+        {label}
+        {required ? (
+          <span className="text-destructive" aria-hidden>
+            {' *'}
+          </span>
+        ) : null}
+      </Label>
+      <select
+        id={name}
+        aria-required={required || undefined}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        className={
+          className ??
+          'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid=true]:border-destructive'
+        }
+        {...register(name)}
+        {...selectProps}
+      >
+        {placeholder ? <option value="">{placeholder}</option> : null}
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      {error ? (
+        <p id={errorId} role="alert" aria-live="polite" className="text-sm text-destructive">
+          {String(error.message ?? 'Invalid value')}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Multi-line sibling of {@link FormField} — same label/error wiring, bound to
+ * the surrounding EntityForm via react-hook-form context. */
+interface FormTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+  name: string;
+  label: string;
+}
+
+export function FormTextarea({
+  name,
+  label,
+  required,
+  className,
+  ...textareaProps
+}: FormTextareaProps): React.ReactElement {
+  const {
+    register,
+    formState: { errors },
+  } = useFormContext();
+  const error = errors[name];
+  const errorId = `${name}-error`;
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={name}>
+        {label}
+        {required ? (
+          <span className="text-destructive" aria-hidden>
+            {' *'}
+          </span>
+        ) : null}
+      </Label>
+      <Textarea
+        id={name}
+        aria-required={required || undefined}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        className={className}
+        {...register(name)}
+        {...textareaProps}
       />
       {error ? (
         <p id={errorId} role="alert" aria-live="polite" className="text-sm text-destructive">

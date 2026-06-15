@@ -683,7 +683,7 @@ CREATE TABLE documents (
   applicant_scope  applicant_scope NOT NULL,
   status           doc_status NOT NULL DEFAULT 'pending',
   storage_ref      VARCHAR(255),
-  file_type        VARCHAR(10),
+  file_type        VARCHAR(255),
   file_size_kb     INTEGER,
   version          INTEGER NOT NULL DEFAULT 1,
   uploaded_via     upload_channel,

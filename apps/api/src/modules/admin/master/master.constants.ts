@@ -11,6 +11,7 @@
  *  - `sla-policies`                   → FR-104  (`/admin/sla-policies`, config_type `sla_policy`)
  *  - `schemes`                        → FR-042  (config_type `scheme`)
  *  - `allocation-rules`               → FR-030  (`/admin/allocation-rules`, M4 owner-writes)
+ *  - `partners`                       → FR-090  (`/partners`, M10 PartnerService owner-writes)
  *  - `webhook-subscriptions`          → FR-140  (`/admin/webhooks`)
  *  - `break-glass`                    → FR-003  (`/admin/break-glass`)
  *
@@ -32,17 +33,17 @@ export const MASTER_AGGREGATE_TYPE = 'configuration_versions';
  * pattern (collision avoidance). It deliberately excludes every resource owned by
  * a concrete controller in another FR (see file header).
  */
-// NOTE: ownership of partners/communication-templates/retention is pending
-// cross-FR review (other modules may claim these); left here as-is.
-// `allocation-rules` was claimed by FR-030 (M4 owns allocation_rules).
-// `dla-registry` is owned by M12 FR-113 /compliance/dla — claimed out, like allocation_rules/FR-030.
+// NOTE: ownership of communication-templates/retention is pending cross-FR review
+// (M11/M12 may claim these); left here as-is. Claimed-out by their owning FR and
+// removed from this allow-list: `allocation-rules` → FR-030 (M4),
+// `dla-registry` → FR-113 (M12 /compliance/dla), `partners` → FR-090 (M10
+// PartnerService) [per cross-FR review H1].
 export const MASTER_SLUGS = [
   'regions',
   'branches',
   'rejection-reasons',
   'business-calendars',
   'retention-policies',
-  'partners',
   'communication-templates',
 ] as const;
 

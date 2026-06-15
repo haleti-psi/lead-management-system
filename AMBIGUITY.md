@@ -1037,3 +1037,250 @@ Logging.
    (no PII, no rethrow — the DB purge already committed).
 4. Build the orphan-reconciliation sweep (background job) that scans GCS for objects
    with no matching non-deleted `documents` row and deletes them.
+---
+
+# AMBIGUITY — FR-071 (KYC Verification Orchestration)
+
+*All resolved in-code with the narrowest spec-consistent choice; listed for Dev-1/contract write-back (CLAUDE.md §9). The LLD pseudocode pre-dates the real FR-140 IntegrationGateway API.*
+
+## FR-071-1. Gateway does not return the `integration_log_id`
+**Gap:** LLD §Step 5a sets `kyc_verifications.integration_log_id = providerResult.integrationLogId`, but `IntegrationGateway.call` returns only `{ httpStatus, body, idempotent }` (no log id). INV-4 requires the id on every non-manual row.
+**Resolution applied:** the service pre-creates the `integration_logs` row via `IntegrationLogRepository.createLog(...)`, passes its id as `GatewayOptions.integrationLogId` (the gateway reuses it), and stores it on `kyc_verifications`. Clean and INV-4/INV-8-safe.
+
+## FR-071-2. `KycMockAdapter` returns a generic body (no KYC outcome)
+**Gap:** the bound mock returns `{ mock:'kyc', integration }` with only `status`/`fail` directives — it cannot express a business **mismatch** (TC-002). The real PAN/CKYC/… adapters are Phase-1.5/unbuilt (LLD Assumption 2).
+**Resolution applied:** KYC outcome interpretation lives in `kyc-provider.ts` (per kyc.port.ts: the calling module masks/interprets). A 2xx with no explicit `body.outcome` is treated as a successful `valid` check; `body.outcome:'mismatch'` → failed + `exceptionType`. Unit tests mock the gateway to drive both paths.
+**Needed decision:** extend `KycMockAdapter` with an `outcome` directive (and a KYC-shaped body) so the deferred integration-test wave can exercise mismatch/exception over real HTTP.
+
+## FR-071-3. `pan_token` / `aadhaar_ref_token` / `ckyc_id` source
+**Gap:** the LLD reads these off `providerResult.*`, but the mock returns none, and raw values must never be persisted (BRD §2.4 / INV-1/INV-2).
+**Resolution applied:** the service generates OPAQUE, non-reversible surrogate tokens (`pan_…`, `aadhaar_…`) and a masked PAN (`ABCDE****F`); the raw PAN/Aadhaar are sent to the provider but never stored. A real provider/vault returns its own token — swap in the adapter.
+
+## FR-071-4. TC-071-025 (optimistic-lock CONFLICT on `setKycStatus`) is unsatisfiable
+**Gap:** the test expects `LeadService.setKycStatus` to fail on a stale `expectedVersion`, but the frozen signature is `setKycStatus(leadId, status, tx)` with NO version bump (volatile derived field, per FR-070 / FR-110-4). `leads.version` is never consulted for kyc_status.
+**Resolution applied:** no optimistic lock on kyc_status (matches the frozen mutator). TC-071-025 omitted at the unit tier.
+**Needed decision:** strike TC-071-025 from FR-071-tests, or add an `expectedVersion` overload to `setKycStatus` (cross-FR contract change).
+
+## FR-071-5. Provider-down 503 envelope cannot carry `data`
+**Gap:** LLD §Response shows the 503 carrying BOTH `data.kycVerificationId` and `error`; the standard `AllExceptionsFilter` sets `data:null` on any error.
+**Resolution applied:** the exception `kyc_verifications` row is persisted (FR-072 resolves it) and the service throws `UPSTREAM_UNAVAILABLE` (503, standard envelope). The id isn't surfaced in the 503 body; the UI reloads the KYC list to show the exception row.
+
+## FR-071-6. `IDEMPOTENT_REPLAY` reason has no success-envelope channel
+A success replay returns the original verification (200, identical `kycVerificationId`); the standard success envelope `{data,meta,error}` has no `detail.reason` slot, so the `IDEMPOTENT_REPLAY` marker is omitted (informational only).
+
+## FR-071-7. `data_sharing_logs.consent_id` uses the resolved active consent
+To guarantee INV-5 referential integrity, the log records the resolved active granted `kyc` consent id (not the raw body `consentId`). TC-022 holds because the test's body `consentId` is the active one. **Needed decision:** ratify, or specify that the body `consentId` must equal the active consent.
+
+## FR-071-8. Phase-1.5 types run through the mock
+ckyc/digilocker/aadhaar_otp/vcip are Phase-1.5; only `KycMockAdapter` is bound, so they currently succeed via the mock (LLD Assumption 5's "VcipAdapter returns phase-not-enabled" is an unbuilt-adapter behaviour). The web UI gates these as disabled until enabled.
+
+## FR-071-9. `consentId` made optional (server resolves the active consent)
+**Gap:** the LLD/DTO mark `consentId` required for all types, but the service never reads it — the `kyc` consent gate and `data_sharing_logs.consent_id` use the server-resolved active granted consent. The web KYC workbench has no way to obtain a consent id (the consent ledger GET is FR-110's domain and isn't wired here).
+**Resolution applied:** `consentId` is OPTIONAL in the body (validated as a UUID when present); the server resolves the active consent authoritatively. Decouples the UI from a consent-id lookup with no behavioural change (TC-022 still holds — the resolved id equals the active one).
+**Needed decision:** ratify optional `consentId` in FR-071.md/api-contract, or wire an FR-110 "active kyc consent" read the UI can call.
+
+## FR-071-10. No GET for the KYC verification list (web workbench)
+**Gap:** the LLD UI tree's `KycCheckList` "lists all kyc_verifications for this lead", but FR-071 contracts only `POST /leads/{id}/kyc/{type}` — there is no GET.
+**Resolution applied:** the workbench renders the fixed KYC check types (PAN enabled; ckyc/digilocker/aadhaar/vcip disabled — Phase 1.5) and reflects each check's result from the run-mutation response; the consent gate surfaces reactively on `403 CONSENT_MISSING`. The persisted-list view awaits a contracted GET (read-model/FR-072 concern).
+**Needed decision:** add `GET /leads/{id}/kyc` to the contract if a list view is required.
+
+---
+
+# AMBIGUITY — FR-072 (KYC Exception Handling)
+
+*All resolved in-code with the narrowest spec-consistent choice; listed for Dev-1/contract write-back (CLAUDE.md §9). The first two are the LLD's own A-1/A-3; A-4/A-5 are schema↔LLD conflicts found in build.*
+
+## FR-072-A5. `kyc_check_status` enum has no `resolved` value (schema wins)
+**Gap:** the LLD §Response/state-machine, `FR-072-tests` T-01/T-02/T-10, and INV-01 all use `status = 'resolved'`, but `schema.sql:64` defines `kyc_check_status AS ENUM ('initiated','success','failed','exception','waived')` — there is no `resolved`. A literal `resolved` would be rejected by the DB enum (the FR-110 `CONSENT_CAPTURED` precedent: enum wins).
+**Resolution applied:** resolving an exception maps to an existing enum value — **`waived`** for waiver-class codes (`waiver`, `name_variance_waiver`, `address_variance_waiver`), **`success`** for all other (verification-class) codes; `resolution_code` (VARCHAR(40)) records the specific code. The API response `status` reflects the enum value (`success`/`waived`), not a literal `resolved`.
+**Needed decision:** amend FR-072.md/-tests/state-machines.md to the enum mapping, or add a `resolved` value to `kyc_check_status` (schema + enum + Flyway). The T-01/T-02/T-10 `status='resolved'` assertions must be updated.
+
+## FR-072-A4. The `failed → exception` transition consumer is unbuilt (open-state seam)
+**Gap:** FR-071 persists provider mismatch/down as `status='failed'` (+ `exception_type`), and its LLD says "FR-072 transitions to 'exception' via queue", but no FR defines that KYC_EXCEPTION→`exception` consumer (nor the `exception_sla_due_at` set). FR-072's resolve guard is `WHERE status='exception'` — so against the running system nothing would ever be resolvable.
+**Resolution applied:** FR-072 treats the OPEN exception state as `status IN ('exception','failed') AND resolution_code IS NULL` (shared `deriveLeadKycStatus` agrees). T-10 (resolved) and T-11 (success) still → CONFLICT. This makes the endpoint functional against FR-071's actual output.
+**Needed decision:** build the `failed→exception` consumer (with SlaEngine due-at) and assign its owner, or ratify that `failed` (with an `exception_type`, unresolved) IS the open-exception state and drop the separate `exception` status from the model.
+
+## FR-072-A1. `kyc_manual_fallback_enabled` compliance flag has no schema home
+**Gap (LLD A-1):** the flag gating `provider_down_manual` is not a column anywhere.
+**Resolution applied:** read as a boolean key `kyc_manual_fallback_enabled` from `product_configs.sla_config` (JSONB) via the lead's `product_config_id` (the LLD's best-effort location); absent/false → FORBIDDEN. No column invented.
+**Needed decision:** ratify `product_configs.sla_config.kyc_manual_fallback_enabled`, or define an org-level compliance config and point the read there.
+
+## FR-072-A3. `resolution_code` allowed list is not a contract artefact
+**Gap (LLD A-3):** the column is `VARCHAR(40)`, not an enum; the 9-value list is LLD best-effort.
+**Resolution applied:** the list lives in `kyc.constants.ts ALLOWED_RESOLUTION_CODES` and is enforced by the Zod DTO.
+**Needed decision:** ratify the list (and the waiver-subset) in `error-taxonomy.md` or a `@shared/enums` addition.
+
+## FR-072-A6. No GET exception-queue; resolution integrated into the FR-071 workbench
+The LLD UI tree shows an `ExceptionQueue` DataTable, but no GET endpoint exists (FR-071-10). **Resolution applied:** the `ExceptionResolutionModal` is wired into the existing `KycWorkbench` — a check row in the open-exception state exposes a "Resolve" action — so no list GET is needed. Notification side-effect (LLD step 8) is deferred (NotificationDispatchService not yet wired into M8).
+
+---
+
+# AMBIGUITY — FR-060 (Secure Customer Action Link)
+
+*Resolved in-code with the narrowest spec-consistent choice; listed for Dev-1/contract write-back (CLAUDE.md §9). The LLD's AMB-1..4 are carried here with what was applied.*
+
+## FR-060-1. `CUSTOMER_LINK_PORT` rebind moved to a @Global SelfServiceModule
+The seam was provided+exported by `compliance.module` (`UnavailableCustomerLinkAdapter`). FR-060 owns the real adapter (M7), so the binding moved: the @Global `SelfServiceModule` now provides `{ CUSTOMER_LINK_PORT → CustomerLinkAdapter }`, and `compliance.module` no longer provides/exports it (its consumers resolve the global). `UnavailableCustomerLinkAdapter` is left in `ports/customer-link.port.ts` as the documented fallback. Verified: FR-070/FR-110 customer endpoints still green (1037 tests).
+
+## FR-060-2. OTP gate on /documents & /consent returns 404, not 401 (port-based)
+The LLD §Auth describes a guard returning `AUTH_REQUIRED` (401) when the OTP session is missing on the upload/consent endpoints. But those endpoints (built in FR-070/FR-110) resolve via `CustomerLinkPort` (binary `ResolvedCustomerLink | null`), not `CustomerLinkGuard`. **Resolution applied:** the adapter returns `null` (→ NOT_FOUND 404) for token-invalid/expired/no-OTP-session/wrong-purpose — uniformly hiding existence (arguably stronger than 401). The landing (`GET /c/{token}`) and `POST /c/{token}/otp` use the guard (no OTP gate, by design).
+**Needed decision:** ratify 404-for-all on the port path, or enrich the port to signal "valid-but-unverified" so the controllers can return 401.
+
+## FR-060-3. Purpose gating on /documents & /consent → 404 (not 403)
+The LLD wants `FORBIDDEN` (403) when the action isn't in the link's `purpose`. The port adapter folds this into the same `null`→404 (binary contract). Ratify or enrich the port.
+
+## FR-060-4. (LLD AMB-2) `CUSTOMER_LINK_*` event code absent → `DOC_REQUEST`
+Applied per the LLD: link creation emits `DOC_REQUEST` (closest `event_code`). Add a `CUSTOMER_LINK_CREATED` value if a distinct event is wanted.
+
+## FR-060-5. (LLD AMB-1) OTP resend endpoint not built
+`POST /c/{token}/otp/resend` is not in the contract; deferred. The OTP is generated+dispatched at link create; a customer whose 10-min OTP TTL lapses currently needs a staff resend (new link). Add the resend endpoint if required.
+
+## FR-060-6. (LLD AMB-4) `link_status='used'` left unset
+Links remain `active` until expiry or staff revoke (resend revokes the prior). The auto-`used` transition (all purposes complete) is not implemented (LLD default). Ratify.
+
+## FR-060-7. `lead_display.product_display_name` uses `product_code`
+`product_configs` has no display-name column, so the customer landing shows `product_code` as the product name and a stage→label map for `status_label`. Add a display-name column/config if a friendlier product label is required.
+
+## FR-060-8. `ResolvedCustomerLink.channel = 'api'` (resolves FR-110-2)
+The adapter sets the consent `channel` to `CreationChannel.API` for customer self-service (the FR-110-2 open question on the channel source). Ratify, or carry the delivery channel (sms/whatsapp/email) through instead.
+
+*Reused, not rebuilt (already shipped):* customer document upload (FR-070 `POST /c/{token}/documents` + VirusScanPort — LLD AMB-3 is moot), customer consent (FR-110 `POST /c/{token}/consent`), the `CustomerUploadPage`. FR-060 adds the token/OTP machinery + landing that make them reachable.
+
+---
+
+# AMBIGUITY — FR-061 (Customer Grievance & Service Request)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9). The LLD's AMB-1..5 are carried with what was applied.*
+
+## FR-061-A1. `audit_action` has no `grievance_create` value → `lead_create`
+The audit appender writes `action = 'lead_create'` with `entity_type = 'grievance'` (LLD AMB-1's option a — the closest enum value). This pollutes lead-creation audit queries; add a `grievance_create` value to `audit_action` (schema + enum + Flyway) and switch, or ratify the mapping.
+
+## FR-061-A2. Token resolution via the adapter (404), not a guard (409)
+The LLD §Auth wants `CONFLICT` (409) for status≠active / expired / OTP-unverified and `NOT_FOUND` (404) only for unknown token. **Resolution applied:** grievance resolves via `CustomerLinkAdapter.resolveForGrievance` (purpose-gated, OTP-gated) → `null` → uniform `NOT_FOUND` (404) for ALL token problems — consistent with the FR-070/110 customer endpoints and FR-060-2/3 (existence hiding). Ratify, or enrich the port to distinguish 409.
+
+## FR-061-A3. Grievance SLA due-at is wall-clock, not business-time
+The global `SlaEngine.computeDueAt`/`setGrievanceDue` require `SLA_POLICY_READER_PORT`, which is bound only in EngagementModule's local scope (not visible to the @Global SlaEngine singleton) — calling them would throw `not bound` (pre-existing seam gap). **Resolution applied:** the service reads the active grievance `sla_policies.threshold_minutes` directly and sets `sla_due_at = now + threshold` (wall-clock). SLA is non-blocking here ("should"); the FR-104 sweep owns escalation. **Needed decision:** bind `SLA_POLICY_READER_PORT` globally (or in SlaModule) so business-time computation works, then switch grievance intake to `computeDueAt(GRIEVANCE, …)`.
+
+## FR-061-A4. (LLD AMB-2) `created_by`/`updated_by` = SYSTEM_USER_ID
+Customer-link writes have no JWT user; `grievances.created_by/updated_by` use the seeded `SYSTEM_USER_ID` (the FR-060/customer-write convention).
+
+## FR-061-A5. (LLD AMB-3/4/5) attachment, owner, duplicate-link deferred
+`attachmentNote` is free-text only (no binary — `grievances` has no `attachment_ref`); `owner_id` left null at intake (routing is FR-114); no duplicate-complaint linking (`grievances` has no `parent_grievance_id`). All per the LLD ambiguities; FR-061 is intake-only (`(none) → open`).
+
+## FR-061-A6. `CodeGenerator` extended + exported
+`CodeGenerator.nextGrievanceNo` (GRV-{YYYY}-{seq5}) was added (same advisory-lock + MAX()+1 pattern as `nextLeadCode`) and `CodeGenerator` is now exported from the @Global `CaptureModule` so M7 can inject it. `resolveForGrievance` was added to `CustomerLinkAdapter` (M7-internal; NOT on the cross-module `CustomerLinkPort`).
+
+## FR-061-A7. Grievance-officer info block deferred (web)
+The LLD's `GrievanceOfficerInfoBlock` reads `dla_registry.grievance_officer` from the FR-060 `GET /c/{token}` payload, but FR-060's landing doesn't expose `dla_registry` (no PII/registry data added there). The grievance form ships without the officer block (a generic "contact your RM" note); surfacing the officer requires adding `grievance_officer` to the FR-060 landing response.
+
+---
+
+# AMBIGUITY — FR-062 (Customer Status Tracking & Callback)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9).*
+
+## FR-062-A1. `tasks` has no owner service — FR-062 is the de-facto first writer
+The yaml names "sole writer: TaskService / M11", but no `TaskService`/M11 task module exists yet (zero `tasks` writers in the codebase). **Resolution applied:** FR-062 inserts the callback `tasks` row via its own `StatusRepository` (no competing writer → no owner-writes conflict today). **Needed decision:** when M11/FR-100 lands, it should own `tasks` (a `TaskService.createCallbackTask` or a port seam) and FR-062 should delegate. Stage-9 ownership reconciliation item.
+
+## FR-062-A2. Hot-flag side effect deferred (`LeadService.setHotFlag` is a stub)
+`LeadService.setHotFlag` is a FR-031 stub that REJECTS (`notYetWired`). The LLD §2.4 wants the callback to set `leads.is_hot=true` (high-intent signal). **Resolution applied (per LLD Assumption 3):** the callback task is created; the hot-flag is SKIPPED (calling the stub would throw and roll back the task). Wire it when FR-031 implements `setHotFlag(leadId, isHot, reasons, tx)`.
+
+## FR-062-A3. `UNASSIGNED_LEAD_OWNER_ID` env var absent → SYSTEM_USER_ID
+`tasks.owner_id` is NOT NULL; the LLD assigns an unassigned lead's callback to `UNASSIGNED_LEAD_OWNER_ID`, which is not in the environment contract. **Resolution applied:** fall back to the seeded `SYSTEM_USER_ID` (a valid users FK) + warn log. Add the env var (and a real ops-queue user) if a dedicated unassigned owner is required.
+
+## FR-062-A4. Token resolution via the adapter (404), not the LLD's 401/404 split
+`GET /status` + `POST /callback` resolve via `CustomerLinkAdapter.resolveForStatus`/`resolveForCallback` (purpose + OTP-session gated) → `null` → uniform NOT_FOUND (404). The LLD's 401-for-OTP-missing is folded into 404 (existence hiding — consistent with FR-060/061/070/110). Ratify or enrich the port.
+
+## FR-062-A5. Idempotency-Key optional (not strictly required)
+The LLD marks `Idempotency-Key` required on the callback POST; FR-062 treats it as optional — when present, replays return the original `task_id` (Redis, 24h TTL); when absent, the request proceeds without dedupe. The `IDEMPOTENT_REPLAY` `meta.detail.reason` is not surfaced (no success-envelope channel). Ratify.
+
+## FR-062-A6. No external GET-status caching / LOS status label
+`los_status_label` is always `null` (LOS status surfacing is M9/FR-08x). The status view is a live read; no stage transition occurs.
+
+---
+
+# AMBIGUITY — FR-090 (Partner Master & Onboarding Metadata)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9). LLD Ambiguities 1–3 carried with what was applied.*
+
+## FR-090-A1. (LLD Ambiguity 1) SM has no `configuration` capability → denied
+The BRD lists SM as an allowed role but `auth-matrix.json` does not grant SM the `configuration` capability. **Resolution applied (contracts win):** SM is denied (403). Add SM to the `configuration` capability_matrix if SM access is intended. *Observation (Dev-1):* the matrix ALSO grants `configuration` to KYC/DPO, so they can reach partner endpoints — broader than the LLD's ADMIN/HEAD/BM table; the implementation follows the machine-readable matrix. Reconcile the LLD or the matrix.
+
+## FR-090-A2. `audit_action` has no `partner_*` value → `config_change`
+Partner create/update/status-change audits use `action='config_change'` with `entity_type='partner'` and a `detail.event` (`partner_created`/`partner_updated`/`partner_status_changed`) discriminator. Add `partner_*` audit_action values (schema + enum + Flyway) and switch, or ratify the mapping.
+
+## FR-090-A3. `EventCode` has no `PARTNER_CREATED` → outbox omitted
+The LLD emits `PARTNER_CREATED` on create, but it isn't an `EventCode` value and has no consumer in scope (FR-091 checks `partners.status` directly at submission). **Resolution applied:** the outbox emit is omitted (the audit log records the create). Add `PARTNER_CREATED` if a partner-created event is needed.
+
+## FR-090-A4. (LLD Ambiguity 2) BM list scope = in-branch + org-wide
+BM list/get filters `branch_id = userBranch OR branch_id IS NULL` (org-wide partners visible to all BMs). Out-of-branch partners → NOT_FOUND (existence hidden). Narrow to in-branch-only if intended.
+
+## FR-090-A5. (LLD Ambiguity 3) reactivation needs no reason
+`statusReason` is required only for `suspended`/`expired` (not for `suspended → active` reactivation). Ratify or extend.
+
+## FR-090-A6. Status-change restricted to ADMIN/HEAD; query grammar
+Suspend/expire requires role ∈ {ADMIN, HEAD} (BM may edit metadata for in-scope partners but not change status) → FORBIDDEN otherwise. Query grammar follows the FR-050 codebase convention (`filter[status]`/`filter[type]` object, `sort=field:dir`) rather than the LLD's `sort=-created_at`; `limit` clamps to 100. `contact_mobile` is masked (`98xxxxxx10`) in list responses and in audit detail.
+
+---
+
+# AMBIGUITY — FR-091 (Partner Lead Submission)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9).*
+
+## FR-091-A1. Reuses `CaptureService.createLead` (not a re-implemented insert chain)
+The LLD §Step E lists the identity/attribution/lead/product_detail/idempotency inserts directly. **Resolution applied:** FR-091 delegates the whole atomic write to the @Global `CaptureService.createLead` (FR-010 owner of those M2 writes — owner-writes), passing a forced partner source + `channel='partner'` + `actorRole=PARTNER`. This reuses the existing dedupe gate, PARTNER cross-partner check, audit, outbox, and **idempotency** (CaptureService's Redis `CaptureIdempotencyService`). So the LLD's `integration_logs` idempotency record (and the open `integration_kind='partner_intake'` enum question) is **moot** — no `integration_logs` row is written by FR-091.
+
+## FR-091-A2. Partner-active gate at the FR-091 layer → FORBIDDEN
+FR-091 resolves the partner by `partner_id` (from the AbacGuard `partner`-scope predicate) and rejects absent / `suspended` / `expired` / past-`valid_until` with FORBIDDEN (403), per the LLD. `CaptureService.resolvePartnerId` ALSO rejects a non-active partner (as `VALIDATION_ERROR` "Partner is not active") as a backstop — FR-091's explicit gate gives the LLD-specified 403 first.
+
+## FR-091-A3. Non-PARTNER callers → FORBIDDEN via the partner predicate
+`create_lead`/`view_lead` are held by several roles at different scopes, so the AbacGuard admits e.g. RM (scope O). FR-091 restricts to PARTNER by requiring the resolved predicate to be `type='partner'` (→ `partner_id`); any other predicate type → FORBIDDEN. A PARTNER with no `partner_id` likewise → FORBIDDEN.
+
+## FR-091-A4. Forced source: DSA (partner type DSA) else Dealer
+`lead_source` has no "Partner" literal; partner leads use `DSA` (type DSA) or `Dealer` (all other types) — both satisfy `ck_source_attr_partner` — with `partner_code` forced from the partner and `channel='partner'`. Matches the LLD assumption 2 and capture's `resolvePartnerId`.
+
+## FR-091-A5. Create response omits `created_at`
+`CaptureService` returns `LeadCaptureData` (masked, no `created_at`); the FR-091 create response maps those fields and omits `created_at` (the LLD example includes it). `created_at` is available via `GET /partners/leads`. Idempotent replay returns the original payload at HTTP **201** (per the LLD — create replay stays 201; the `replayed` flag is not surfaced).
+
+## FR-091-A6. Partner document submission out of scope (LLD AMB)
+No partner document-upload route is added; partner documents go through the standard M8 endpoints (FR-060/070) once the lead exists. Masking: list `name`→`Ramesh xxxxx`, `mobile`→`98xxxxxx10` (PARTNER projection omits score/owner/internal fields — AC2).
+
+---
+
+# AMBIGUITY — FR-092 (Partner Quality Score & Dashboard)
+
+*Resolved in-code with the narrowest spec-consistent choice; for Dev-1/contract write-back (CLAUDE.md §9). LLD Assumptions 1–6 carried with what was applied.*
+
+## FR-092-A1. Scope follows the auth-matrix (broader than the LLD table)
+The LLD restricts the quality endpoint to PARTNER/BM/SM/HEAD, but `auth-matrix.json` grants `reports` to RM(O)/KYC(B)/DPO(M) too. **Resolution applied (matrix wins):** `partnerInScope` grants the predicate-derived scope — `partner`(own)/`branch`/`region`/`team`/`all`/`masked` — and denies `own`(RM)/`customer_token`. So RM → FORBIDDEN, but KYC/DPO CAN read partner quality within their branch/masked scope (the payload carries no PII). Reconcile the LLD or the matrix.
+
+## FR-092-A2. Median TAT approximated with AVG via raw SQL (LLD Assumption 2)
+Kysely's builder can't express the §12.4 nested median; the `speed_index` numerator/denominator use a parameterised raw `sql` nested aggregate with `AVG` (per-lead first-doc-upload − created_at → per-partner avg → org-min). For a true statistical median, add a `PERCENTILE_CONT(0.5)` view. `doc TAT` = first doc upload − lead.created_at (LLD Assumption 3, option a).
+
+## FR-092-A3. `verified_docs_first_time` ≈ `status='verified' AND version=1`
+No first-time-verify column exists; approximated as verified on v1 (LLD Assumption 3). `uploaded_docs` = `status <> 'pending'`. Contactability uses the CURRENT `leads.stage` (reached `contacted`+), not `stage_history` (LLD Assumption 1).
+
+## FR-092-A4. Weights hard-coded; MIN_VOLUME=10 const (LLD Assumptions 5/6)
+The §12.4 weights and the 10-lead minimum-volume threshold are constants in `partner.constants.ts` (no config table; the `PARTNER_QUALITY_MIN_VOLUME` env var is not in the environment contract, so a const default is used). Add a config table / env var to make them runtime-configurable.
+
+## FR-092-A5. Cache write actor + window timezone
+The best-effort `partners.quality_score` cache write sets `updated_by` to the requesting user (schema requires NOT NULL; LLD Assumption 4 — a system-user UUID could be used instead). The default scoring window is a rolling 30 days computed in **UTC** (the LLD says IST midnight); ratify or switch to IST.
+
+## FR-092-A7. Org-min TAT excludes non-partner leads (review fix)
+The LLD's E2 grouped by `sa.partner_id` without a null filter, so direct/web/RM-captured leads (`partner_id IS NULL`) would form a synthetic "partner" group and could become the org-min, skewing every partner's `speed_index`. The query now adds `sa.partner_id IS NOT NULL`. Write-back to the LLD E2. (`uploaded_docs` counting `not_required` docs is per-LLD and left as-is.)
+
+## FR-092-A6. Insufficient-data + zero-denominator
+`total_leads < 10` → `quality_score: null`, all `factors: null`, raw `metrics` still returned. Any factor with a zero denominator renders `null` (never 0%), per BRD §12.5; a null factor contributes 0 to the weighted score.
+
+---
+
+# Cross-FR Integration Review — Resolutions (2026-06-15)
+
+## XFR-H1. `partners` ownership: FR-090 (M10), removed from the FR-131 master registry
+`partners` was writable via two paths: the FR-131 generic master CRUD (`/admin/partners`) and FR-090's dedicated `PartnerService` (`/partners`). The generic path bypassed FR-090's status-transition machine (`active → suspended/expired`, ADMIN/HEAD-only), so a partner could reach a state FR-090 forbids. **Resolution applied:** removed `partners` from `MASTER_SLUGS` and `MASTER_DESCRIPTORS`, deleted the dead `PartnerDescriptor`/`toPartnerView`/`dto/partner.dto.ts`. `PartnerService` (FR-090) is now the sole writer of `partners`. The master registry's own contract already excludes resources owned by a concrete FR (regions/branches etc. stay; `communication-templates`/`retention-policies` remain pending their M11/M12 owners). Web uses only `/partners`; no consumer touched `/admin/partners`. Write-back to FR-090 LLD (sole-owner) and FR-131 LLD (allow-list).
+
+## XFR-H2. `lead_identities` enrichment moved to the M2 owner (capture)
+`lead_identities` is M2-owned (auth-matrix writer M2/M5), but FR-071 KYC (M8) updated it directly via `KycVerificationRepository.updateLeadIdentity` — an owner-writes breach. **Resolution applied:** added `LeadIdentityRepository.enrich(...)` (capture/M2) and exported it from the `@Global` `CaptureModule`; `KycService` now injects it and calls `identities.enrich(...)` inside the same KYC transaction (mirrors how it already calls `LeadService.setKycStatus`). Removed `updateLeadIdentity`/`LeadIdentityPatch` from the KYC repo. Behaviour and the atomic transaction boundary are unchanged. Write-back to FR-071 LLD §Step 5c (call the capture seam, not a local write).
+
+## XFR-H3. Two `grievances` writers after integration (self-service vs compliance) — FOLLOW-UP
+When Dev-2's M7 self-service slice (FR-061) was built, M12 compliance had only the consent ledger; FR-061 therefore shipped its own `GrievanceController/Service/Repository` writing `grievances`. Master has since merged FR-114 (compliance grievance workflow), whose module comment designates `GrievanceService.create()` as the reuse seam for FR-061. After this integration merge BOTH modules write `grievances` (distinct classes/routes — compiles and all tests pass — but an owner-writes duplication). **Not resolved in this merge** (no behaviour change, kept green). Follow-up: route the self-service customer grievance path through compliance `GrievanceService.create(..., source='customer_link')` and retire the self-service grievance writer. Tracked for the next cross-FR review pass.
