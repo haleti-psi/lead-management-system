@@ -25,6 +25,9 @@ import { GrievanceIdempotencyService } from './grievance-idempotency.service';
 import { GrievanceRepository } from './grievance.repository';
 import { GrievanceService } from './grievance.service';
 import { GrievanceSlaWriterAdapter } from './grievance-sla-writer.adapter';
+import { RetentionEngine } from './retention.engine';
+import { RetentionPolicyController } from './retention-policy.controller';
+import { RetentionPolicyRepository } from './retention-policy.repository';
 import {
   CUSTOMER_LINK_PORT,
   UnavailableCustomerLinkAdapter,
@@ -33,11 +36,12 @@ import {
 /**
  * M12 Compliance — FR-110 (purpose-wise consent ledger) + FR-111 (data
  * minimisation & resource-access controls) + FR-112 (data-principal rights
- * workflow) + FR-113 (DLA/LSP registry) + FR-114 (grievance workflow).
+ * workflow) + FR-113 (DLA/LSP registry) + FR-114 (grievance workflow) +
+ * FR-115 (data retention, purge & anonymisation engine).
  *
  * Owns `consent_records` (append-only), `data_sharing_logs` (append-only),
- * `grievances` (full lifecycle), and `dla_registry` (FR-113). Depends only on the
- * global core modules
+ * `grievances` (full lifecycle), `dla_registry` (FR-113), and `retention_policies`
+ * (FR-115). Depends only on the global core modules
  * (DB/UnitOfWork, audit, outbox, auth-core, sla, logging) plus the @Global
  * CaptureModule's `LeadService`.
  *
@@ -75,6 +79,8 @@ import {
     DlaRegistryController,
     GrievanceController,
     GrievanceEscalationJob,
+    // FR-115 — retention policy CRUD + run trigger
+    RetentionPolicyController,
   ],
   providers: [
     // FR-110 — consent
@@ -108,6 +114,10 @@ import {
       provide: GRIEVANCE_SLA_WRITER_PORT,
       useExisting: GrievanceSlaWriterAdapter,
     },
+
+    // FR-115 — retention engine + policy repository
+    RetentionEngine,
+    RetentionPolicyRepository,
   ],
   exports: [
     ConsentService,
