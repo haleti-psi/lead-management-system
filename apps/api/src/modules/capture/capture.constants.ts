@@ -35,5 +35,8 @@ export const BULK_REASSIGN_MAX_IDS = 100;
 /** Largest sequence representable in the `LD-{YYYY}-{seq6}` lead-code format. */
 export const LEAD_CODE_MAX_SEQ = 999_999;
 
+/** Largest sequence representable in the `GRV-{YYYY}-{seq5}` grievance-number format (FR-061). */
+export const GRIEVANCE_NO_MAX_SEQ = 99_999;
+
 /** GCS-style object prefix for bulk-import artifacts. */
 export const IMPORT_FILE_PREFIX = 'imports';

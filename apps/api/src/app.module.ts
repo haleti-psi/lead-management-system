@@ -28,8 +28,11 @@ import { DedupeModule } from './modules/dedupe/dedupe.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { IntegrationModule } from './modules/integration/integration.module';
+import { KycModule } from './modules/kyc/kyc.module';
 import { ProductConfigModule } from './modules/product-config/product-config.module';
+import { PartnerModule } from './modules/partner/partner.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
+import { SelfServiceModule } from './modules/self-service/self-service.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
 import { LosModule } from './modules/los/los.module';
 import { HealthController } from './health.controller';
@@ -90,6 +93,17 @@ import { HealthController } from './health.controller';
     // LeadService.setConsentStatus). `/c/{token}/consent` is live behind the
     // FR-060 CustomerLinkPort seam.
     ComplianceModule,
+    // FR-060 (M7 self-service). @Global — owns `customer_links` + the token/OTP
+    // machinery and REBINDS the CUSTOMER_LINK_PORT seam to the real adapter, so
+    // the FR-070 /c/{token}/documents and FR-110 /c/{token}/consent endpoints
+    // resolve live tokens. Registered before KycModule for clarity (the @Global
+    // port is visible regardless of order).
+    SelfServiceModule,
+    // FR-070 (M8 KYC & Documents). Owns the `documents` table + the document
+    // checklist/upload/waiver flow and the leads.kyc_status derivation (via the
+    // @Global CaptureModule's LeadService.setKycStatus). `/c/{token}/documents`
+    // is live behind the FR-060 CustomerLinkPort seam (reused from ComplianceModule).
+    KycModule,
     EngagementModule,
     // FR-040 (M5 product configuration). Owns the `product_config` activator,
     // which self-registers with the shared FR-132 ConfigActivatorRegistry.
@@ -108,6 +122,8 @@ import { HealthController } from './health.controller';
     // @Global CaptureModule (LeadService). Imports ComplianceModule for
     // DataSharingService.logShare (FR-111 seam).
     LosModule,
+    // FR-090 (M10 partner). Partner master CRUD; sole writer of `partners`.
+    PartnerModule,
   ],
   controllers: [HealthController],
   providers: [

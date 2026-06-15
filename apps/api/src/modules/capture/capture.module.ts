@@ -80,6 +80,8 @@ import { InlineImportDispatchAdapter } from './ports/inline-import-dispatch.adap
     LeadService,
     StageGuardService,
     CaptureService,
+    CodeGenerator,
+    LeadIdentityRepository,
     LeadSlaWriterAdapter,
     LeadReassignmentAdapter,
     LEAD_SLA_WRITER_PORT,

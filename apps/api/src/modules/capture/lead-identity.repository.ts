@@ -16,10 +16,20 @@ export interface InsertLeadIdentityValues {
   created_by: string;
 }
 
+/** KYC-resolved identity enrichment (only the columns a check produced are set). */
+export interface LeadIdentityEnrichment {
+  pan_token?: string;
+  pan_masked?: string;
+  ckyc_id?: string;
+  aadhaar_ref_token?: string;
+}
+
 /**
  * FR-010 — Kysely writes for `lead_identities` (M2-owned, auth-matrix
- * `lead_identities … writer: M2/M5`). Insert-at-capture only; identity edits
- * belong to later FRs.
+ * `lead_identities … writer: M2/M5`). Insert-at-capture, plus {@link enrich} —
+ * the owner-side mutator M8 KYC calls through the @Global CaptureModule seam so
+ * the only code that writes `lead_identities` lives in its owning module
+ * (owner-writes; cross-FR review H2).
  */
 @Injectable()
 export class LeadIdentityRepository {
@@ -40,5 +50,25 @@ export class LeadIdentityRepository {
       .returning('lead_identity_id')
       .executeTakeFirstOrThrow();
     return row.lead_identity_id;
+  }
+
+  /**
+   * Enrich an existing identity with KYC-resolved tokens/refs, inside the caller's
+   * transaction. No-op for an empty patch. Org-scoped + parameterised.
+   */
+  async enrich(
+    leadIdentityId: string,
+    orgId: string,
+    patch: LeadIdentityEnrichment,
+    actorId: string,
+    tx: DbTransaction,
+  ): Promise<void> {
+    if (Object.keys(patch).length === 0) return;
+    await tx
+      .updateTable('lead_identities')
+      .set({ ...patch, updated_by: actorId, updated_at: new Date() })
+      .where('lead_identity_id', '=', leadIdentityId)
+      .where('org_id', '=', orgId)
+      .execute();
   }
 }

@@ -28,10 +28,6 @@ import { GrievanceSlaWriterAdapter } from './grievance-sla-writer.adapter';
 import { RetentionEngine } from './retention.engine';
 import { RetentionPolicyController } from './retention-policy.controller';
 import { RetentionPolicyRepository } from './retention-policy.repository';
-import {
-  CUSTOMER_LINK_PORT,
-  UnavailableCustomerLinkAdapter,
-} from './ports/customer-link.port';
 
 /**
  * M12 Compliance — FR-110 (purpose-wise consent ledger) + FR-111 (data
@@ -41,9 +37,8 @@ import {
  *
  * Owns `consent_records` (append-only), `data_sharing_logs` (append-only),
  * `grievances` (full lifecycle), `dla_registry` (FR-113), and `retention_policies`
- * (FR-115). Depends only on the global core modules
- * (DB/UnitOfWork, audit, outbox, auth-core, sla, logging) plus the @Global
- * CaptureModule's `LeadService`.
+ * (FR-115). Depends only on the global core modules (DB/UnitOfWork, audit,
+ * outbox, auth-core, sla, logging) plus the @Global CaptureModule's `LeadService`.
  *
  * **FR-111 reuse seams:**
  * - `DataSharingService.logShare(input, tx)` is exported for FR-080
@@ -55,16 +50,20 @@ import {
  *   before persisting custom field values.
  *
  * **FR-114 reuse seam for FR-061:** `GrievanceService.create(dto, ctx)` is
- * exported and will be called by the self-service module (M7/FR-061) with
- * `source = 'customer_link'` when that FR is built. No modification to this
- * module is required; FR-061 imports `GrievanceService` from here.
+ * exported and intended for self-service (M7/FR-061) reuse. NOTE (cross-FR):
+ * the as-built M7 SelfServiceModule currently ships its OWN grievance writer;
+ * reconciling the two `grievances` writers onto this owner is tracked as a
+ * follow-up cross-FR item (XFR-H3).
  *
  * **GRIEVANCE_SLA_WRITER_PORT** — binds the M12-side adapter that the core
  * `SlaEngine` calls to write `grievances.sla_due_at` without violating
  * owner-writes (the SLA engine never touches `grievances` directly).
  *
- * `CUSTOMER_LINK_PORT` is the FR-060 seam: every `/c/{token}/consent` request
- * → 404 until FR-060 rebinds the port in this module.
+ * `CUSTOMER_LINK_PORT` (consumed by `CustomerConsentController` / `ConsentService`)
+ * is bound by the @Global `SelfServiceModule` (FR-060) to the real
+ * `CustomerLinkAdapter`; this module no longer binds the placeholder
+ * `UnavailableCustomerLinkAdapter`. The port symbol + fallback adapter still live
+ * in `ports/customer-link.port.ts`.
  *
  * `ConsentService`, `GrievanceService`, `DataSharingService`, and
  * `DataMinimisationService` are exported for consumers.
@@ -83,11 +82,9 @@ import {
     RetentionPolicyController,
   ],
   providers: [
-    // FR-110 — consent
+    // FR-110 — consent (CUSTOMER_LINK_PORT now provided by @Global SelfServiceModule)
     ConsentService,
     ConsentRepository,
-    UnavailableCustomerLinkAdapter,
-    { provide: CUSTOMER_LINK_PORT, useExisting: UnavailableCustomerLinkAdapter },
 
     // FR-111 — data minimisation & data-sharing audit
     DataSharingService,

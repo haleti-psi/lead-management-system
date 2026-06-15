@@ -23,6 +23,15 @@ export type { LosPort } from './ports/los.port';
 export { LOS_PORT } from './ports/los.port';
 export type { KycPort } from './ports/kyc.port';
 export { KYC_PORT } from './ports/kyc.port';
+// FR-070 — GCS document storage + virus scan (integration-map.md). Hexagonal
+// ports per the FR-010 ImportFileStorePort precedent (NOT routed through the
+// gateway: integration_kind has no GCS/virus-scan member). Bound in kyc.module.ts.
+export type { GcsPort, GcsObjectMetadata } from './ports/gcs.port';
+export { GCS_PORT, GcsHttpAdapter } from './ports/gcs.port';
+export { GcsMockAdapter } from './adapters/gcs-mock.adapter';
+export type { VirusScanPort, VirusScanRequest } from './ports/virus-scan.port';
+export { VIRUS_SCAN_PORT, VirusScanHttpAdapter } from './ports/virus-scan.port';
+export { VirusScanMockAdapter } from './adapters/virus-scan-mock.adapter';
 // FR-010 — public-capture captcha (shared-utilities.md; AMBIGUITIES C3).
 export { CaptchaService } from './captcha.service';
 export type { CaptchaPort } from './ports/captcha.port';

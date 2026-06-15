@@ -14,7 +14,6 @@ import {
   CreateCommunicationTemplateDto,
   PatchCommunicationTemplateDto,
 } from './dto/communication-template.dto';
-import { CreatePartnerDto, PatchPartnerDto } from './dto/partner.dto';
 import { CreateRegionDto, PatchRegionDto } from './dto/region.dto';
 import {
   CreateRejectionReasonDto,
@@ -517,119 +516,6 @@ function toRetentionView(row: {
   };
 }
 
-// ───────────────────────── partners (branch-scoped, status enum) ─────────────────────────
-
-class PartnerDescriptor implements MasterResourceDescriptor {
-  readonly slug = 'partners';
-  readonly configType = 'partner';
-  readonly entityType = 'partner';
-  readonly scopeModel = 'branch' as const;
-  readonly activenessModel = 'status' as const;
-  readonly createSchema = CreatePartnerDto;
-  readonly patchSchema = PatchPartnerDto;
-
-  async list(executor: KyselyDb, args: ListArgs): Promise<MasterListPage> {
-    let q = executor.selectFrom('partners').selectAll().where('org_id', '=', ORG_ID_DEFAULT);
-    if (args.isActive !== undefined) q = args.isActive ? q.where('status', '=', STATUS_ACTIVE) : q.where('status', '!=', STATUS_ACTIVE);
-    const rows = await q.orderBy('created_at', 'desc').limit(args.limit).offset((args.page - 1) * args.limit).execute();
-    let c = executor.selectFrom('partners').select((eb) => eb.fn.countAll<string>().as('count')).where('org_id', '=', ORG_ID_DEFAULT);
-    if (args.isActive !== undefined) c = args.isActive ? c.where('status', '=', STATUS_ACTIVE) : c.where('status', '!=', STATUS_ACTIVE);
-    const { count } = await c.executeTakeFirstOrThrow();
-    return { rows: rows.map(toPartnerView), total: Number(count) };
-  }
-
-  async findById(executor: KyselyDb | DbTransaction, id: string): Promise<MasterRecordView | undefined> {
-    const row = await executor.selectFrom('partners').selectAll().where('partner_id', '=', id).where('org_id', '=', ORG_ID_DEFAULT).executeTakeFirst();
-    return row != null ? toPartnerView(row) : undefined;
-  }
-
-  async insert(tx: DbTransaction, body: unknown, actorId: string) {
-    const dto = body as CreatePartnerDto;
-    const row = await tx
-      .insertInto('partners')
-      .values({
-        org_id: ORG_ID_DEFAULT,
-        partner_code: dto.partnerCode,
-        type: dto.type,
-        legal_name: dto.legalName,
-        branch_id: dto.branchId ?? null,
-        products: asJson(dto.products),
-        contact_person: dto.contactPerson ?? null,
-        contact_mobile: dto.contactMobile ?? null,
-        agreement_ref: dto.agreementRef ?? null,
-        commission_flag: dto.commissionFlag ?? false,
-        risk_category: dto.riskCategory ?? null,
-        valid_until: dto.validUntil ?? null,
-        status: STATUS_ACTIVE,
-        created_by: actorId,
-        updated_by: actorId,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    return { record: toPartnerView(row), version: 1, diff: { op: 'create', after: { partner_code: dto.partnerCode, type: dto.type } } };
-  }
-
-  async update(tx: DbTransaction, existing: MasterRecordView, body: unknown, actorId: string) {
-    const dto = body as PatchPartnerDto;
-    const row = await tx
-      .updateTable('partners')
-      .set({
-        ...(dto.partnerCode != null && { partner_code: dto.partnerCode }),
-        ...(dto.type != null && { type: dto.type }),
-        ...(dto.legalName != null && { legal_name: dto.legalName }),
-        ...(dto.branchId != null && { branch_id: dto.branchId }),
-        ...(dto.products != null && { products: asJson(dto.products) }),
-        ...(dto.contactPerson != null && { contact_person: dto.contactPerson }),
-        ...(dto.contactMobile != null && { contact_mobile: dto.contactMobile }),
-        ...(dto.agreementRef != null && { agreement_ref: dto.agreementRef }),
-        ...(dto.commissionFlag != null && { commission_flag: dto.commissionFlag }),
-        ...(dto.riskCategory != null && { risk_category: dto.riskCategory }),
-        ...(dto.validUntil != null && { valid_until: dto.validUntil }),
-        ...(dto.status != null && { status: dto.status }),
-        updated_by: actorId,
-        updated_at: new Date(),
-      })
-      .where('partner_id', '=', existing.id)
-      .where('org_id', '=', ORG_ID_DEFAULT)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    return { record: toPartnerView(row), version: 1, diff: { op: 'update', changed: Object.keys(dto) } };
-  }
-
-  async assertNotInUse(executor: DbTransaction, record: MasterRecordView): Promise<void> {
-    // A partner with active mapped users cannot be suspended/expired (schema users.partner_id).
-    const { count } = await executor
-      .selectFrom('users')
-      .select((eb) => eb.fn.countAll<string>().as('count'))
-      .where('org_id', '=', ORG_ID_DEFAULT)
-      .where('partner_id', '=', record.id)
-      .where('status', '=', 'active')
-      .executeTakeFirstOrThrow();
-    if (Number(count) > 0) {
-      throw new DomainException(ERROR_CODES.CONFLICT, undefined, {
-        detail: { reason: 'Resource is referenced by active records and cannot be deactivated.' },
-      });
-    }
-  }
-}
-
-function toPartnerView(row: {
-  partner_id: string; partner_code: string; type: string; legal_name: string; branch_id: string | null; status: string; created_at: Date; updated_at: Date;
-}): MasterRecordView {
-  return {
-    id: row.partner_id,
-    partnerId: row.partner_id,
-    partnerCode: row.partner_code,
-    type: row.type,
-    legalName: row.legal_name,
-    branchId: row.branch_id,
-    status: row.status,
-    isActive: row.status === STATUS_ACTIVE,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 // ───────────────────────── communication_templates (global, status enum, versioned) ─────────────────────────
 
 class CommunicationTemplateDescriptor implements MasterResourceDescriptor {
@@ -765,8 +651,9 @@ function toTemplateView(row: {
  * allocation-rules (FR-030), webhooks (FR-140), break-glass (FR-003),
  * dla-registry (FR-113 M12 — claimed out like allocation-rules/FR-030).
  *
- * NOTE: ownership of partners/communication-templates/retention is pending
- * cross-FR review (other modules may claim these); left here as-is.
+ * NOTE: ownership of communication-templates/retention is pending cross-FR review
+ * (M11/M12 may claim these); left here as-is. `partners` was removed (FR-090 /
+ * M10 PartnerService is the sole owner) per cross-FR review H1.
  */
 export const MASTER_DESCRIPTORS: readonly MasterResourceDescriptor[] = [
   new RegionDescriptor(),
@@ -774,6 +661,5 @@ export const MASTER_DESCRIPTORS: readonly MasterResourceDescriptor[] = [
   new RejectionReasonDescriptor(),
   new BusinessCalendarDescriptor(),
   new RetentionPolicyDescriptor(),
-  new PartnerDescriptor(),
   new CommunicationTemplateDescriptor(),
 ];
