@@ -31,6 +31,7 @@ import { IntegrationModule } from './modules/integration/integration.module';
 import { ProductConfigModule } from './modules/product-config/product-config.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { WorkspaceModule } from './modules/workspace/workspace.module';
+import { LosModule } from './modules/los/los.module';
 import { HealthController } from './health.controller';
 
 // Root module. Stage-7 foundation wave (architecture §12): cross-cutting core/
@@ -102,6 +103,11 @@ import { HealthController } from './health.controller';
     // FR-050 (M6 workspace). Read-only lead list + saved views + the bulk-action
     // gate; `leads` mutations delegate to the @Global CaptureModule's LeadService.
     WorkspaceModule,
+    // FR-080 (M9 LOS). LOS eligibility request + read-only snapshot. Depends on
+    // the global IntegrationCoreModule (LOS_PORT, IntegrationGateway) and the
+    // @Global CaptureModule (LeadService). Imports ComplianceModule for
+    // DataSharingService.logShare (FR-111 seam).
+    LosModule,
   ],
   controllers: [HealthController],
   providers: [

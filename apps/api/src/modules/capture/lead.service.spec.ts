@@ -651,11 +651,11 @@ describe('LeadService.bulkReassign', () => {
 });
 
 describe('LeadService frozen-interface stubs', () => {
-  // transitionStage (FR-052) and setHotFlag (FR-031) are now IMPLEMENTED — no longer stubs.
-  // setKycStatus (FR-070), recordEligibility (FR-080), markHandedOff (FR-081) remain stubs until their FRs land.
+  // transitionStage (FR-052), setHotFlag (FR-031), and recordEligibility (FR-080)
+  // are now IMPLEMENTED — no longer stubs.
+  // setKycStatus (FR-070), markHandedOff (FR-081) remain stubs until their FRs land.
   it.each([
     ['setKycStatus', (s: LeadService, tx: DbTransaction) => s.setKycStatus(LEAD, 'verified', tx)],
-    ['recordEligibility', (s: LeadService, tx: DbTransaction) => s.recordEligibility(LEAD, 'snap-1', tx)],
     ['markHandedOff', (s: LeadService, tx: DbTransaction) => s.markHandedOff(LEAD, 'LOS-1', 1, tx)],
   ] as Array<[string, (s: LeadService, tx: DbTransaction) => Promise<void>]>)(
     '%s throws a typed INTERNAL_ERROR until its FR lands (never a silent no-op)',

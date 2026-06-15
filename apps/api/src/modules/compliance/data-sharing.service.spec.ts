@@ -151,6 +151,21 @@ describe('DataSharingService', () => {
     });
   });
 
+  // ── MAJOR-2: consent with data_category = NULL succeeds ───────────────────
+
+  it('MAJOR-2: succeeds when consent row has data_category = NULL (customer-path consent)', async () => {
+    // FR-110 captureFromCustomer always stores data_category = NULL.
+    // logShare must NOT throw CONSENT_MISSING for such a consent — the
+    // OR data_category IS NULL predicate covers this case.
+    const nullCategoryConsent = { consent_id: 'consent-null-cat', state: 'granted', expires_at: null };
+    const tx = buildTxMock({ consentRow: nullCategoryConsent });
+
+    await expect(service.logShare(BASE_INPUT, tx)).resolves.toBeUndefined();
+
+    expect(tx.insertInto).toHaveBeenCalledWith('data_sharing_logs');
+    expect(mockAuditAppend).toHaveBeenCalledTimes(1);
+  });
+
   // ── INV-5 structural: no UPDATE path ──────────────────────────────────────
 
   it('INV-5: DataSharingService exposes only logShare (no UPDATE/DELETE path)', () => {
