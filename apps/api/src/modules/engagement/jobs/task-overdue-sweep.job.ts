@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
+import { EventCode } from '@lms/shared';
+
 import { UnitOfWork } from '../../../core/db';
+import { OutboxService } from '../../../core/outbox';
 import { TaskRepository } from '../task.repository';
 
 /**
@@ -21,6 +24,7 @@ export class TaskOverdueSweepJob {
   constructor(
     private readonly repo: TaskRepository,
     private readonly uow: UnitOfWork,
+    private readonly outbox: OutboxService,
     @InjectPinoLogger(TaskOverdueSweepJob.name) private readonly logger: PinoLogger,
   ) {}
 
@@ -42,36 +46,25 @@ export class TaskOverdueSweepJob {
         'task-overdue-sweep: marked tasks overdue',
       );
 
-      // TODO (FR-100-A2): emit TASK_OVERDUE outbox events once `TASK_OVERDUE` is
-      // added to the `EventCode` enum in schema.sql + @lms/shared. Uncomment the
-      // block below after the contracts amendment:
-      //
-      // for (const row of overdueRows) {
-      //   await this.outbox.emit(
-      //     {
-      //       event_code: EventCode.TASK_OVERDUE,          // add to EventCode enum
-      //       aggregate_type: 'Task',
-      //       aggregate_id: row.task_id,
-      //       payload: {
-      //         task_id: row.task_id,
-      //         lead_id: row.lead_id,
-      //         owner_id: row.owner_id,
-      //         sla_policy_id: row.sla_policy_id,
-      //         due_at: row.due_at.toISOString(),
-      //       },
-      //     },
-      //     tx,
-      //   );
-      // }
-
-      // Warn log until outbox is wired (so operational visibility is not lost).
-      this.logger.warn(
-        {
-          task_ids: overdueRows.map((r) => r.task_id),
-          note: 'TASK_OVERDUE outbox event deferred: EventCode.TASK_OVERDUE not yet registered (FR-100-A2)',
-        },
-        'task-overdue-sweep: TASK_OVERDUE events not emitted — contracts amendment pending',
-      );
+      // Emit a TASK_OVERDUE event per task in the SAME tx as the status change
+      // (FR-100-A2 resolved by cross-FR review M10 — EventCode.TASK_OVERDUE added).
+      for (const row of overdueRows) {
+        await this.outbox.emit(
+          {
+            event_code: EventCode.TASK_OVERDUE,
+            aggregate_type: 'Task',
+            aggregate_id: row.task_id,
+            payload: {
+              task_id: row.task_id,
+              lead_id: row.lead_id,
+              owner_id: row.owner_id,
+              sla_policy_id: row.sla_policy_id,
+              due_at: row.due_at.toISOString(),
+            },
+          },
+          tx,
+        );
+      }
 
       return overdueRows.length;
     });

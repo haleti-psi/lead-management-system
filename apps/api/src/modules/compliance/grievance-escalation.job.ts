@@ -1,7 +1,9 @@
-import { Controller, HttpCode, Post, Req } from '@nestjs/common';
+import { Controller, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { InjectPinoLogger, type PinoLogger } from 'nestjs-pino';
 
 import { Public } from '../../core/auth';
+import { InternalTaskGuard } from '../engagement/internal-task.guard';
 import { getCorrelationId, type CorrelatedRequest } from '../../core/http';
 import { ORG_ID_DEFAULT } from '../../core/outbox/outbox.constants';
 import { GrievanceService } from './grievance.service';
@@ -22,6 +24,8 @@ import { GrievanceService } from './grievance.service';
  * summary at the end.
  */
 @Controller('internal/jobs/grievance-escalation')
+@SkipThrottle()
+@UseGuards(InternalTaskGuard)
 export class GrievanceEscalationJob {
   constructor(
     private readonly grievances: GrievanceService,

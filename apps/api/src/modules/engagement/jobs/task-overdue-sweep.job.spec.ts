@@ -19,13 +19,27 @@ function fakeLogger() {
   return { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() } as unknown as import('nestjs-pino').PinoLogger;
 }
 
+function fakeOutbox(): { emit: jest.Mock } {
+  return { emit: jest.fn().mockResolvedValue(undefined) };
+}
+
 describe('TaskOverdueSweepJob', () => {
-  function makeJob(repoOverrides: Partial<TaskRepository> = {}): { job: TaskOverdueSweepJob; repo: TaskRepository } {
+  function makeJob(repoOverrides: Partial<TaskRepository> = {}): {
+    job: TaskOverdueSweepJob;
+    repo: TaskRepository;
+    outbox: { emit: jest.Mock };
+  } {
     const repo = fakeRepo(repoOverrides);
     const uow = fakeUow();
+    const outbox = fakeOutbox();
     const logger = fakeLogger();
-    const job = new TaskOverdueSweepJob(repo, uow, logger);
-    return { job, repo };
+    const job = new TaskOverdueSweepJob(
+      repo,
+      uow,
+      outbox as unknown as import('../../../core/outbox').OutboxService,
+      logger,
+    );
+    return { job, repo, outbox };
   }
 
   // T15: marks open and in_progress tasks past due_at as overdue
@@ -40,6 +54,23 @@ describe('TaskOverdueSweepJob', () => {
 
     expect(count).toBe(2);
     expect(repo.markOverdue).toHaveBeenCalledWith(expect.objectContaining({ __tx: true }));
+  });
+
+  // M10: emits TASK_OVERDUE to the outbox for each overdue task, in the same tx
+  it('emits a TASK_OVERDUE outbox event per overdue task', async () => {
+    const overdueRows = [
+      { task_id: 'task-1', lead_id: 'lead-1', owner_id: 'user-1', sla_policy_id: null, due_at: new Date(Date.now() - 3_600_000) },
+      { task_id: 'task-2', lead_id: 'lead-2', owner_id: 'user-2', sla_policy_id: null, due_at: new Date(Date.now() - 7_200_000) },
+    ];
+    const { job, outbox } = makeJob({ markOverdue: jest.fn().mockResolvedValue(overdueRows) });
+
+    await job.run();
+
+    expect(outbox.emit).toHaveBeenCalledTimes(2);
+    expect(outbox.emit).toHaveBeenCalledWith(
+      expect.objectContaining({ event_code: 'TASK_OVERDUE', aggregate_type: 'Task', aggregate_id: 'task-1' }),
+      expect.anything(),
+    );
   });
 
   // T16: does not mark tasks with future due_at

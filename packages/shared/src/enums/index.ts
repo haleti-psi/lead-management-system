@@ -679,6 +679,7 @@ export const EventCode = {
   EXPORT_COMPLETED: 'EXPORT_COMPLETED',
   CONFIG_CHANGED: 'CONFIG_CHANGED',
   DUPLICATE_FLAGGED: 'DUPLICATE_FLAGGED',
+  TASK_OVERDUE: 'TASK_OVERDUE',
 } as const;
 export type EventCode = typeof EventCode[keyof typeof EventCode];
 
