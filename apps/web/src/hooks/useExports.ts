@@ -56,6 +56,27 @@ export function isMaskingAllowed(requested: MaskingLevel, role: string): boolean
   return MASKING_RANK[requested] <= MASKING_RANK[minLevel];
 }
 
+/**
+ * FR-122 — role → the data scope an export is issued at (mirrors the `export`
+ * capability scopes in auth-matrix.json). The form hardcoded 'A', so every
+ * non-scope-A user (RM=O, BM=B, SM=T, KYC=B, DPO=M, PARTNER=P) failed the
+ * server-side scope cross-check with FORBIDDEN and could never export.
+ */
+const ROLE_SCOPE: Readonly<Partial<Record<string, string>>> = {
+  RM: 'O',
+  KYC: 'B',
+  PARTNER: 'P',
+  BM: 'B',
+  SM: 'T',
+  HEAD: 'A',
+  DPO: 'M',
+  ADMIN: 'A',
+};
+
+export function scopeForRole(role: string): string {
+  return ROLE_SCOPE[role] ?? 'O';
+}
+
 // ── Hooks ──────────────────────────────────────────────────────────────────
 
 /**
