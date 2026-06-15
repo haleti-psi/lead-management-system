@@ -230,7 +230,9 @@ export class RetentionEngine {
           .updateTable('lead_identities')
           .set({
             name: 'ANONYMISED',
-            mobile: '0000000000',
+            // Must satisfy ck_lead_identities_mobile (`^[6-9][0-9]{9}$`); a plain
+            // zero string violates it. No uniqueness constraint on this column.
+            mobile: '9000000000',
             email: null,
             pan_token: null,
             pan_masked: null,
@@ -251,7 +253,10 @@ export class RetentionEngine {
           await tx
             .updateTable('customer_profiles')
             .set({
-              primary_mobile: '0000000000',
+              // Must satisfy ck_customer_profiles_mobile (`^[6-9][0-9]{9}$`) AND
+              // uq_customer_profiles_mobile (org_id, primary_mobile) — a constant
+              // would violate both, so derive a valid, per-row-unique scrubbed value.
+              primary_mobile: sql`'9' || lpad((abs(hashtext(customer_profile_id::text)) % 1000000000)::text, 9, '0')`,
               display_name: 'ANONYMISED',
               address: null,
               deleted_at: new Date(),
