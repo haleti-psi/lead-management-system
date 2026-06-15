@@ -8,6 +8,7 @@ import type { MaskingService } from '../../core/masking';
 import type { GetReportQueryDto } from './dto/get-report-query.dto';
 import { pct } from './report.repository';
 import type { ReportRepository } from './report.repository';
+import type { DifferentiatorRepository } from './differentiator.repository';
 import { ReportService } from './report.service';
 
 /**
@@ -116,6 +117,25 @@ function mockMasking(): MaskingService {
   } as unknown as MaskingService;
 }
 
+function mockDiffRepo(): jest.Mocked<DifferentiatorRepository> {
+  return {
+    firstContactSla: jest.fn().mockResolvedValue({ summary: {
+      total_leads_in_scope: 0, contacted_in_sla: 0, sla_breached: 0,
+      pending_first_contact: 0, sla_compliance_pct: '–',
+    }, rows: [], total: 0 }),
+    kycDocAgeing: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    dsaDealerPartnerIds: jest.fn().mockResolvedValue([]),
+    dsaDealerPartnerDetails: jest.fn().mockResolvedValue([]),
+    duplicateLeakage: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    handoffFailure: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    sourceRoi: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    contactability: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    consentPrivacyOps: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    productBranchHeatmap: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    rmCapacityLoad: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+  } as unknown as jest.Mocked<DifferentiatorRepository>;
+}
+
 function makeService(opts?: {
   repo?: jest.Mocked<ReportRepository>;
   entitlement?: EntitlementCacheService;
@@ -126,7 +146,8 @@ function makeService(opts?: {
   const entitlement = opts?.entitlement ?? mockEntitlement();
   const config = mockConfig(opts?.timeoutMs);
   const masking = opts?.masking ?? mockMasking();
-  const svc = new ReportService(repo as unknown as ReportRepository, entitlement, config, logger, masking);
+  const diffRepo = mockDiffRepo();
+  const svc = new ReportService(repo as unknown as ReportRepository, entitlement, config, logger, masking, diffRepo as unknown as DifferentiatorRepository);
   return [svc, repo as jest.Mocked<ReportRepository>];
 }
 

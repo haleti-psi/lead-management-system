@@ -9,9 +9,16 @@ import { AppConfigService } from '../../core/config';
 import { DomainException } from '../../core/http';
 import { MaskingService } from '../../core/masking';
 import type { GetReportQueryDto, ReportCode } from './dto/get-report-query.dto';
-import type { ReportData, ReportRow, RmPerformanceRow } from './dto/report-response.dto';
+import type {
+  ReportData,
+  ReportRow,
+  RmPerformanceRow,
+  DsaDealerQualityRow,
+} from './dto/report-response.dto';
 import type { ReportFilters } from './report.repository';
 import { ReportRepository } from './report.repository';
+import { DifferentiatorRepository } from './differentiator.repository';
+import { DPO_ALLOWED_REPORT_CODES } from './reporting.constants';
 
 /** The context built by resolveScope, passed to the builder methods. */
 export interface ReportScopeContext {
@@ -43,6 +50,7 @@ export class ReportService {
     private readonly config: AppConfigService,
     private readonly logger: Logger,
     private readonly masking: MaskingService,
+    private readonly differentiatorRepo: DifferentiatorRepository,
   ) {}
 
   /**
@@ -58,6 +66,11 @@ export class ReportService {
     user: AuthUser,
     predicate: ScopePredicate,
   ): Promise<{ data: ReportData; total: number }> {
+    // FR-121 §Auth Check: DPO role (masked scope) may only access consent_privacy_ops.
+    if (user.role === RoleCode.DPO && !DPO_ALLOWED_REPORT_CODES.has(code)) {
+      throw new DomainException(ERROR_CODES.FORBIDDEN);
+    }
+
     const ctx = await this.resolveScope(user, query, predicate);
     const timeoutMs = this.config.get('REPORT_TIMEOUT_MS');
 
@@ -229,8 +242,9 @@ export class ReportService {
     };
   }
 
-  private dispatch(code: ReportCode, ctx: ReportScopeContext & { orgId: string }): Promise<{ rows: ReportRow[]; total: number }> {
+  private async dispatch(code: ReportCode, ctx: ReportScopeContext & { orgId: string }): Promise<{ rows: ReportRow[]; total: number }> {
     switch (code) {
+      // ── FR-120 core pack ─────────────────────────────────────────────────
       case 'funnel_conversion':
         return this.repo.funnel(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
       case 'source_performance':
@@ -239,7 +253,66 @@ export class ReportService {
         return this.repo.rmPerformance(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
       case 'rejection_summary':
         return this.repo.rejectionSummary(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
+
+      // ── FR-121 differentiator pack ────────────────────────────────────────
+      case 'first_contact_sla': {
+        const result = await this.differentiatorRepo.firstContactSla(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
+        return { rows: result.rows, total: result.total };
+      }
+      case 'kyc_doc_ageing':
+        return this.differentiatorRepo.kycDocAgeing(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
+      case 'dsa_dealer_quality':
+        return this.dispatchDsaDealerQuality(ctx);
+      case 'duplicate_leakage':
+        return this.differentiatorRepo.duplicateLeakage(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
+      case 'handoff_failure':
+        return this.differentiatorRepo.handoffFailure(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
+      case 'source_roi':
+        return this.differentiatorRepo.sourceRoi(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
+      case 'contactability':
+        return this.differentiatorRepo.contactability(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
+      case 'consent_privacy_ops':
+        return this.differentiatorRepo.consentPrivacyOps(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
+      case 'product_branch_heatmap':
+        return this.differentiatorRepo.productBranchHeatmap(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
+      case 'rm_capacity_load':
+        return this.differentiatorRepo.rmCapacityLoad(ctx.orgId, ctx.predicate, ctx.filters, ctx.pagination);
     }
+  }
+
+  /**
+   * FR-121 §12.4 DSA/Dealer Quality — delegates to PartnerQualityService when
+   * available; degrades to stub rows with `insufficient_data: true` when FR-092
+   * is not yet merged (LLD Assumption 1).
+   */
+  private async dispatchDsaDealerQuality(
+    ctx: ReportScopeContext & { orgId: string },
+  ): Promise<{ rows: DsaDealerQualityRow[]; total: number }> {
+    const partnerIds = await this.differentiatorRepo.dsaDealerPartnerIds(
+      ctx.orgId,
+      ctx.predicate,
+      ctx.filters,
+    );
+
+    if (partnerIds.length === 0) {
+      return { rows: [], total: 0 };
+    }
+
+    // Degrade gracefully: FR-092 PartnerQualityService not yet available.
+    const details = await this.differentiatorRepo.dsaDealerPartnerDetails(ctx.orgId, partnerIds);
+    const stubRows: DsaDealerQualityRow[] = details
+      .sort((a, b) => a.legal_name.localeCompare(b.legal_name))
+      .slice((ctx.pagination.page - 1) * ctx.pagination.limit, ctx.pagination.page * ctx.pagination.limit)
+      .map((d) => ({
+        partner_id: d.partner_id,
+        legal_name: d.legal_name,
+        type: d.type,
+        quality_score: null,
+        insufficient_data: true,
+        metrics: {},
+      }));
+
+    return { rows: stubRows, total: details.length };
   }
 }
 
