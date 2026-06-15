@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { CreateExportRequest } from '@/lib/api/exports';
-import { maskingOptionsForRole } from '@/hooks/useExports';
+import { maskingOptionsForRole, scopeForRole } from '@/hooks/useExports';
 
 const MASKING_LABELS: Readonly<Record<MaskingLevel, string>> = {
   full: 'Full masking (all PII hidden)',
@@ -49,7 +49,7 @@ export function ExportRequestForm({
     onSubmit({
       report_code: reportCode,
       filters: {},
-      scope: 'A',
+      scope: scopeForRole(userRole),
       masking_level: masking,
       purpose: purpose.trim(),
     });

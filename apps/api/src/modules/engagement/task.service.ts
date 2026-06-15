@@ -271,9 +271,11 @@ export class TaskService {
       throw new DomainException(ERROR_CODES.FORBIDDEN);
     }
 
-    // Guard: task must not already be done (cancelled also fails via the UPDATE guard)
-    if (task.status === TaskStatus.DONE) {
-      throw new DomainException(ERROR_CODES.CONFLICT, 'Task already completed.');
+    // Guard: disposition only on an active task — DONE and CANCELLED are terminal.
+    // The disposition UPDATE has no status WHERE clause, so this pre-check is the
+    // sole gate (a cancelled task would otherwise be dispositioned).
+    if (task.status === TaskStatus.DONE || task.status === TaskStatus.CANCELLED) {
+      throw new DomainException(ERROR_CODES.CONFLICT, 'Task is already closed.');
     }
 
     // Guard: geo only permitted for call/visit tasks
