@@ -98,6 +98,27 @@ async function parse<T>(res: Response): Promise<T> {
   return (await readEnvelope<T>(res)).data as T;
 }
 
+/** Parse one Response into the full envelope (success) or throw ApiClientError. */
+async function parseEnvelope<T>(res: Response): Promise<ApiEnvelope<T>> {
+  const text = await res.text();
+  let envelope: ApiEnvelope<T> | null = null;
+  if (text.length > 0) {
+    try {
+      envelope = JSON.parse(text) as ApiEnvelope<T>;
+    } catch {
+      envelope = null;
+    }
+  }
+
+  if (envelope?.error) {
+    throw fromApiError(envelope.error, res.status, envelope.meta?.correlation_id);
+  }
+  if (!res.ok) {
+    throw fromStatus(res.status);
+  }
+  return envelope as ApiEnvelope<T>;
+}
+
 let refreshInFlight: Promise<void> | null = null;
 /** Single-flight `POST /auth/refresh`; concurrent 401s share one refresh. The
  * response carries a new access token (cookie-based refresh) which replaces the
@@ -145,7 +166,8 @@ async function rawFetch<T>(
 }
 
 /** Run `attempt`; on a 401 (and not opted out), refresh once and retry once.
- * Shared by `request` (data calls) and `getPage` (paginated reads). */
+ * Shared by `request` (data calls), `getPage` (paginated reads), and
+ * `requestEnvelope`/`getEnvelope` (full-envelope reads). */
 async function withAuthRetry<R>(
   opts: RequestOptions | undefined,
   attempt: (o: RequestOptions | undefined) => Promise<R>,
@@ -171,6 +193,33 @@ async function withAuthRetry<R>(
   }
 }
 
+/** One network round-trip returning the full envelope (no refresh logic). */
+async function rawFetchEnvelope<T>(
+  method: string,
+  path: string,
+  body: unknown,
+  opts: RequestOptions | undefined,
+): Promise<ApiEnvelope<T>> {
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, opts?.query), {
+      method,
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...opts?.headers,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: opts?.signal,
+    });
+  } catch (cause) {
+    throw fromNetwork(cause);
+  }
+  return parseEnvelope<T>(res);
+}
+
 function request<T>(
   method: string,
   path: string,
@@ -178,6 +227,16 @@ function request<T>(
   opts: RequestOptions | undefined,
 ): Promise<T> {
   return withAuthRetry(opts, (o) => rawFetch<T>(method, path, body, o));
+}
+
+/** Like `request` but resolves the full `ApiEnvelope<T>` (data + meta). */
+function requestEnvelope<T>(
+  method: string,
+  path: string,
+  body: unknown,
+  opts: RequestOptions | undefined,
+): Promise<ApiEnvelope<T>> {
+  return withAuthRetry(opts, (o) => rawFetchEnvelope<T>(method, path, body, o));
 }
 
 /** A paginated list result: the `data` array plus the `meta.pagination` block. */
@@ -211,6 +270,9 @@ export const apiClient = {
   get: <T>(path: string, opts?: RequestOptions): Promise<T> => request<T>('GET', path, undefined, opts),
   getPage: <T>(path: string, opts?: RequestOptions): Promise<PageResult<T>> =>
     withAuthRetry(opts, (o) => rawFetchPage<T>(path, o)),
+  /** Like `get` but resolves the full `ApiEnvelope<T>` (data + meta). */
+  getEnvelope: <T>(path: string, opts?: RequestOptions): Promise<ApiEnvelope<T>> =>
+    requestEnvelope<T>('GET', path, undefined, opts),
   post: <T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> =>
     request<T>('POST', path, body, opts),
   put: <T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> =>

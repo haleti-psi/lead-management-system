@@ -3,6 +3,21 @@ import { AuditAction, RoleCode } from '@lms/shared';
 import type { MaskableField } from '../../core/masking';
 
 /**
+ * FR-120 — the canonical list of report codes for the core report pack.
+ * FR-121 will extend this list when differentiator codes are added.
+ * The `code` path param is validated against this list → VALIDATION_ERROR on
+ * an unknown code (LLD §Error Cases).
+ */
+export const REPORT_CODES = [
+  'funnel_conversion',
+  'source_performance',
+  'rm_performance',
+  'rejection_summary',
+] as const;
+
+export type ReportCode = typeof REPORT_CODES[number];
+
+/**
  * FR-123 constants for the audit explorer (M13). Centralised so the DTO,
  * service, and repository share one source of truth and never drift.
  */
