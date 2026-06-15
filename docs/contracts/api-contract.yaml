@@ -313,6 +313,8 @@ paths:
     post: { summary: "Create governed export (masked/watermarked)", operationId: createExport, tags: [Reports], x-frs: [FR-122], responses: { "202": { description: "Export queued" }, "409": { $ref: '#/components/responses/Conflict' } } }   # EXPORT_APPROVAL_REQUIRED
   /exports/{id}:
     get: { summary: "Export job status/artefact", operationId: getExport, tags: [Reports], x-frs: [FR-122], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /exports/{id}/approve:
+    post: { summary: "Approve an awaiting-approval export (approver scope >= requester; not self)", operationId: approveExport, tags: [Reports], x-frs: [FR-122], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
   /audit:
     get: { summary: "Audit explorer (DPO/ADMIN; integrity-verified)", operationId: searchAudit, tags: [Reports], x-frs: [FR-123], parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
   /audit/unmask:

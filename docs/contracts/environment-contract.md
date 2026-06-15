@@ -34,6 +34,8 @@
 | `MFA_ISSUER` | `LMS NBFC` | TOTP issuer label |
 | `CUSTOMER_LINK_TTL_DAYS` | `7` | Tokenised link expiry |
 | `GCS_SIGNED_URL_TTL` | `600` | Signed URL seconds |
+| `EXPORT_APPROVAL_ROW_THRESHOLD` | `5000` | Row estimate at/above which an export requires approval (FR-122) |
+| `EXPORT_REQUIRE_APPROVAL_ON_THRESHOLD` | `true` | Whether threshold/unmasked exports halt for approval before generation (FR-122) |
 | `MAX_UPLOAD_MB` | `10` | Upload size cap |
 | `VIRUS_SCAN_PROVIDER_URL` | _(unset → mock)_ | Virus scan vendor endpoint (FR-070) — M8 documents |
 | `VIRUS_SCAN_API_KEY` | _(unset → mock)_ | Virus scan auth + scan-result callback HMAC secret (FR-070) |
