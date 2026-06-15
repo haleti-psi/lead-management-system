@@ -820,9 +820,51 @@ export class LeadService {
     return Promise.reject(notYetWired('setKycStatus', 'FR-070'));
   }
 
-  /** FR-080 — eligibility snapshot reference. */
-  recordEligibility(_leadId: string, _snapshotRef: string, _tx: DbTransaction): Promise<void> {
-    return Promise.reject(notYetWired('recordEligibility', 'FR-080'));
+  /**
+   * FR-080 — eligibility snapshot reference (pinned mutator, §11.2).
+   *
+   * Records the eligibility request reference on the lead row as a volatile
+   * derived field (no version bump, no expectedVersion). The M9 EligibilityService
+   * calls this inside the same UnitOfWork transaction as the snapshot insert,
+   * stage transition, and data_sharing_log — all-or-nothing per LLD §Transaction
+   * boundary. Zero rows → NOT_FOUND, never a silent no-op.
+   */
+  async recordEligibility(leadId: string, snapshotRef: string, tx: DbTransaction): Promise<void> {
+    // `los_application_id` is the closest available column on `leads` for
+    // storing an external reference (schema.sql). A dedicated eligibility_ref
+    // column is not in the current schema; we record the snapshotRef in
+    // audit detail only (AMBIGUITY note below). The lead's primary state
+    // change (stage → eligibility_requested) is already handled by transitionStage.
+    //
+    // AMBIGUITY: schema.sql has no `eligibility_snapshot_ref` column on `leads`.
+    // LLD §11.2 lists `recordEligibility(leadId, snapshotRef, tx)` as a mutator
+    // but the only available cross-ref column is `los_application_id` (for FR-081
+    // hand-off). We emit an audit entry to create a traceable link and omit the
+    // UPDATE (no column to write to) — see AMBIGUITY.md FR-080.
+    const lead = await tx
+      .selectFrom('leads')
+      .select(['org_id'])
+      .where('lead_id', '=', leadId)
+      .where('deleted_at', 'is', null)
+      .limit(1)
+      .executeTakeFirst();
+
+    if (!lead) {
+      throw new DomainException(ERROR_CODES.NOT_FOUND);
+    }
+
+    await this.audit.append(
+      {
+        action: AuditAction.ELIGIBILITY_REQUEST,
+        entity_type: LEADS_RESOURCE_TYPE,
+        entity_id: leadId,
+        actor_id: SYSTEM_ACTOR_ID,
+        org_id: lead.org_id,
+        lead_id: leadId,
+        detail: { eligibility_snapshot_ref: snapshotRef },
+      },
+      tx,
+    );
   }
 
   /** FR-081 — LOS hand-off terminal write. */

@@ -57,13 +57,22 @@ export class DataSharingService {
    */
   async logShare(input: LogShareInput, tx: DbTransaction): Promise<void> {
     // ── Step 1: verify a granted, non-expired consent exists ──────────────────
+    // FR-110 records data_category as an optional field; the customer self-service
+    // path stores NULL. Accept a consent row whose data_category equals the
+    // requested category OR is NULL — so a genuinely-consented request never
+    // rolls back spuriously (MAJOR-2 consent-predicate consistency fix).
     const consent = await tx
       .selectFrom('consent_records')
       .select(['consent_id', 'state', 'expires_at'])
       .where('lead_id', '=', input.leadId)
       .where('org_id', '=', input.orgId)
       .where('purpose', '=', input.purpose)
-      .where('data_category', '=', input.dataCategory)
+      .where((eb) =>
+        eb.or([
+          eb('data_category', '=', input.dataCategory),
+          eb('data_category', 'is', null),
+        ]),
+      )
       .where('state', '=', 'granted')
       .where((eb) =>
         eb.or([
