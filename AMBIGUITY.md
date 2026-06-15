@@ -524,3 +524,13 @@ The LLD's E2 grouped by `sa.partner_id` without a null filter, so direct/web/RM-
 
 ## FR-092-A6. Insufficient-data + zero-denominator
 `total_leads < 10` → `quality_score: null`, all `factors: null`, raw `metrics` still returned. Any factor with a zero denominator renders `null` (never 0%), per BRD §12.5; a null factor contributes 0 to the weighted score.
+
+---
+
+# Cross-FR Integration Review — Resolutions (2026-06-15)
+
+## XFR-H1. `partners` ownership: FR-090 (M10), removed from the FR-131 master registry
+`partners` was writable via two paths: the FR-131 generic master CRUD (`/admin/partners`) and FR-090's dedicated `PartnerService` (`/partners`). The generic path bypassed FR-090's status-transition machine (`active → suspended/expired`, ADMIN/HEAD-only), so a partner could reach a state FR-090 forbids. **Resolution applied:** removed `partners` from `MASTER_SLUGS` and `MASTER_DESCRIPTORS`, deleted the dead `PartnerDescriptor`/`toPartnerView`/`dto/partner.dto.ts`. `PartnerService` (FR-090) is now the sole writer of `partners`. The master registry's own contract already excludes resources owned by a concrete FR (regions/branches etc. stay; `communication-templates`/`retention-policies` remain pending their M11/M12 owners). Web uses only `/partners`; no consumer touched `/admin/partners`. Write-back to FR-090 LLD (sole-owner) and FR-131 LLD (allow-list).
+
+## XFR-H2. `lead_identities` enrichment moved to the M2 owner (capture)
+`lead_identities` is M2-owned (auth-matrix writer M2/M5), but FR-071 KYC (M8) updated it directly via `KycVerificationRepository.updateLeadIdentity` — an owner-writes breach. **Resolution applied:** added `LeadIdentityRepository.enrich(...)` (capture/M2) and exported it from the `@Global` `CaptureModule`; `KycService` now injects it and calls `identities.enrich(...)` inside the same KYC transaction (mirrors how it already calls `LeadService.setKycStatus`). Removed `updateLeadIdentity`/`LeadIdentityPatch` from the KYC repo. Behaviour and the atomic transaction boundary are unchanged. Write-back to FR-071 LLD §Step 5c (call the capture seam, not a local write).

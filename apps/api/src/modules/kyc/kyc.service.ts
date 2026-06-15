@@ -24,6 +24,7 @@ import {
   type KycPort,
 } from '../../core/integration';
 import { OutboxService } from '../../core/outbox';
+import { LeadIdentityRepository } from '../capture/lead-identity.repository';
 import { LeadService } from '../capture/lead.service';
 import { leadInScope } from './document.service';
 import { deriveLeadKycStatus } from './kyc-status';
@@ -66,6 +67,7 @@ export class KycService {
     private readonly uow: UnitOfWork,
     private readonly repo: KycVerificationRepository,
     private readonly leads: LeadService,
+    private readonly identities: LeadIdentityRepository,
     private readonly audit: AuditAppender,
     private readonly outbox: OutboxService,
     private readonly gateway: IntegrationGateway,
@@ -222,7 +224,7 @@ export class KycService {
       );
 
       if (outcome.success) {
-        await this.repo.updateLeadIdentity(
+        await this.identities.enrich(
           leadIdentityId,
           ctx.orgId,
           {

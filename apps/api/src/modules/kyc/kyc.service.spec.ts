@@ -16,6 +16,7 @@ import type {
   KycPort,
 } from '../../core/integration';
 import type { OutboxService } from '../../core/outbox';
+import type { LeadIdentityRepository } from '../capture/lead-identity.repository';
 import type { LeadService } from '../capture/lead.service';
 import { KycService, type KycActorContext } from './kyc.service';
 import {
@@ -112,9 +113,9 @@ interface Deps {
     getVerificationByLogId: jest.Mock;
     listByLead: jest.Mock;
     insertVerification: jest.Mock;
-    updateLeadIdentity: jest.Mock;
     insertDataSharingLog: jest.Mock;
   };
+  identities: { enrich: jest.Mock };
   gateway: { call: jest.Mock };
   logRepo: { createLog: jest.Mock };
   leads: { setKycStatus: jest.Mock };
@@ -132,9 +133,9 @@ function build(): Deps {
     insertVerification: jest.fn(async (input: { status: KycCheckStatus; exception_type: KycException | null }) =>
       verifRow({ status: input.status, exception_type: input.exception_type }),
     ),
-    updateLeadIdentity: jest.fn(async () => undefined),
     insertDataSharingLog: jest.fn(async () => undefined),
   };
+  const identities = { enrich: jest.fn(async () => undefined) };
   const gateway = fakeGateway();
   const logRepo = fakeLogRepo();
   const leads = fakeLeads();
@@ -144,13 +145,14 @@ function build(): Deps {
     fakeUow(),
     repo as unknown as KycVerificationRepository,
     leads as unknown as LeadService,
+    identities as unknown as LeadIdentityRepository,
     audit as unknown as AuditAppender,
     outbox as unknown as OutboxService,
     gateway as unknown as IntegrationGateway,
     logRepo as unknown as IntegrationLogRepository,
     { call: jest.fn() } as unknown as KycPort,
   );
-  return { service, repo, gateway, logRepo, leads, audit, outbox };
+  return { service, repo, identities, gateway, logRepo, leads, audit, outbox };
 }
 
 describe('KycService.runVerification', () => {
@@ -162,7 +164,7 @@ describe('KycService.runVerification', () => {
 
     expect(result.status).toBe(KycCheckStatus.SUCCESS);
     expect(result.maskedResponse).toMatchObject({ maskedPan: 'ABCDE****F' });
-    expect(d.repo.updateLeadIdentity).toHaveBeenCalledWith(
+    expect(d.identities.enrich).toHaveBeenCalledWith(
       IDENT,
       ORG,
       expect.objectContaining({ pan_masked: 'ABCDE****F', pan_token: expect.stringMatching(/^pan_/) }),
@@ -287,7 +289,7 @@ describe('KycService.runVerification', () => {
       actorCtx(),
     );
 
-    const patch = d.repo.updateLeadIdentity.mock.calls[0][2] as { aadhaar_ref_token: string };
+    const patch = d.identities.enrich.mock.calls[0][2] as { aadhaar_ref_token: string };
     expect(patch.aadhaar_ref_token).toMatch(/^aadhaar_/);
     expect(patch.aadhaar_ref_token).not.toMatch(/^\d{12}$/);
   });
@@ -332,7 +334,7 @@ describe('KycService.runVerification', () => {
     d.repo.insertVerification.mockResolvedValue(verifRow({ kyc_type: KycType.CKYC }));
 
     await d.service.runVerification(LEAD, KycType.CKYC, { consentId: CONSENT }, actorCtx());
-    expect(d.repo.updateLeadIdentity).toHaveBeenCalledWith(
+    expect(d.identities.enrich).toHaveBeenCalledWith(
       IDENT,
       ORG,
       expect.objectContaining({ ckyc_id: '12345' }),

@@ -43,19 +43,12 @@ export interface NewKycVerification {
   actor_id: string;
 }
 
-/** Per-type identity enrichment patch (only set columns provided). */
-export interface LeadIdentityPatch {
-  pan_token?: string;
-  pan_masked?: string;
-  ckyc_id?: string;
-  aadhaar_ref_token?: string;
-}
-
 /**
  * FR-071 — owner repository for `kyc_verifications` + `data_sharing_logs` (M8).
  * All queries parameterised; every list read is LIMIT-bounded (NFR-17). Reads
  * over `leads`/`consent_records`/`integration_logs` are permitted (owner-writes
- * governs writes only); `leads.kyc_status` is written solely via LeadService.
+ * governs writes only); `leads.kyc_status` is written solely via LeadService and
+ * `lead_identities` enrichment solely via the capture-owned LeadIdentityRepository.
  */
 @Injectable()
 export class KycVerificationRepository {
@@ -244,23 +237,6 @@ export class KycVerificationRepository {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
-  }
-
-  /** Apply per-type identity enrichment (LLD §Step 5c). Skips when patch empty. */
-  async updateLeadIdentity(
-    leadIdentityId: string,
-    orgId: string,
-    patch: LeadIdentityPatch,
-    actorId: string,
-    tx: DbTransaction,
-  ): Promise<void> {
-    if (Object.keys(patch).length === 0) return;
-    await tx
-      .updateTable('lead_identities')
-      .set({ ...patch, updated_by: actorId, updated_at: new Date() })
-      .where('lead_identity_id', '=', leadIdentityId)
-      .where('org_id', '=', orgId)
-      .execute();
   }
 
   /** Insert a `data_sharing_logs` row for the external pull (LLD §Step 5d). */

@@ -13,8 +13,24 @@
     "data_model_migration": "docs/data-model/migrations/V1__initial_schema.sql",
     "architecture": "docs/architecture.md",
     "project_claude_md": "CLAUDE.md",
-    "guidelines": ["docs/guidelines/coding.md", "docs/guidelines/security.md", "docs/guidelines/ui.md", "docs/guidelines/performance.md"],
-    "contracts": ["docs/contracts/api-contract.yaml", "docs/contracts/auth-matrix.json", "docs/contracts/error-taxonomy.md", "docs/contracts/state-machines.md", "docs/contracts/integration-map.md", "docs/contracts/environment-contract.md", "docs/contracts/shared-utilities.md", "docs/contracts/dependency-register.md", "docs/contracts/nfr-thresholds.md", "docs/contracts/testing-contract.md"],
+    "guidelines": [
+      "docs/guidelines/coding.md",
+      "docs/guidelines/security.md",
+      "docs/guidelines/ui.md",
+      "docs/guidelines/performance.md"
+    ],
+    "contracts": [
+      "docs/contracts/api-contract.yaml",
+      "docs/contracts/auth-matrix.json",
+      "docs/contracts/error-taxonomy.md",
+      "docs/contracts/state-machines.md",
+      "docs/contracts/integration-map.md",
+      "docs/contracts/environment-contract.md",
+      "docs/contracts/shared-utilities.md",
+      "docs/contracts/dependency-register.md",
+      "docs/contracts/nfr-thresholds.md",
+      "docs/contracts/testing-contract.md"
+    ],
     "lld": {
       "dir": "docs/lld/",
       "frs": 49,
@@ -40,9 +56,24 @@
       "report": "docs/reviews/gate-A-2026-06-08.md",
       "unblocks": "Stage 2 (Data Model)",
       "history": [
-        { "run": 1, "version": "5.0", "verdict": "BLOCKED", "note": "Item 4 FAIL: FRs referenced undefined entities StageHistory/Note/ImportJob." },
-        { "run": 2, "version": "5.1", "verdict": "CONDITIONAL", "note": "Blocker cleared by v5.1; independent audit 7P/3W/0F (role aliases + glossary WARNs)." },
-        { "run": 3, "version": "5.1", "verdict": "PASS", "note": "Role-alias note + 6 glossary terms added; all WARNs closed; 10/10." }
+        {
+          "run": 1,
+          "version": "5.0",
+          "verdict": "BLOCKED",
+          "note": "Item 4 FAIL: FRs referenced undefined entities StageHistory/Note/ImportJob."
+        },
+        {
+          "run": 2,
+          "version": "5.1",
+          "verdict": "CONDITIONAL",
+          "note": "Blocker cleared by v5.1; independent audit 7P/3W/0F (role aliases + glossary WARNs)."
+        },
+        {
+          "run": 3,
+          "version": "5.1",
+          "verdict": "PASS",
+          "note": "Role-alias note + 6 glossary terms added; all WARNs closed; 10/10."
+        }
       ],
       "caveats": [
         "Tracked open decisions (do not block Gate A; required before integration build): OD-08 select PAN/CKYC/DigiLocker/comms/CTI vendors; OD-17 complete TRAI-DLT + WhatsApp-WABA messaging registration.",
@@ -56,7 +87,11 @@
       "by": "quality-gate-checker",
       "at": "2026-06-08T18:04:53+05:30",
       "score": "10/10",
-      "artefacts": ["docs/data-model/schema.sql", "docs/data-model/DATA_MODEL.md", "docs/data-model/migrations/V1__initial_schema.sql"],
+      "artefacts": [
+        "docs/data-model/schema.sql",
+        "docs/data-model/DATA_MODEL.md",
+        "docs/data-model/migrations/V1__initial_schema.sql"
+      ],
       "report": "docs/reviews/gate-B-2026-06-08.md",
       "unblocks": "Stage 3 (Architecture)",
       "live_validation": "Loaded clean on PostgreSQL 18 (ON_ERROR_STOP exit 0); live in local lms_dev DB. 46 tables, 69 enums, 194 FKs.",
@@ -74,11 +109,17 @@
       "by": "quality-gate-checker",
       "at": "2026-06-09T18:08:22+05:30",
       "score": "10/10",
-      "artefacts": ["docs/contracts/ (10 files)"],
+      "artefacts": [
+        "docs/contracts/ (10 files)"
+      ],
       "report": "docs/reviews/gate-C-2026-06-09.md",
       "unblocks": "Stage 6 (LLD generation)",
       "validation": "api-contract.yaml parsed valid via npx js-yaml (Node v24, exit 0, 62 paths); auth-matrix.json valid JSON (9 roles, 47 resources, 14 public). FR coverage 49/49; status-enum coverage 22/22. A real YAML defect (flow-sequence braces in x-fr-coverage) was caught and fixed during the gate.",
-      "fixes_during_gate": ["x-fr-coverage flow sequences -> quoted strings (YAML validity)", "added partners to auth-matrix _meta.resources", "added delivery/scan/validation/attribution status enums to state-machines.md"],
+      "fixes_during_gate": [
+        "x-fr-coverage flow sequences -> quoted strings (YAML validity)",
+        "added partners to auth-matrix _meta.resources",
+        "added delivery/scan/validation/attribution status enums to state-machines.md"
+      ],
       "caveats": [
         "OD-08/OD-17: PAN/CKYC/comms/CTI vendor selection + TRAI-DLT/WhatsApp-WABA registration open (adapters built against ports regardless).",
         "OD-06 (Legal/DPO): consent-bootstrap lawful basis for first outbound message — resolve before customer self-service go-live."
@@ -115,5 +156,25 @@
     "remaining_foundation": [],
     "next_wave": "Wave 2 — core domain: M2 capture (incl. LeadService sole-writer + stage-history), M3 dedupe, M4 allocation+scoring",
     "later_waves": "Wave 2 core domain (capture/dedupe/allocation incl. LeadService), Wave 3 workflow (KYC/self-service/compliance/engagement), Wave 4 integration (LOS/partner), Wave 5 read models (workspace/reporting)"
+  },
+  "cross_fr_review": {
+    "status": "complete",
+    "scope": "interim — Stage 7 in progress; covers ~35 FRs with code present (not all FRs merged)",
+    "triggered_at": "2026-06-15",
+    "branch": "feature/FR-092",
+    "verdict": "PASS",
+    "conflicts_critical": 0,
+    "conflicts_high": 0,
+    "conflicts_medium": 4,
+    "high_items": [],
+    "report": "docs/reviews/cross-fr-integration-report.md",
+    "signed_off": false,
+    "rerun_required": "strict re-run after all FRs merged + deferred integration-test wave",
+    "high_items_resolved": [
+      "H1 partners → FR-090 sole owner (master registry entry removed)",
+      "H2 lead_identities enrichment → capture LeadIdentityRepository.enrich seam"
+    ],
+    "resolved_at": "2026-06-15",
+    "post_fix_verification": "api tsc clean; 1083 tests pass"
   }
 }
