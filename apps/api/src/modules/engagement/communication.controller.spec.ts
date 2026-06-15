@@ -111,7 +111,7 @@ describe('CommunicationController.list', () => {
         { page: 1, limit: 25 },
       );
       expect(result.data).toHaveLength(1);
-      expect(result.meta).toEqual({ page: 1, limit: 25, total: 1 });
+      expect(result.pagination).toEqual({ page: 1, limit: 25, total: 1 });
     });
   });
 
@@ -154,7 +154,7 @@ describe('CommunicationController.list', () => {
       const result = await controller.list({ id: LEAD_ID }, { page: 1, limit: 25 }, RM_USER);
 
       expect(result.data).toHaveLength(0);
-      expect(result.meta.total).toBe(0);
+      expect(result.pagination.total).toBe(0);
     });
   });
 });

@@ -274,7 +274,7 @@ export class DashboardRepository {
         'leads.lead_code',
         eb.fn.max<string>('il.created_at').as('last_attempt_at'),
       ])
-      .where(sql<boolean>`il.integration = 'los'`)
+      .where('il.integration', 'in', ['los_handoff', 'los_eligibility', 'los_status'])
       .where('il.direction', '=', 'outbound')
       .where('il.status', 'in', ['failed', 'retrying'])
       .where('leads.deleted_at', 'is', null)
