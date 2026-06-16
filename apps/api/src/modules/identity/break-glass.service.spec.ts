@@ -7,7 +7,9 @@ import type { BreakGlassRequestDto } from './break-glass.dto';
 import { BreakGlassService, type BreakGlassActor } from './break-glass.service';
 import {
   BreakGlassRepository,
+  type BreakGlassGrantListRow,
   type BreakGlassGrantRow,
+  type BreakGlassGrantsPage,
   type UserRoleRow,
 } from './break-glass.repository';
 
@@ -61,10 +63,27 @@ function grantRow(overrides: Partial<BreakGlassGrantRow> = {}): BreakGlassGrantR
   };
 }
 
+function listRow(overrides: Partial<BreakGlassGrantListRow> = {}): BreakGlassGrantListRow {
+  return {
+    grant_id: 'grant-1',
+    grantee_id: GRANTEE,
+    maker_id: REQUESTER,
+    approver_id: APPROVER,
+    scope_type: 'lead',
+    scope_ref: LEAD,
+    status: GrantStatus.PENDING,
+    reason: 'Incident #4471 — data review',
+    valid_from: new Date('2026-06-09T09:00:00.000Z'),
+    valid_until: new Date('2026-06-09T11:00:00.000Z'),
+    ...overrides,
+  };
+}
+
 /** A typed, in-memory BreakGlassRepository fake with per-method jest spies. */
 class FakeRepo {
   insert = jest.fn(async (): Promise<BreakGlassGrantRow> => grantRow());
   findById = jest.fn(async (): Promise<BreakGlassGrantRow | undefined> => undefined);
+  list = jest.fn(async (): Promise<BreakGlassGrantsPage> => ({ rows: [listRow()], total: 1 }));
   setActive = jest.fn(
     async (_id: string, _org: string, approverId: string): Promise<BreakGlassGrantRow | undefined> =>
       grantRow({ status: GrantStatus.ACTIVE, approver_id: approverId }),
@@ -287,5 +306,41 @@ describe('BreakGlassService.revoke', () => {
 
     expect(err.code).toBe(ERROR_CODES.CONFLICT);
     expect(repo.revoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('BreakGlassService.list', () => {
+  it('returns the org page mapped to list items (maker=created_by, ISO windows)', async () => {
+    const { service, repo } = harness();
+
+    const result = await service.list(ACTOR, { page: 1, limit: 25 });
+
+    expect(repo.list).toHaveBeenCalledWith(ORG, { status: undefined, page: 1, limit: 25 });
+    expect(result.pagination).toEqual({ page: 1, limit: 25, total: 1 });
+    expect(result.data).toEqual([
+      {
+        grantId: 'grant-1',
+        granteeId: GRANTEE,
+        makerId: REQUESTER,
+        approverId: APPROVER,
+        scopeType: 'lead',
+        scopeRef: LEAD,
+        status: GrantStatus.PENDING,
+        reason: 'Incident #4471 — data review',
+        validFrom: '2026-06-09T09:00:00.000Z',
+        validUntil: '2026-06-09T11:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('passes the status filter through to the repository (scoped to the actor org)', async () => {
+    const { service, repo } = harness();
+    repo.list.mockResolvedValueOnce({ rows: [], total: 0 });
+
+    const result = await service.list(ACTOR, { page: 2, limit: 50, status: GrantStatus.ACTIVE });
+
+    expect(repo.list).toHaveBeenCalledWith(ORG, { status: GrantStatus.ACTIVE, page: 2, limit: 50 });
+    expect(result.data).toEqual([]);
+    expect(result.pagination).toEqual({ page: 2, limit: 50, total: 0 });
   });
 });

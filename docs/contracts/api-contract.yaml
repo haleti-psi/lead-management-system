@@ -88,6 +88,7 @@ paths:
   /auth/reset:
     post: { summary: "Password reset request", operationId: authReset, tags: [Auth], security: [], x-frs: [FR-001], responses: { "200": { $ref: '#/components/responses/Empty' }, "429": { $ref: '#/components/responses/RateLimited' } } }
   /admin/break-glass:
+    get: { summary: "List break-glass grants (DPO/ADMIN)", operationId: listBreakGlass, tags: [Admin], x-frs: [FR-003], parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: status, in: query, required: false, schema: { type: string, enum: [pending, active, expired, revoked] } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
     post: { summary: "Request break-glass grant (DPO/ADMIN)", operationId: breakGlassRequest, tags: [Admin], x-frs: [FR-003], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' } } }
   /admin/break-glass/{id}/approve:
     post: { summary: "Approve break-glass grant (four-eyes)", operationId: breakGlassApprove, tags: [Admin], x-frs: [FR-003], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
@@ -330,6 +331,8 @@ paths:
     get: { summary: "List a master/config resource (branches/teams/regions/sources/products/schemes/rejection-reasons/business-calendars/...)", operationId: listMaster, tags: [Admin], x-frs: [FR-131], parameters: [{ name: masterResource, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
     post: { summary: "Create a master/config resource (versioned)", operationId: createMaster, tags: [Admin], x-frs: [FR-131, FR-040, FR-042], parameters: [{ name: masterResource, in: path, required: true, schema: { type: string } }], responses: { "201": { $ref: '#/components/responses/Created' }, "409": { $ref: '#/components/responses/Conflict' } } }
     patch: { summary: "Update a master/config resource (versioned)", operationId: updateMaster, tags: [Admin], x-frs: [FR-131, FR-040], parameters: [{ name: masterResource, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: '#/components/responses/Ok' } } }
+  /admin/config:
+    get: { summary: "List pending config versions (maker-checker queue)", operationId: listPendingConfig, tags: [Admin], x-frs: [FR-132], parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/Limit' }, { name: config_type, in: query, required: false, schema: { type: string } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
   /admin/config/{id}/approve:
     post: { summary: "Approve config change (maker-checker)", operationId: approveConfig, tags: [Admin], x-frs: [FR-132], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
   /admin/config/{id}/rollback:

@@ -1,14 +1,17 @@
-import { Body, Controller, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 
-import type { AbacResource } from '@lms/shared';
+import { Capability, type AbacResource } from '@lms/shared';
 
 import { CurrentUser, Requires } from '../../core/auth';
 import type { AuthUser } from '../../core/auth';
 import { ZodValidationPipe } from '../../core/common';
 import { AppConfigService } from '../../core/config';
+import { paginated, type PaginatedResult } from '../../core/http';
 import {
+  ListBreakGlassQuery,
   makeBreakGlassRequestSchema,
+  type BreakGlassGrantListItem,
   type BreakGlassGrantResponse,
   type BreakGlassRequestDto,
   type BreakGlassTransitionResponse,
@@ -22,11 +25,12 @@ const GrantIdParam = z.string().uuid({ message: 'id must be a valid UUID' });
 const breakGlassResource = (): AbacResource => ({ resourceType: 'break_glass_grants' });
 
 /**
- * FR-003 break-glass endpoints (M1 Identity & Access). All three are protected
- * by the global {@link JwtAuthGuard} and gated by `@Requires('break_glass')` →
+ * FR-003 break-glass endpoints (M1 Identity & Access). All are protected by the
+ * global {@link JwtAuthGuard} and gated by `@Requires('break_glass')` →
  * {@link AbacGuard}, so only ADMIN (scope A) and DPO (scope M) reach the handler
  * (auth-matrix.json). The global interceptor wraps the returned data in the
- * uniform `{ data, meta, error }` envelope; controllers return plain data.
+ * uniform `{ data, meta, error }` envelope; controllers return plain data (the
+ * list hoists its pagination into `meta`).
  *
  * Four-eyes (approver ≠ grantee) and the access-window bound are enforced by the
  * request schema and {@link BreakGlassService}; see the service for the full
@@ -38,6 +42,16 @@ export class BreakGlassController {
     private readonly service: BreakGlassService,
     private readonly config: AppConfigService,
   ) {}
+
+  @Get()
+  @Requires(Capability.BREAK_GLASS, () => ({ resourceType: 'break_glass_grants' }))
+  async list(
+    @Query(new ZodValidationPipe(ListBreakGlassQuery)) query: ListBreakGlassQuery,
+    @CurrentUser() user: AuthUser,
+  ): Promise<PaginatedResult<BreakGlassGrantListItem[]>> {
+    const result = await this.service.list(this.actor(user), query);
+    return paginated(result.data, result.pagination);
+  }
 
   @Post()
   @Requires('break_glass', breakGlassResource)

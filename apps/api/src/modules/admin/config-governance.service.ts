@@ -7,6 +7,7 @@ import {
   ERROR_CODES,
   EventCode,
 } from '@lms/shared';
+import type { PaginationMeta } from '@lms/shared';
 
 import { AuditAppender } from '../../core/audit';
 import type { AuthUser } from '../../core/auth';
@@ -20,6 +21,7 @@ import type { ConfigurationVersionRow } from './activators/config-activator.port
 import { CONFIGURATION_ENTITY_TYPE } from './admin.constants';
 import { ConfigGovernanceRepository } from './config-governance.repository';
 import type { ApproveConfigDto } from './dto/approve-config.dto';
+import type { ListConfigVersionsQuery } from './dto/list-config-versions.dto';
 import type { RollbackConfigDto } from './dto/rollback-config.dto';
 
 /** Shape returned by {@link ConfigGovernanceService.approve}. */
@@ -41,6 +43,23 @@ export interface RollbackConfigResult {
   restoredVersionId: string | null;
   configType: string;
   status: ConfigChangeStatus;
+}
+
+/** One pending version, as the review-queue listing returns it. */
+export interface PendingConfigVersionView {
+  configurationVersionId: string;
+  makerId: string;
+  configType: string;
+  configRef: string | null;
+  status: ConfigChangeStatus;
+  createdAt: string;
+  diff: unknown;
+}
+
+/** Shape returned by {@link ConfigGovernanceService.listPending}. */
+export interface ListPendingConfigResult {
+  data: PendingConfigVersionView[];
+  pagination: PaginationMeta;
 }
 
 /**
@@ -70,6 +89,40 @@ export class ConfigGovernanceService {
     private readonly outbox: OutboxService,
     private readonly activators: ConfigActivatorRegistry,
   ) {}
+
+  /**
+   * List the org's `pending` configuration versions awaiting a checker decision,
+   * newest-first and paginated. Governance is an org-wide action, so this read
+   * enforces the same scope-A floor as {@link approve}/{@link rollback}; scope-B
+   * holders (BM/KYC/DPO) are rejected with FORBIDDEN. The `configuration`
+   * capability itself is enforced upstream by `AbacGuard`.
+   */
+  async listPending(
+    _actor: AuthUser,
+    query: ListConfigVersionsQuery,
+    effectiveScope: DataScope | undefined,
+  ): Promise<ListPendingConfigResult> {
+    this.requireScopeA(effectiveScope);
+
+    const page = await this.repo.listPending({
+      configType: query.config_type,
+      page: query.page,
+      limit: query.limit,
+    });
+
+    return {
+      data: page.rows.map((row) => ({
+        configurationVersionId: row.configuration_version_id,
+        makerId: row.maker_id,
+        configType: row.config_type,
+        configRef: row.config_ref,
+        status: row.status,
+        createdAt: row.created_at.toISOString(),
+        diff: row.diff ?? null,
+      })),
+      pagination: { page: query.page, limit: query.limit, total: page.total },
+    };
+  }
 
   async approve(
     versionId: string,

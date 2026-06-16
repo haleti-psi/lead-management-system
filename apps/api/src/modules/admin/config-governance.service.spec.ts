@@ -331,3 +331,62 @@ describe('ConfigGovernanceService.rollback', () => {
     expect(uow.run).not.toHaveBeenCalled();
   });
 });
+
+describe('ConfigGovernanceService.listPending', () => {
+  it('returns the mapped page (snake→camel, ISO created_at) for a scope-A caller', async () => {
+    const repo = {
+      listPending: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            configuration_version_id: 'cv-1',
+            maker_id: 'maker-1',
+            config_type: 'sla_policy',
+            config_ref: 'pol-1',
+            status: 'pending',
+            created_at: new Date('2026-06-10T10:00:00.000Z'),
+            diff: { name: 'x' },
+          },
+        ],
+        total: 1,
+      }),
+    } as unknown as ConfigGovernanceRepository;
+    const service = new ConfigGovernanceService(repo, fakeUow(), fakeAudit(), fakeOutbox(), registryWith());
+
+    const result = await service.listPending(ADMIN, { page: 1, limit: 25 }, DataScope.A);
+
+    expect(repo.listPending).toHaveBeenCalledWith({ configType: undefined, page: 1, limit: 25 });
+    expect(result.pagination).toEqual({ page: 1, limit: 25, total: 1 });
+    expect(result.data).toEqual([
+      {
+        configurationVersionId: 'cv-1',
+        makerId: 'maker-1',
+        configType: 'sla_policy',
+        configRef: 'pol-1',
+        status: 'pending',
+        createdAt: '2026-06-10T10:00:00.000Z',
+        diff: { name: 'x' },
+      },
+    ]);
+  });
+
+  it('passes the config_type filter through to the repository', async () => {
+    const repo = {
+      listPending: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
+    } as unknown as ConfigGovernanceRepository;
+    const service = new ConfigGovernanceService(repo, fakeUow(), fakeAudit(), fakeOutbox(), registryWith());
+
+    await service.listPending(ADMIN, { page: 2, limit: 50, config_type: 'sla_policy' }, DataScope.A);
+
+    expect(repo.listPending).toHaveBeenCalledWith({ configType: 'sla_policy', page: 2, limit: 50 });
+  });
+
+  it('rejects a scope-B caller with FORBIDDEN before touching the repository', async () => {
+    const repo = { listPending: jest.fn() } as unknown as ConfigGovernanceRepository;
+    const service = new ConfigGovernanceService(repo, fakeUow(), fakeAudit(), fakeOutbox(), registryWith());
+
+    await expect(service.listPending(ADMIN, { page: 1, limit: 25 }, DataScope.B)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(repo.listPending).not.toHaveBeenCalled();
+  });
+});

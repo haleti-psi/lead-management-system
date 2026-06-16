@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { AuditAction, ERROR_CODES, GrantStatus } from '@lms/shared';
+import type { PaginationMeta } from '@lms/shared';
 
 import { AuditAppender } from '../../core/audit';
 import { UnitOfWork } from '../../core/db';
@@ -8,18 +9,27 @@ import { DomainException } from '../../core/http';
 import { BREAK_GLASS_CAPABLE_ROLE_CODES } from './break-glass.constants';
 import {
   BreakGlassRepository,
+  type BreakGlassGrantListRow,
   type BreakGlassGrantRow,
 } from './break-glass.repository';
 import type {
+  BreakGlassGrantListItem,
   BreakGlassGrantResponse,
   BreakGlassRequestDto,
   BreakGlassTransitionResponse,
+  ListBreakGlassQuery,
 } from './break-glass.dto';
 
 /** The acting principal, narrowed to what the service needs. */
 export interface BreakGlassActor {
   readonly userId: string;
   readonly orgId: string;
+}
+
+/** Shape returned by {@link BreakGlassService.list}. */
+export interface ListBreakGlassResult {
+  data: BreakGlassGrantListItem[];
+  pagination: PaginationMeta;
 }
 
 /** Audit `detail.event` discriminator for the grant-lifecycle audit rows. */
@@ -55,6 +65,25 @@ export class BreakGlassService {
     private readonly audit: AuditAppender,
     private readonly uow: UnitOfWork,
   ) {}
+
+  /**
+   * List the org's break-glass grants, newest-first and paginated, optionally
+   * filtered by `status`. The `break_glass` capability and the ADMIN/DPO scope
+   * posture are enforced upstream by the `AbacGuard` (auth-matrix
+   * `break_glass_grants`, `scoped:false`) — exactly as for request/approve/revoke
+   * — so this read adds no further scope gate; it only returns the org's rows.
+   */
+  async list(actor: BreakGlassActor, query: ListBreakGlassQuery): Promise<ListBreakGlassResult> {
+    const page = await this.repo.list(actor.orgId, {
+      status: query.status,
+      page: query.page,
+      limit: query.limit,
+    });
+    return {
+      data: page.rows.map((row) => this.toListItem(row)),
+      pagination: { page: query.page, limit: query.limit, total: page.total },
+    };
+  }
 
   /**
    * Create a time-boxed grant in `pending` status (LLD §Backend Flow). Window
@@ -261,6 +290,21 @@ export class BreakGlassService {
       status: grant.status,
       approverId: grant.approver_id,
       updatedAt: grant.updated_at.toISOString(),
+    };
+  }
+
+  private toListItem(grant: BreakGlassGrantListRow): BreakGlassGrantListItem {
+    return {
+      grantId: grant.grant_id,
+      granteeId: grant.grantee_id,
+      makerId: grant.maker_id,
+      approverId: grant.approver_id,
+      scopeType: grant.scope_type,
+      scopeRef: grant.scope_ref,
+      status: grant.status,
+      reason: grant.reason,
+      validFrom: grant.valid_from.toISOString(),
+      validUntil: grant.valid_until.toISOString(),
     };
   }
 }

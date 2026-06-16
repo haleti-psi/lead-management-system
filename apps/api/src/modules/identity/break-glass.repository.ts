@@ -43,6 +43,33 @@ export interface UserRoleRow {
   role_code: string;
 }
 
+/** Filters for {@link BreakGlassRepository.list}. */
+export interface ListGrantsArgs {
+  status?: GrantStatus;
+  page: number;
+  limit: number;
+}
+
+/** A break-glass grant summary row for the listing (`maker_id` = `created_by`). */
+export interface BreakGlassGrantListRow {
+  grant_id: string;
+  grantee_id: string;
+  maker_id: string;
+  approver_id: string;
+  scope_type: BreakGlassScopeType;
+  scope_ref: string | null;
+  status: GrantStatus;
+  reason: string;
+  valid_from: Date;
+  valid_until: Date;
+}
+
+/** A page of grant summaries plus the total matching the filter. */
+export interface BreakGlassGrantsPage {
+  rows: BreakGlassGrantListRow[];
+  total: number;
+}
+
 /**
  * Owner-writes repository for `break_glass_grants` (writer: M1 identity, per
  * auth-matrix `resource_governance`). Every query is parameterised Kysely,
@@ -79,6 +106,63 @@ export class BreakGlassRepository {
       .returningAll()
       .executeTakeFirstOrThrow();
     return this.toRow(row);
+  }
+
+  /**
+   * List grants for the org, newest-first, optionally narrowed to one `status`.
+   * Paginated and ALWAYS LIMIT-bounded (NFR-17); returns the page rows (summary
+   * columns only — `maker_id` is the requester `created_by`) and the total count
+   * matching the filter. Parameterised Kysely, `org_id`-scoped.
+   */
+  async list(orgId: string, args: ListGrantsArgs): Promise<BreakGlassGrantsPage> {
+    let rowsQuery = this.db
+      .selectFrom('break_glass_grants')
+      .select([
+        'grant_id',
+        'grantee_id',
+        'created_by as maker_id',
+        'approver_id',
+        'scope_type',
+        'scope_ref',
+        'status',
+        'reason',
+        'valid_from',
+        'valid_until',
+      ])
+      .where('org_id', '=', orgId);
+    if (args.status !== undefined) {
+      rowsQuery = rowsQuery.where('status', '=', args.status);
+    }
+    const rows = await rowsQuery
+      .orderBy('created_at', 'desc')
+      .limit(args.limit)
+      .offset((args.page - 1) * args.limit)
+      .execute();
+
+    let countQuery = this.db
+      .selectFrom('break_glass_grants')
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .where('org_id', '=', orgId);
+    if (args.status !== undefined) {
+      countQuery = countQuery.where('status', '=', args.status);
+    }
+    const { count } = await countQuery.executeTakeFirstOrThrow();
+
+    return {
+      rows: rows.map((r) => ({
+        grant_id: r.grant_id,
+        grantee_id: r.grantee_id,
+        maker_id: r.maker_id,
+        approver_id: r.approver_id,
+        scope_type: r.scope_type as BreakGlassScopeType,
+        scope_ref: r.scope_ref,
+        status: r.status,
+        reason: r.reason,
+        valid_from: asDate(r.valid_from),
+        valid_until: asDate(r.valid_until),
+      })),
+      total: Number(count),
+    };
   }
 
   /** Fetch a grant by id within the org; `undefined` when absent. */

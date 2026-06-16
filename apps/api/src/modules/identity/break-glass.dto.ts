@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
-import type { GrantStatus } from '@lms/shared';
+import { GrantStatus } from '@lms/shared';
+
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '../../core/common';
 
 /**
  * Zod DTOs for the FR-003 break-glass endpoints (LLD §Validation Logic).
@@ -105,4 +107,38 @@ export interface BreakGlassTransitionResponse {
   status: GrantStatus;
   approverId: string;
   updatedAt: string;
+}
+
+/**
+ * `GET /admin/break-glass` query schema. Standard pagination (page ≥ 1 default 1;
+ * limit 1..100 default 25 — the server ALWAYS applies a LIMIT) plus an optional
+ * `status` filter over the `grant_status` enum (pending/active/expired/revoked).
+ * Query-string values arrive as strings, hence `coerce` on the numeric fields.
+ * Validated at the controller boundary by {@link ZodValidationPipe}; any failure
+ * becomes `VALIDATION_ERROR` (400).
+ */
+export const ListBreakGlassQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_LIMIT).default(DEFAULT_PAGE_LIMIT),
+  status: z
+    .enum([GrantStatus.PENDING, GrantStatus.ACTIVE, GrantStatus.EXPIRED, GrantStatus.REVOKED], {
+      message: 'status must be pending, active, expired, or revoked',
+    })
+    .optional(),
+});
+
+export type ListBreakGlassQuery = z.infer<typeof ListBreakGlassQuery>;
+
+/** One grant in the `GET /admin/break-glass` listing (`maker` = the requester). */
+export interface BreakGlassGrantListItem {
+  grantId: string;
+  granteeId: string;
+  makerId: string;
+  approverId: string;
+  scopeType: BreakGlassScopeType;
+  scopeRef: string | null;
+  status: GrantStatus;
+  reason: string;
+  validFrom: string;
+  validUntil: string;
 }

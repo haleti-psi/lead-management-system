@@ -1,8 +1,8 @@
-import { ERROR_CODES } from '@lms/shared';
+import { ERROR_CODES, GrantStatus } from '@lms/shared';
 
 import { DomainException } from '../../core/http';
-import { ZodValidationPipe } from '../../core/common';
-import { makeBreakGlassRequestSchema } from './break-glass.dto';
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, ZodValidationPipe } from '../../core/common';
+import { ListBreakGlassQuery, makeBreakGlassRequestSchema } from './break-glass.dto';
 
 /**
  * FR-003 request-schema validation tests (T08–T12, T26). The schema is exercised
@@ -99,5 +99,31 @@ describe('makeBreakGlassRequestSchema', () => {
     const err = reject(base({ approverId: GRANTEE }));
     expect(err.code).toBe(ERROR_CODES.VALIDATION_ERROR);
     expect(err.fields?.some((f) => f.field === 'approverId')).toBe(true);
+  });
+});
+
+describe('ListBreakGlassQuery', () => {
+  it('defaults page=1 and limit=DEFAULT_PAGE_LIMIT when absent', () => {
+    expect(ListBreakGlassQuery.parse({})).toEqual({ page: 1, limit: DEFAULT_PAGE_LIMIT });
+  });
+
+  it('coerces string page/limit and keeps a valid status', () => {
+    expect(ListBreakGlassQuery.parse({ page: '2', limit: '50', status: GrantStatus.ACTIVE })).toEqual({
+      page: 2,
+      limit: 50,
+      status: GrantStatus.ACTIVE,
+    });
+  });
+
+  it('accepts limit at the MAX_PAGE_LIMIT boundary', () => {
+    expect(ListBreakGlassQuery.parse({ limit: MAX_PAGE_LIMIT }).limit).toBe(MAX_PAGE_LIMIT);
+  });
+
+  it('rejects a limit above MAX_PAGE_LIMIT', () => {
+    expect(ListBreakGlassQuery.safeParse({ limit: MAX_PAGE_LIMIT + 1 }).success).toBe(false);
+  });
+
+  it('rejects an unknown status value', () => {
+    expect(ListBreakGlassQuery.safeParse({ status: 'archived' }).success).toBe(false);
   });
 });

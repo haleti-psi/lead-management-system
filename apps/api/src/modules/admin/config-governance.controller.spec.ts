@@ -20,6 +20,13 @@ describe('ConfigGovernanceController @Requires metadata', () => {
       ConfigGovernanceController,
     ]);
 
+  it('listPending requires CONFIGURATION scoped to resourceType configuration_versions', () => {
+    const meta = metaFor(ConfigGovernanceController.prototype.listPending);
+    expect(meta?.capability).toBe(Capability.CONFIGURATION);
+    expect(meta?.scopeResolver).toBeDefined();
+    expect(meta!.scopeResolver!({} as never)).toEqual({ resourceType: CONFIGURATION_RESOURCE_TYPE });
+  });
+
   it('approve requires CONFIGURATION scoped to resourceType configuration_versions', () => {
     const meta = metaFor(ConfigGovernanceController.prototype.approve);
     expect(meta?.capability).toBe(Capability.CONFIGURATION);

@@ -1,10 +1,34 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import { ConfigChangeStatus } from '@lms/shared';
 
-import type { DbTransaction } from '../../core/db';
+import { KYSELY, type DbTransaction, type KyselyDb } from '../../core/db';
 import { ORG_ID_DEFAULT } from '../../core/outbox/outbox.constants';
 import type { ConfigurationVersionRow } from './activators/config-activator.port';
+
+/** Filters for {@link ConfigGovernanceRepository.listPending}. */
+export interface ListPendingArgs {
+  configType?: string;
+  page: number;
+  limit: number;
+}
+
+/** A pending `configuration_versions` summary row (for the review queue). */
+export interface PendingConfigVersionRow {
+  configuration_version_id: string;
+  maker_id: string;
+  config_type: string;
+  config_ref: string | null;
+  status: ConfigChangeStatus;
+  created_at: Date;
+  diff: unknown;
+}
+
+/** A page of pending versions plus the unfiltered-by-page total for the query. */
+export interface PendingConfigVersionsPage {
+  rows: PendingConfigVersionRow[];
+  total: number;
+}
 
 /**
  * FR-132 — owner repository for the `configuration_versions` governance lifecycle
@@ -15,6 +39,61 @@ import type { ConfigurationVersionRow } from './activators/config-activator.port
  */
 @Injectable()
 export class ConfigGovernanceRepository {
+  constructor(@Inject(KYSELY) private readonly db: KyselyDb) {}
+
+  /**
+   * List `pending` versions for the org, newest-first, optionally narrowed to one
+   * `config_type`. Paginated and always LIMIT-bounded (NFR-17); returns the page
+   * rows and the total count of pending rows matching the filter. Reads the
+   * summary columns only (no full row), via parameterised Kysely.
+   */
+  async listPending(args: ListPendingArgs): Promise<PendingConfigVersionsPage> {
+    let rowsQuery = this.db
+      .selectFrom('configuration_versions')
+      .select([
+        'configuration_version_id',
+        'maker_id',
+        'config_type',
+        'config_ref',
+        'status',
+        'created_at',
+        'diff',
+      ])
+      .where('org_id', '=', ORG_ID_DEFAULT)
+      .where('status', '=', ConfigChangeStatus.PENDING);
+    if (args.configType !== undefined) {
+      rowsQuery = rowsQuery.where('config_type', '=', args.configType);
+    }
+    const rows = await rowsQuery
+      .orderBy('created_at', 'desc')
+      .limit(args.limit)
+      .offset((args.page - 1) * args.limit)
+      .execute();
+
+    let countQuery = this.db
+      .selectFrom('configuration_versions')
+      .select((eb) => eb.fn.countAll<string>().as('count'))
+      .where('org_id', '=', ORG_ID_DEFAULT)
+      .where('status', '=', ConfigChangeStatus.PENDING);
+    if (args.configType !== undefined) {
+      countQuery = countQuery.where('config_type', '=', args.configType);
+    }
+    const { count } = await countQuery.executeTakeFirstOrThrow();
+
+    return {
+      rows: rows.map((r) => ({
+        configuration_version_id: r.configuration_version_id,
+        maker_id: r.maker_id,
+        config_type: r.config_type,
+        config_ref: r.config_ref,
+        status: r.status,
+        created_at: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
+        diff: r.diff ?? null,
+      })),
+      total: Number(count),
+    };
+  }
+
   /** Fetch a version by id within the org (inside the governance tx). */
   async findById(versionId: string, tx: DbTransaction): Promise<ConfigurationVersionRow | undefined> {
     return tx
