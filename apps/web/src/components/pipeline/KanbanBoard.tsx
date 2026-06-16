@@ -6,11 +6,13 @@
  * "Move stage" button on each card opening MobileStageSelectorSheet.
  *
  * Drag-and-drop:
- *   1. DragStart stores { leadId, version, fromStage } in dataTransfer.
- *   2. Drop on a column calls `useTransitionStage.transition` with the new stage.
- *   3. On guard failure / CONFLICT → toast + snap-back (no optimistic update
- *      is applied here; the card stays in its original column until the queries
- *      are refetched via the React Query cache invalidation on success).
+ *   1. DragStart stores { leadId, fromStage } in dataTransfer.
+ *   2. Drop on a column resolves the lead's current optimistic-lock `version`
+ *      (fetched just-in-time, as the board list projection doesn't carry it),
+ *      then calls `useTransitionStage.transition` with the new stage.
+ *   3. On guard failure / CONFLICT → toast + snap-back (no optimistic update is
+ *      applied here; the card stays put until the queries are refetched via the
+ *      React Query cache invalidation on success).
  *
  * The board reloads all columns on a successful transition via
  * `queryClient.invalidateQueries(['pipeline-board'])`.
@@ -18,17 +20,17 @@
 
 import { useState, type DragEvent, type ReactElement } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 
-import { usePipelineBoard, BOARD_STAGES } from '@/hooks/use-pipeline-board';
+import { usePipelineBoard, BOARD_STAGES, fetchLeadVersion } from '@/hooks/use-pipeline-board';
 import { useTransitionStage } from '@/hooks/use-transition-stage';
 import { KanbanColumn } from './KanbanColumn';
 import { MobileStageSelectorSheet } from './MobileStageSelectorSheet';
 import type { PipelineLeadCard } from './pipeline-board.types';
 
-/** Payload stored in drag dataTransfer. */
+/** Payload stored in drag dataTransfer (the version is resolved at drop time). */
 interface DragPayload {
   leadId: string;
-  version: number;
   fromStage: string;
 }
 
@@ -43,7 +45,6 @@ function decodeDrag(raw: string): DragPayload | null {
       parsed !== null &&
       typeof parsed === 'object' &&
       'leadId' in parsed &&
-      'version' in parsed &&
       'fromStage' in parsed
     ) {
       return parsed as DragPayload;
@@ -70,27 +71,35 @@ export function KanbanBoard(): ReactElement {
     },
   });
 
+  /**
+   * Resolve the lead's current version (optimistic lock) just-in-time, then move
+   * it. The list projection doesn't carry `version`, so we read it on demand;
+   * `transition` owns all failure toasts for the PATCH itself.
+   */
+  async function moveLead(leadId: string, toStage: string): Promise<void> {
+    let version: number;
+    try {
+      version = await fetchLeadVersion(leadId);
+    } catch {
+      toast.error('Could not move lead', { description: 'Please refresh and try again.' });
+      return;
+    }
+    await transition(leadId, { to: toStage, expected_version: version });
+  }
+
   function handleDragStart(e: DragEvent<HTMLDivElement>, card: PipelineLeadCard): void {
-    e.dataTransfer.setData(
-      'text/plain',
-      encodeDrag({ leadId: card.leadId, version: card.version, fromStage: card.stage }),
-    );
+    e.dataTransfer.setData('text/plain', encodeDrag({ leadId: card.leadId, fromStage: card.stage }));
     e.dataTransfer.effectAllowed = 'move';
   }
 
   function handleDrop(e: DragEvent<HTMLDivElement>, toStage: string): void {
-    const raw = e.dataTransfer.getData('text/plain');
-    const payload = decodeDrag(raw);
+    const payload = decodeDrag(e.dataTransfer.getData('text/plain'));
     if (!payload || payload.fromStage === toStage) return;
-
-    void transition(payload.leadId, {
-      to: toStage,
-      expected_version: payload.version,
-    });
+    void moveLead(payload.leadId, toStage);
   }
 
   function handleMobileSelect(card: PipelineLeadCard, toStage: string): void {
-    void transition(card.leadId, { to: toStage, expected_version: card.version });
+    void moveLead(card.leadId, toStage);
   }
 
   const anyPending = BOARD_STAGES.some((stage) => board[stage].isPending);

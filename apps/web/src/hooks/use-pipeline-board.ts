@@ -2,18 +2,17 @@
  * FR-052 — usePipelineBoard hook.
  *
  * Loads all Kanban columns in parallel by calling `GET /api/v1/leads` once per
- * stage (with `filter[stage]=<stage>`). Uses @tanstack/react-query so each
- * column has its own cache key and can be individually refetched after a
- * stage transition.
- *
- * The hook returns a map of stage → { data, isPending, isError }. Callers
- * (KanbanBoard) render per-column states independently.
+ * stage (with `filter[stage]=<stage>`). The list endpoint returns the contract
+ * `Lead` array in the envelope `data` with pagination in `meta.pagination`, so
+ * we use `apiClient.getPage` (NOT `get`) and map each row to a board card.
+ * Each column has its own react-query cache key and can be refetched
+ * independently after a stage transition.
  */
 
 import { useQuery } from '@tanstack/react-query';
 
 import { apiClient } from '@/lib/api';
-import type { LeadListData, PipelineLeadCard } from '@/components/pipeline/pipeline-board.types';
+import type { BoardLeadRow, PipelineLeadCard } from '@/components/pipeline/pipeline-board.types';
 
 /** The ordered list of stages shown on the board (left-to-right). */
 export const BOARD_STAGES = [
@@ -29,6 +28,35 @@ export const BOARD_STAGES = [
 
 export type BoardStage = typeof BOARD_STAGES[number];
 
+/**
+ * Map a `GET /leads` contract row to a board card. Fields the list projection
+ * does not carry (amount / owner / ageing / next-action / version) are left
+ * undefined and the card renders without them.
+ */
+export function toCard(row: BoardLeadRow): PipelineLeadCard {
+  return {
+    leadId: row.lead_id,
+    leadCode: row.lead_code,
+    customerName: row.name_masked ?? '—',
+    productCode: row.product_code,
+    stage: row.stage,
+    isHot: row.is_hot,
+    consentStatus: row.consent_status,
+    kycStatus: row.kyc_status,
+    score: row.score,
+  };
+}
+
+/**
+ * Fetch a lead's current optimistic-lock `version` for a stage move. The board
+ * list projection does not expose it, so we read it just-in-time from the
+ * Lead-360 aggregate (`GET /leads/:id`) — the only endpoint that returns it.
+ */
+export async function fetchLeadVersion(leadId: string): Promise<number> {
+  const lead = await apiClient.get<{ version: number }>(`/leads/${leadId}`);
+  return lead.version;
+}
+
 export interface BoardColumnState {
   cards: PipelineLeadCard[];
   total: number;
@@ -38,17 +66,22 @@ export interface BoardColumnState {
 }
 
 function useBoardColumn(stage: BoardStage, pageLimit = 25): BoardColumnState {
-  const { data, isPending, isError, refetch } = useQuery<LeadListData>({
+  const { data, isPending, isError, refetch } = useQuery({
     queryKey: ['pipeline-board', stage],
-    queryFn: () =>
-      apiClient.get<LeadListData>('/leads', {
+    queryFn: async () => {
+      const page = await apiClient.getPage<BoardLeadRow>('/leads', {
         query: { 'filter[stage]': stage, limit: pageLimit, page: 1 },
-      }),
+      });
+      return {
+        cards: page.data.map(toCard),
+        total: page.pagination?.total ?? page.data.length,
+      };
+    },
     staleTime: 30_000,
   });
 
   return {
-    cards: data?.items ?? [],
+    cards: data?.cards ?? [],
     total: data?.total ?? 0,
     isPending,
     isError,
