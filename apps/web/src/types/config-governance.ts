@@ -4,11 +4,27 @@
  * These mirror the NestJS `ConfigGovernanceService` result shapes
  * (`ApproveConfigResult`, `RollbackConfigResult` in
  * `apps/api/src/modules/admin/config-governance.service.ts`) and the request
- * DTOs (`ApproveConfigDto`, `RollbackConfigDto`). Both endpoints act on a single
- * `configuration_versions` id; the backend exposes NO list/GET endpoint (see the
- * page docblock), so the web models only the two POST actions.
+ * DTOs (`ApproveConfigDto`, `RollbackConfigDto`), plus the `GET /admin/config`
+ * pending-queue row (`PendingConfigVersionView`). Each action acts on a single
+ * `configuration_versions` id.
  */
 import type { ConfigChangeStatus } from '@lms/shared';
+
+/**
+ * One pending row from `GET /admin/config` (`PendingConfigVersionView`). The
+ * server lists `pending` versions newest-first, paginated; `diff` is the opaque
+ * JSONB captured when the version was created and is rendered by {@link DiffEntry}
+ * normalisation without a further fetch.
+ */
+export interface PendingConfigVersion {
+  configurationVersionId: string;
+  makerId: string;
+  configType: string;
+  configRef: string | null;
+  status: ConfigChangeStatus;
+  createdAt: string;
+  diff: unknown;
+}
 
 /** A single change inside a `configuration_versions.diff` JSON, normalised for
  * display. The server stores `diff` as opaque JSONB; the web renders whatever

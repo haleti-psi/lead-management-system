@@ -1,89 +1,131 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
+import type { PendingConfigVersion } from '@/types/config-governance';
 
 const mocks = vi.hoisted(() => ({
+  list: vi.fn(),
   approve: vi.fn(),
   rollback: vi.fn(),
   can: vi.fn(),
+  invalidate: vi.fn(),
 }));
 
-vi.mock('@/hooks/use-config-governance', () => ({
-  useApproveConfig: () => ({ mutateAsync: mocks.approve, isPending: false }),
-  useRollbackConfig: () => ({ mutateAsync: mocks.rollback, isPending: false }),
-}));
+vi.mock('@/hooks/use-config-governance', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/use-config-governance')>();
+  return {
+    ...actual,
+    useConfigVersions: () => mocks.list(),
+    useApproveConfig: () => ({ mutateAsync: mocks.approve, isPending: false }),
+    useRollbackConfig: () => ({ mutateAsync: mocks.rollback, isPending: false }),
+  };
+});
 vi.mock('@/lib/auth/capabilities', () => ({ useCan: () => (c: string) => mocks.can(c) }));
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>();
+  return { ...actual, useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) };
+});
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { ConfigGovernancePage } from './ConfigGovernancePage';
 
-const VALID_ID = '11111111-1111-4111-8111-111111111111';
+const VERSION_ID = '11111111-1111-4111-8111-111111111111';
+
+function pending(overrides: Partial<PendingConfigVersion> = {}): PendingConfigVersion {
+  return {
+    configurationVersionId: VERSION_ID,
+    makerId: 'maker-1',
+    configType: 'sla_policy',
+    configRef: 'first-response',
+    status: 'pending',
+    createdAt: '2026-01-01T00:00:00Z',
+    diff: { threshold_minutes: { before: 30, after: 45 } },
+    ...overrides,
+  };
+}
+
+/** A list-query result that returns `rows` by default. */
+function listResult(rows: PendingConfigVersion[], extra: Record<string, unknown> = {}) {
+  return {
+    data: { data: rows, pagination: { page: 1, limit: 25, total: rows.length } },
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+    ...extra,
+  };
+}
 
 describe('ConfigGovernancePage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.can.mockReturnValue(true);
+    mocks.list.mockReturnValue(listResult([pending()]));
   });
 
-  it('shows a no-access message and no action controls without the configuration capability', () => {
+  it('shows a no-access message and no queue without the configuration capability', () => {
     mocks.can.mockReturnValue(false);
     render(<ConfigGovernancePage />);
     expect(screen.getByText(/don't have access to configuration governance/i)).toBeTruthy();
-    expect(screen.queryByLabelText(/configuration version id/i)).toBeNull();
-    expect(screen.queryByRole('button', { name: /review/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /approve \/ reject/i })).toBeNull();
   });
 
-  it('renders the missing-list-endpoint notice and the id entry form for an authorised user', () => {
+  it('renders the pending queue rows from GET /admin/config', () => {
     render(<ConfigGovernancePage />);
     expect(screen.getByRole('heading', { name: 'Configuration Approvals' })).toBeTruthy();
-    // The honest gap notice about the absent queue/list endpoint.
-    expect(screen.getByRole('note')).toBeTruthy();
-    expect(screen.getByText(/pending-changes queue is not yet available/i)).toBeTruthy();
-    expect(screen.getByLabelText(/configuration version id/i)).toBeTruthy();
+    // config_type (humanized), config_ref, maker, status chip.
+    expect(screen.getByText('Sla policy')).toBeTruthy();
+    expect(screen.getByText('first-response')).toBeTruthy();
+    expect(screen.getByText('maker-1')).toBeTruthy();
+    expect(screen.getByText('Pending')).toBeTruthy();
   });
 
-  it('disables both actions until a valid UUID is entered', () => {
+  it('opens the review dialog from a row action', () => {
     render(<ConfigGovernancePage />);
-    const review = screen.getByRole('button', { name: /review/i });
-    const rollback = screen.getByRole('button', { name: /roll back/i });
-    expect((review as HTMLButtonElement).disabled).toBe(true);
-    expect((rollback as HTMLButtonElement).disabled).toBe(true);
-
-    fireEvent.change(screen.getByLabelText(/configuration version id/i), {
-      target: { value: VALID_ID },
-    });
-    expect((review as HTMLButtonElement).disabled).toBe(false);
-    expect((rollback as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it('shows an inline UUID validation error for a malformed id', () => {
-    render(<ConfigGovernancePage />);
-    const input = screen.getByLabelText(/configuration version id/i);
-    fireEvent.change(input, { target: { value: 'not-a-uuid' } });
-    fireEvent.blur(input);
-    expect(screen.getByText(/valid configuration-version id/i)).toBeTruthy();
-  });
-
-  it('opens the review dialog for a valid id', () => {
-    render(<ConfigGovernancePage />);
-    fireEvent.change(screen.getByLabelText(/configuration version id/i), {
-      target: { value: VALID_ID },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /review/i }));
+    fireEvent.click(screen.getByRole('button', { name: /approve \/ reject/i }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Review configuration change')).toBeTruthy();
     expect(within(dialog).getByLabelText(/approve/i)).toBeTruthy();
     expect(within(dialog).getByLabelText(/reject/i)).toBeTruthy();
   });
 
-  it('opens the rollback dialog for a valid id', () => {
+  it('refetches the queue after a review dialog closes', () => {
     render(<ConfigGovernancePage />);
-    fireEvent.change(screen.getByLabelText(/configuration version id/i), {
-      target: { value: VALID_ID },
-    });
+    fireEvent.click(screen.getByRole('button', { name: /approve \/ reject/i }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /cancel/i }));
+    expect(mocks.invalidate).toHaveBeenCalledWith({ queryKey: ['admin-config'] });
+  });
+
+  it('shows the row diff in a modal from the View action', () => {
+    render(<ConfigGovernancePage />);
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Configuration change details' })).toBeTruthy();
+    // The opaque diff is rendered without a further fetch.
+    expect(within(dialog).getByText('threshold_minutes')).toBeTruthy();
+    expect(within(dialog).getByText('45')).toBeTruthy();
+  });
+
+  it('opens the rollback dialog from a row action', () => {
+    render(<ConfigGovernancePage />);
     fireEvent.click(screen.getByRole('button', { name: /roll back/i }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Roll back configuration')).toBeTruthy();
     expect(within(dialog).getByLabelText(/reason/i)).toBeTruthy();
+  });
+
+  it('renders the empty state when there are no pending changes', () => {
+    mocks.list.mockReturnValue(listResult([]));
+    render(<ConfigGovernancePage />);
+    expect(screen.getByText('No pending changes')).toBeTruthy();
+  });
+
+  it('renders the error state with a retry when the queue query fails', () => {
+    const refetch = vi.fn();
+    mocks.list.mockReturnValue(listResult([], { isError: true, data: undefined, refetch }));
+    render(<ConfigGovernancePage />);
+    expect(screen.getByText('Could not load pending configuration changes.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+    expect(refetch).toHaveBeenCalled();
   });
 });

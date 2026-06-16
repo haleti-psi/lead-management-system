@@ -1,29 +1,46 @@
 import * as React from 'react';
-import { CheckSquare, Info, Undo2 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
+import { Modal } from '@/components/ui/Modal';
+import { StatusChip } from '@/components/ui/StatusChip';
+import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
 import { useCan } from '@/lib/auth/capabilities';
+import {
+  configGovernanceKeys,
+  useConfigVersions,
+} from '@/hooks/use-config-governance';
+import type { PendingConfigVersion } from '@/types/config-governance';
 import { ApproveConfigDialog } from './ApproveConfigDialog';
 import { RollbackConfirmDialog } from './RollbackConfirmDialog';
+import { DiffViewer } from './DiffViewer';
+import { humanizeStatus, statusTone } from './config-governance-utils';
 
-/** RFC-4122 UUID (any version) — mirrors the backend `ConfigIdParam` guard so a
- * malformed id is caught before the request is sent. */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type DialogState =
+  | { kind: 'diff'; row: PendingConfigVersion }
+  | { kind: 'approve'; versionId: string }
+  | { kind: 'rollback'; versionId: string }
+  | null;
 
-type DialogState = { kind: 'approve'; versionId: string } | { kind: 'rollback'; versionId: string } | null;
+/** "sla_policy" → "Sla policy" for display of the opaque `config_type`. */
+function humanizeType(value: string): string {
+  const spaced = value.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/** Short, locale-aware date for the `created` column. */
+function formatCreated(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+}
 
 /**
- * FR-132 §UI — Configuration Governance (maker-checker), intended to mount at
- * `/admin/config` (capability `configuration`). A checker approves/rejects a
- * pending `configuration_versions` change, or rolls back an active one; each
- * action runs in its own transaction server-side and emits `CONFIG_CHANGED`.
- *
- * IMPORTANT — backend surface: the API (`ConfigGovernanceController`) exposes
- * ONLY `POST /admin/config/{id}/approve` and `POST /admin/config/{id}/rollback`.
- * There is NO endpoint to LIST pending versions and NO GET-by-id. So this screen
- * cannot render a server-paginated queue or fetch a diff up front (the diff is
- * returned by the approve action). Until a list endpoint exists, the operator
- * acts on a known configuration-version id (e.g. from the change notification /
- * audit trail). This limitation is called out in the page banner and the report.
+ * FR-132 §UI — Configuration Governance (maker-checker), mounts at `/admin/config`
+ * (capability `configuration`). A checker works a server-paginated queue of
+ * `pending` configuration_versions (`GET /admin/config`): each row shows the
+ * config type/ref, maker, created time and status, with actions to view the diff
+ * and to approve/reject (`ApproveConfigDialog`) or roll back (`RollbackConfirmDialog`).
+ * Each action runs in its own transaction server-side and emits `CONFIG_CHANGED`;
+ * after a dialog closes the queue is refetched so resolved rows drop out.
  *
  * Affordances are gated by `useCan('configuration')`; the server's
  * `EntitlementService.can()` plus the scope-A and maker≠checker guards remain
@@ -32,14 +49,14 @@ type DialogState = { kind: 'approve'; versionId: string } | { kind: 'rollback'; 
 export function ConfigGovernancePage(): JSX.Element {
   const can = useCan();
   const canManage = can('configuration');
+  const queryClient = useQueryClient();
 
-  const [versionId, setVersionId] = React.useState('');
-  const [touched, setTouched] = React.useState(false);
+  const [page, setPage] = React.useState(1);
+  const [limit, setLimit] = React.useState(25);
   const [dialog, setDialog] = React.useState<DialogState>(null);
 
-  const trimmed = versionId.trim();
-  const idValid = UUID_RE.test(trimmed);
-  const showIdError = touched && trimmed.length > 0 && !idValid;
+  const queryResult = useConfigVersions({ page, limit }, canManage);
+  const result = queryResult.data;
 
   if (!canManage) {
     return (
@@ -52,82 +69,135 @@ export function ConfigGovernancePage(): JSX.Element {
     );
   }
 
-  function open(kind: 'approve' | 'rollback'): void {
-    setTouched(true);
-    if (!idValid) return;
-    setDialog({ kind, versionId: trimmed });
+  /** Close any dialog and refresh the queue so an acted-on row drops out. */
+  function closeDialog(): void {
+    setDialog(null);
+    void queryClient.invalidateQueries({ queryKey: configGovernanceKeys.all });
   }
 
+  const columns = buildColumns({
+    onViewDiff: (row) => setDialog({ kind: 'diff', row }),
+    onReview: (row) => setDialog({ kind: 'approve', versionId: row.configurationVersionId }),
+    onRollback: (row) => setDialog({ kind: 'rollback', versionId: row.configurationVersionId }),
+  });
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold">Configuration Approvals</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Maker-checker review of configuration changes. Approve or reject a pending change, or roll back an
-          active one.
+          Maker-checker review of pending configuration changes. View the change, then approve or reject it,
+          or roll back an active one.
         </p>
       </div>
 
-      {/* Honest gap notice — no list endpoint exists yet (see page docblock). */}
-      <div
-        role="note"
-        className="flex gap-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+      <DataTable
+        columns={columns}
+        rows={result?.data ?? []}
+        getRowId={(r) => r.configurationVersionId}
+        pagination={{ page, limit, total: result?.pagination?.total ?? 0 }}
+        onPageChange={setPage}
+        onLimitChange={(l) => {
+          setLimit(l);
+          setPage(1);
+        }}
+        isLoading={queryResult.isLoading}
+        error={queryResult.isError ? 'Could not load pending configuration changes.' : null}
+        onRetry={() => void queryResult.refetch()}
+        emptyTitle="No pending changes"
+        emptyMessage="There are no pending configuration changes to review."
+      />
+
+      <Modal
+        open={dialog?.kind === 'diff'}
+        onClose={() => setDialog(null)}
+        title="Configuration change details"
       >
-        <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-        <p>
-          A pending-changes queue is not yet available because the API does not expose a list endpoint. Enter
-          the configuration-version id from the change notification or audit trail to act on it.
-        </p>
-      </div>
-
-      <div className="max-w-xl space-y-3 rounded-md border p-4">
-        <div className="space-y-1">
-          <label htmlFor="config-version-id" className="text-sm font-medium">
-            Configuration version id
-          </label>
-          <input
-            id="config-version-id"
-            type="text"
-            inputMode="text"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="00000000-0000-0000-0000-000000000000"
-            className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            value={versionId}
-            aria-invalid={showIdError}
-            aria-describedby="config-version-id-help"
-            onChange={(e) => setVersionId(e.target.value)}
-            onBlur={() => setTouched(true)}
-          />
-          {showIdError ? (
-            <p id="config-version-id-help" role="alert" className="text-xs text-destructive">
-              Enter a valid configuration-version id (UUID).
-            </p>
-          ) : (
-            <p id="config-version-id-help" className="text-xs text-muted-foreground">
-              The id of the configuration_versions row to act on.
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => open('approve')} disabled={!idValid}>
-            <CheckSquare className="h-4 w-4" aria-hidden />
-            Review (approve / reject)
-          </Button>
-          <Button variant="destructive" onClick={() => open('rollback')} disabled={!idValid}>
-            <Undo2 className="h-4 w-4" aria-hidden />
-            Roll back
-          </Button>
-        </div>
-      </div>
+        {dialog?.kind === 'diff' ? (
+          <div className="space-y-4">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              <dt className="text-muted-foreground">Config type</dt>
+              <dd className="font-medium">{humanizeType(dialog.row.configType)}</dd>
+              <dt className="text-muted-foreground">Reference</dt>
+              <dd className="font-medium">{dialog.row.configRef ?? '—'}</dd>
+            </dl>
+            <DiffViewer diff={dialog.row.diff} />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDialog(null)}>
+                Close
+              </Button>
+              <Button
+                onClick={() =>
+                  setDialog({ kind: 'approve', versionId: dialog.row.configurationVersionId })
+                }
+              >
+                Review
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       {dialog?.kind === 'approve' ? (
-        <ApproveConfigDialog versionId={dialog.versionId} onClose={() => setDialog(null)} />
+        <ApproveConfigDialog versionId={dialog.versionId} onClose={closeDialog} />
       ) : null}
       {dialog?.kind === 'rollback' ? (
-        <RollbackConfirmDialog versionId={dialog.versionId} onClose={() => setDialog(null)} />
+        <RollbackConfirmDialog versionId={dialog.versionId} onClose={closeDialog} />
       ) : null}
     </div>
   );
+}
+
+interface RowActions {
+  onViewDiff: (row: PendingConfigVersion) => void;
+  onReview: (row: PendingConfigVersion) => void;
+  onRollback: (row: PendingConfigVersion) => void;
+}
+
+/** Queue columns: config type, ref, maker, created, status + a per-row action set. */
+function buildColumns(actions: RowActions): DataTableColumn<PendingConfigVersion>[] {
+  return [
+    {
+      id: 'configType',
+      header: 'Config type',
+      cell: (r) => humanizeType(r.configType),
+    },
+    {
+      id: 'configRef',
+      header: 'Reference',
+      cell: (r) => r.configRef ?? '—',
+    },
+    {
+      id: 'makerId',
+      header: 'Maker',
+      cell: (r) => <span className="font-mono text-xs">{r.makerId}</span>,
+    },
+    {
+      id: 'createdAt',
+      header: 'Created',
+      cell: (r) => <span className="whitespace-nowrap">{formatCreated(r.createdAt)}</span>,
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: (r) => <StatusChip label={humanizeStatus(r.status)} tone={statusTone(r.status)} />,
+    },
+    {
+      id: 'actions',
+      header: '',
+      cell: (r) => (
+        <div className="flex justify-end gap-1">
+          <Button variant="ghost" size="sm" onClick={() => actions.onViewDiff(r)}>
+            View
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => actions.onReview(r)}>
+            Approve / Reject
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => actions.onRollback(r)}>
+            Roll back
+          </Button>
+        </div>
+      ),
+    },
+  ];
 }
