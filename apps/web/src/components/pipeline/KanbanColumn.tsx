@@ -1,18 +1,17 @@
 /**
  * FR-052 — KanbanColumn
  *
- * One stage column in the pipeline board. Renders a header (stage name + card
- * count), the list of LeadCards, and handles drag-over/drop so cards can be
- * dropped here from another column.
+ * One stage column in the pipeline board. Renders a header (stage dot + name +
+ * card-count badge), the list of LeadCards, and handles drag-over/drop so cards
+ * can be dropped here from another column.
  *
- * States: loading (skeleton), error (ErrorState), empty (EmptyState), success
- * (list of LeadCards). All four states are covered per ui.md §States.
+ * States: loading (skeleton), error (ErrorState), empty (compact message),
+ * success (list of LeadCards). All four states are covered per ui.md §States.
  */
 
 import type { DragEvent, ReactElement } from 'react';
 
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
-import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { cn } from '@/lib/utils';
 import { LeadCard } from './LeadCard';
@@ -28,6 +27,26 @@ const STAGE_LABELS: Readonly<Record<string, string>> = {
   kyc_in_progress: 'KYC',
   eligibility_requested: 'Eligibility',
   ready_for_handoff: 'Ready',
+};
+
+/** Stage → semantic tone, mirroring the app-wide StatusChip colour mapping
+ * (in-progress = blue, awaiting action = amber, ready = green). */
+type StageTone = 'neutral' | 'progress' | 'warning' | 'positive';
+const STAGE_TONE: Readonly<Record<string, StageTone>> = {
+  captured: 'neutral',
+  assigned: 'progress',
+  contacted: 'progress',
+  qualified: 'progress',
+  documents_pending: 'warning',
+  kyc_in_progress: 'progress',
+  eligibility_requested: 'progress',
+  ready_for_handoff: 'positive',
+};
+const TONE_DOT: Readonly<Record<StageTone, string>> = {
+  neutral: 'bg-slate-400',
+  progress: 'bg-blue-500',
+  warning: 'bg-amber-500',
+  positive: 'bg-emerald-500',
 };
 
 export interface KanbanColumnProps {
@@ -64,35 +83,36 @@ export function KanbanColumn({
   }
 
   const label = STAGE_LABELS[stage] ?? stage.replace(/_/g, ' ');
+  const tone = STAGE_TONE[stage] ?? 'neutral';
 
   return (
     <section
       aria-label={`${label} column`}
-      className={cn(
-        'flex flex-col w-64 shrink-0 rounded-lg bg-muted/40 border',
-        'overflow-hidden',
-      )}
+      className={cn('flex w-64 shrink-0 flex-col overflow-hidden rounded-lg border bg-muted/40')}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
       {/* Column header */}
-      <header className="flex items-center justify-between px-3 py-2 border-b bg-card">
-        <span className="text-sm font-semibold">{label}</span>
-        <span className="text-xs text-muted-foreground">{total}</span>
+      <header className="flex items-center justify-between gap-2 border-b bg-card px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={cn('h-2 w-2 shrink-0 rounded-full', TONE_DOT[tone])} aria-hidden />
+          <span className="truncate text-sm font-semibold">{label}</span>
+        </div>
+        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+          {total}
+        </span>
       </header>
 
       {/* Column body */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-2" data-testid={`column-${stage}`}>
+      <div className="flex-1 space-y-2 overflow-y-auto p-2" data-testid={`column-${stage}`}>
         {isPending ? (
           <LoadingSkeleton rows={3} />
         ) : isError ? (
-          <ErrorState
-            title="Couldn't load column"
-            message="Please try again."
-            onRetry={onRetry}
-          />
+          <ErrorState title="Couldn't load column" message="Please try again." onRetry={onRetry} />
         ) : cards.length === 0 ? (
-          <EmptyState title="No leads" message={`No leads in ${label}.`} />
+          <div className="flex h-full items-center justify-center px-2 py-8 text-center text-xs text-muted-foreground">
+            No leads
+          </div>
         ) : (
           cards.map((card) => (
             <LeadCard

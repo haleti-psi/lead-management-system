@@ -181,6 +181,19 @@ describe('DashboardPage — PII masking', () => {
   });
 });
 
+// ── KPI value formatting ──────────────────────────────────────────────────────
+
+describe('DashboardPage — KPI formatting', () => {
+  it('renders Consent Coverage as a percentage (value + % unit)', () => {
+    mockUseDashboard.mockReturnValue({ data: makeData(), isLoading: false, isError: false, refetch: vi.fn() });
+
+    const { container } = renderPage();
+
+    // consent_coverage_pct = 97 → "97%" (value and unit are adjacent nodes)
+    expect(container.textContent).toContain('97%');
+  });
+});
+
 // ── Role-based widget visibility ──────────────────────────────────────────────
 
 describe('DashboardPage — role-based widget visibility (RM)', () => {

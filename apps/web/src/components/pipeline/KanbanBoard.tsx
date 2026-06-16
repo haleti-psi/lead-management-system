@@ -93,9 +93,24 @@ export function KanbanBoard(): ReactElement {
     void transition(card.leadId, { to: toStage, expected_version: card.version });
   }
 
+  const anyPending = BOARD_STAGES.some((stage) => board[stage].isPending);
+  const totalLeads = BOARD_STAGES.reduce((sum, stage) => sum + board[stage].total, 0);
+
   return (
     <div className="h-full flex flex-col">
-      <h1 className="text-xl font-semibold mb-4">Pipeline Board</h1>
+      <div className="mb-4">
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold">Pipeline Board</h1>
+          {!anyPending && totalLeads > 0 ? (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+              {totalLeads}
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Drag a card between columns to move a lead through your pipeline.
+        </p>
+      </div>
 
       {/* Desktop: horizontal scroll; mobile: vertical stack */}
       <div

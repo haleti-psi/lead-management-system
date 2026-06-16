@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   BarChart3,
-  FileCheck2,
   LayoutDashboard,
   LogOut,
   Search,
@@ -39,7 +38,6 @@ interface NavItem {
 const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
   { label: 'Leads', path: '/leads', icon: Users, capability: 'view_lead' },
-  { label: 'KYC & Docs', path: '/kyc', icon: FileCheck2, capability: 'verify_doc' },
   { label: 'Reports', path: '/reports', icon: BarChart3, capability: 'reports' },
   { label: 'Audit', path: '/audit', icon: ShieldCheck, capability: 'audit_trail' },
   { label: 'Configuration', path: '/admin', icon: Settings, capability: 'configuration' },

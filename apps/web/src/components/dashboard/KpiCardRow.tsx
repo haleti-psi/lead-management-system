@@ -6,7 +6,9 @@ import { KpiCard } from './KpiCard';
 
 /**
  * FR-053 — Row of KPI cards. Each card links to the lead list with the
- * appropriate filter per the LLD §UI §Drill-through table.
+ * appropriate filter per the LLD §UI §Drill-through table. Colour is semantic:
+ * hot = orange, breach = destructive, consent health = green/amber by threshold,
+ * hand-off (the success outcome) = positive; counts stay neutral/brand.
  */
 export interface KpiCardRowProps {
   kpi: KpiWidget;
@@ -19,6 +21,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         title="Active Pipeline"
         value={kpi.active_pipeline}
         icon={Activity}
+        tone="primary"
         to="/leads?filter[stage][ne]=handed_off&filter[stage][ne]=rejected"
         description="Leads in progress"
       />
@@ -26,6 +29,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         title="Captured Today"
         value={kpi.captured_today}
         icon={TrendingUp}
+        tone="neutral"
         to="/leads?filter[sla_state]=none"
         description="New leads today"
       />
@@ -33,6 +37,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         title="Hot Leads"
         value={kpi.hot_leads}
         icon={Flame}
+        tone="hot"
         to="/leads?filter[is_hot]=true"
         description="Score ≥ 75"
       />
@@ -40,6 +45,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         title="SLA Breached"
         value={kpi.sla_breached}
         icon={AlertTriangle}
+        tone="destructive"
         to="/leads?filter[stage]=first_contact_pending&filter[sla_breached]=true"
         description="Overdue first contact"
         alert
@@ -48,6 +54,8 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         title="Consent Coverage"
         value={kpi.consent_coverage_pct}
         icon={CheckCircle}
+        tone={kpi.consent_coverage_pct >= 90 ? 'positive' : 'warning'}
+        unit="%"
         to="/leads?filter[consent_status]=pending"
         description="% with consent"
       />
@@ -55,6 +63,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         title="Handed Off"
         value={kpi.handed_off_this_month}
         icon={PackageCheck}
+        tone="positive"
         to="/leads?filter[stage]=handed_off"
         description="This month"
       />

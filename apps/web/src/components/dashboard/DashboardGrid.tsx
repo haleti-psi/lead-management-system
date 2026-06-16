@@ -57,7 +57,9 @@ export function DashboardGrid({ data, isLoading, isError, onRetry }: DashboardGr
       <div className="space-y-4" aria-busy="true" aria-label="Loading dashboard">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {Array.from({ length: 6 }).map((_, i) => (
-            <LoadingSkeleton key={i} rows={3} />
+            <div key={i} className="rounded-lg border bg-card p-4">
+              <LoadingSkeleton rows={2} />
+            </div>
           ))}
         </div>
         <LoadingSkeleton rows={4} />

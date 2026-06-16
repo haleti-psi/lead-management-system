@@ -208,6 +208,24 @@ describe('KanbanBoard — success state', () => {
     expect(screen.getByText('7d')).toBeTruthy();
   });
 
+  it('colours ageing destructive past 30 days', () => {
+    const board = makeEmptyBoard();
+    board.assigned = makeColState({ cards: [makeCard({ ageingDays: 45 })], total: 1 });
+    mockUsePipelineBoard.mockReturnValue(board);
+
+    render(<KanbanBoard />);
+    expect(screen.getByText('45d').className).toContain('text-destructive');
+  });
+
+  it('colours ageing amber between 15 and 30 days', () => {
+    const board = makeEmptyBoard();
+    board.assigned = makeColState({ cards: [makeCard({ ageingDays: 20 })], total: 1 });
+    mockUsePipelineBoard.mockReturnValue(board);
+
+    render(<KanbanBoard />);
+    expect(screen.getByText('20d').className).toContain('text-amber-600');
+  });
+
   it('shows owner name', () => {
     const board = makeEmptyBoard();
     board.assigned = makeColState({
