@@ -3,7 +3,7 @@ import { InjectPinoLogger, type PinoLogger } from 'nestjs-pino';
 
 import { EventCode, type HotReasonCode, type ScoringResult } from '@lms/shared';
 import type { ScoringPort } from '../capture/ports/scoring.port';
-import type { LeadService } from '../capture/lead.service';
+import { LeadService } from '../capture/lead.service';
 import { UnitOfWork } from '../../core/db';
 import { OutboxService } from '../../core/outbox';
 import { ScoringService } from './scoring.service';
