@@ -48,7 +48,7 @@ import { HealthController } from './health.controller';
     // auto-binds a CLS context per request.
     ClsModule.forRoot({ global: true, middleware: { mount: true } }),
     AppConfigModule,
-    LoggingModule,
+    LoggingModule.forRoot(),
     DbModule,
     RedisModule,
     AuditModule,

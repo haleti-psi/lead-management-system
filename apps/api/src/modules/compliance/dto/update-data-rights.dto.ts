@@ -15,7 +15,6 @@ const FINALISING_STATUSES: ReadonlySet<string> = new Set([
 export const UpdateDataRightsDto = z
   .object({
     status: z.nativeEnum(RightsStatus, {
-      required_error: 'status is required.',
       errorMap: () => ({
         message:
           'status must be one of: open, in_review, fulfilled, rejected_retained.',
