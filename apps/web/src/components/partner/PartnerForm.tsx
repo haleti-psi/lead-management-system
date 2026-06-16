@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { EntityForm, FormField, FormSelect, FormTextarea } from '@/components/forms/EntityForm';
+import { EntityForm, FormField, FormSelect } from '@/components/forms/EntityForm';
 import { isApiClientError } from '@/lib/api';
 import { useCreatePartner, useUpdatePartner } from '@/hooks/use-partners';
 import type { PartnerView } from '@/types/partner';
@@ -13,11 +13,6 @@ const RISK_OPTIONS = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
-];
-const STATUS_OPTIONS = [
-  { value: 'active', label: 'Active' },
-  { value: 'suspended', label: 'Suspended' },
-  { value: 'expired', label: 'Expired' },
 ];
 
 const mobile = z.string().regex(/^[6-9][0-9]{9}$/, 'Enter a valid 10-digit mobile.').optional().or(z.literal(''));
@@ -111,15 +106,15 @@ const editSchema = z.object({
   agreementRef: z.string().trim().max(80).optional(),
   riskCategory: z.enum(['low', 'medium', 'high']).optional().or(z.literal('')),
   validUntil,
-  status: z.enum(['active', 'suspended', 'expired']),
-  statusReason: z.string().trim().max(500).optional(),
 });
 type EditValues = z.infer<typeof editSchema>;
 
+/** Edit covers partner METADATA only. Status transitions (suspend / reactivate /
+ * expire) are handled by `PartnerStatusDialog` so the state machine is enforced
+ * (only legal next states are offered) and a reason is captured. */
 function EditForm({ partner, onClose }: { partner: PartnerView; onClose: () => void }): JSX.Element {
   const update = useUpdatePartner();
   async function onSubmit(v: EditValues): Promise<void> {
-    const statusChanged = v.status !== partner.status;
     await update.mutateAsync({
       partnerId: partner.partnerId,
       body: {
@@ -130,7 +125,6 @@ function EditForm({ partner, onClose }: { partner: PartnerView; onClose: () => v
         ...(v.agreementRef?.trim() ? { agreementRef: v.agreementRef.trim() } : {}),
         ...(v.riskCategory ? { riskCategory: v.riskCategory } : {}),
         ...(v.validUntil ? { validUntil: v.validUntil } : {}),
-        ...(statusChanged ? { status: v.status, statusReason: v.statusReason?.trim() } : {}),
       },
     });
     toast.success('Partner updated.');
@@ -147,8 +141,6 @@ function EditForm({ partner, onClose }: { partner: PartnerView; onClose: () => v
         agreementRef: partner.agreementRef ?? '',
         riskCategory: (partner.riskCategory as 'low' | 'medium' | 'high' | null) ?? '',
         validUntil: partner.validUntil ?? '',
-        status: partner.status as 'active' | 'suspended' | 'expired',
-        statusReason: '',
       }}
       onSubmit={onSubmit}
       onError={onError}
@@ -164,8 +156,6 @@ function EditForm({ partner, onClose }: { partner: PartnerView; onClose: () => v
       <FormField name="agreementRef" label="Agreement reference" />
       <FormSelect name="riskCategory" label="Risk category" options={RISK_OPTIONS} placeholder="—" />
       <FormField name="validUntil" label="Valid until" type="date" />
-      <FormSelect name="status" label="Status" options={STATUS_OPTIONS} />
-      <FormTextarea name="statusReason" label="Status change reason (required to suspend/expire)" rows={2} maxLength={500} />
     </EntityForm>
   );
 }
