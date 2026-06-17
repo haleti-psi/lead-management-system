@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { MaskedField } from '@/components/ui/MaskedField';
 import { DataTable, type DataTableColumn, type SortState } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/hooks/use-auth';
 import { useCan } from '@/lib/auth/capabilities';
 import { isApiClientError } from '@/lib/api';
@@ -248,13 +249,16 @@ export function LeadListPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Leads</h1>
-        <Button variant="outline" onClick={() => setSaveOpen(true)}>
-          <Save className="h-4 w-4" aria-hidden />
-          Save current view
-        </Button>
-      </div>
+      <PageHeader
+        title="Leads"
+        description="Your role-scoped work queue."
+        actions={
+          <Button variant="outline" onClick={() => setSaveOpen(true)}>
+            <Save className="h-4 w-4" aria-hidden />
+            Save current view
+          </Button>
+        }
+      />
 
       {/* Saved-view chips: built-in queues + user-saved views */}
       <SavedViewChips

@@ -14,11 +14,11 @@ import { cn } from '@/lib/utils';
 export type StatusTone = 'neutral' | 'positive' | 'progress' | 'warning' | 'negative';
 
 const TONE_CLASSES: Readonly<Record<StatusTone, string>> = {
-  neutral: 'bg-slate-100 text-slate-800',
-  positive: 'bg-green-100 text-green-800',
-  progress: 'bg-blue-100 text-blue-800',
-  warning: 'bg-amber-100 text-amber-800',
-  negative: 'bg-red-100 text-red-800',
+  neutral: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200',
+  positive: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200',
+  progress: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200',
+  warning: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200',
+  negative: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
 };
 
 /** Domain status value → tone (workspace defaults; unknown values stay neutral). */
