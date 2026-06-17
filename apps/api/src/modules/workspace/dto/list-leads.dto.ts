@@ -183,3 +183,25 @@ export const ListLeadsQuerySchema = z.object({
   filter: LeadFilterSchema.default({}),
 });
 export type ListLeadsQuery = z.infer<typeof ListLeadsQuerySchema>;
+
+/**
+ * FR-052 — `GET /pipeline-board` query. One Kanban column per request:
+ * `stage` is required; `limit` is clamped to 100 (≤ MAX_PAGE_LIMIT), default 25.
+ * The board projection is richer than the contract `Lead` list (adds requested
+ * amount, owner name, ageing and the optimistic-lock version).
+ */
+export const BoardColumnQuerySchema = z.object({
+  stage: z.enum(STAGE_VALUES, { errorMap: () => ({ message: 'invalid stage value' }) }),
+  page: z.coerce
+    .number({ invalid_type_error: 'page must be a positive integer' })
+    .int('page must be a positive integer')
+    .min(1, 'page must be a positive integer')
+    .default(1),
+  limit: z.coerce
+    .number({ invalid_type_error: 'limit must be a positive integer' })
+    .int('limit must be a positive integer')
+    .min(1, 'limit must be a positive integer')
+    .transform((v) => Math.min(v, MAX_PAGE_LIMIT))
+    .default(DEFAULT_PAGE_LIMIT),
+});
+export type BoardColumnQuery = z.infer<typeof BoardColumnQuerySchema>;

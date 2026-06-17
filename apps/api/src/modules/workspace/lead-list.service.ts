@@ -21,7 +21,7 @@ import { MaskingService } from '../../core/masking';
 import { LEADS_RESOURCE_TYPE } from '../capture/capture.constants';
 import { INTERNAL_LIST_PREDICATE_TYPES } from './workspace.constants';
 import { LeadListRepository } from './lead-list.repository';
-import type { ListLeadsQuery } from './dto/list-leads.dto';
+import type { BoardColumnQuery, ListLeadsQuery } from './dto/list-leads.dto';
 
 /** ABAC grant context the controller forwards (set by AbacGuard on the request). */
 export interface WorkspaceScopeContext {
@@ -51,6 +51,38 @@ export interface LeadListItem {
 export interface LeadListResult {
   data: LeadListItem[];
   pagination: PaginationMeta;
+}
+
+/**
+ * Wire item for a pipeline-board card (FR-052) — the masked board projection.
+ * Superset of the contract `Lead` list with requested amount, owner name,
+ * ageing (whole days) and the optimistic-lock `version` for stage moves.
+ */
+export interface BoardCardItem {
+  lead_id: string;
+  lead_code: string;
+  stage: LeadStage;
+  product_code: ProductCode;
+  is_hot: boolean;
+  score: number | null;
+  consent_status: ConsentStatus;
+  kyc_status: KycStatus;
+  name_masked: string | null;
+  mobile_masked: string | null;
+  requested_amount: string | null;
+  owner_name: string | null;
+  ageing_days: number;
+  version: number;
+}
+
+export interface BoardColumnResult {
+  data: BoardCardItem[];
+  pagination: PaginationMeta;
+}
+
+/** Ageing in whole calendar days from a created_at timestamp to now. */
+function ageingDaysFrom(createdAt: Date): number {
+  return Math.floor((Date.now() - createdAt.getTime()) / 86_400_000);
 }
 
 /**
@@ -100,6 +132,53 @@ export class LeadListService {
       data,
       pagination: { page: params.page, limit: params.limit, total },
     };
+  }
+
+  /**
+   * FR-052 — one masked, scoped pipeline-board column. Same scope/masking
+   * contract as the list (deny-by-default on a non-internal predicate; strictest
+   * masking for the DPO masked view); enriches each row with requested amount,
+   * owner name, ageing and version.
+   */
+  async boardColumn(
+    user: AuthUser,
+    params: BoardColumnQuery,
+    ctx: WorkspaceScopeContext,
+  ): Promise<BoardColumnResult> {
+    if (!ctx.predicate || !INTERNAL_LIST_PREDICATE_TYPES.has(ctx.predicate.type)) {
+      await this.auditDeny(user);
+      throw new DomainException(ERROR_CODES.FORBIDDEN, undefined, {
+        detail: { reason: 'OUT_OF_SCOPE' },
+      });
+    }
+
+    const { rows, total } = await this.repo.boardColumn(
+      user.orgId,
+      ctx.predicate,
+      params.stage,
+      params.page,
+      params.limit,
+    );
+
+    const strict = ctx.maskingLevel === 'strict';
+    const data = rows.map((row): BoardCardItem => ({
+      lead_id: row.lead_id,
+      lead_code: row.lead_code,
+      stage: row.stage,
+      product_code: row.product_code,
+      is_hot: row.is_hot,
+      score: row.score,
+      consent_status: row.consent_status,
+      kyc_status: row.kyc_status,
+      name_masked: this.masking.mask('full_name', row.name, { strict }),
+      mobile_masked: this.masking.mask('mobile', row.mobile, { strict }),
+      requested_amount: row.requested_amount,
+      owner_name: row.owner_full_name,
+      ageing_days: ageingDaysFrom(new Date(row.created_at)),
+      version: row.version,
+    }));
+
+    return { data, pagination: { page: params.page, limit: params.limit, total } };
   }
 
   /** Append an `abac_deny` audit intent; a sink failure must not mask the 403. */

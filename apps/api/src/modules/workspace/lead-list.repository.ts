@@ -40,6 +40,27 @@ export interface LeadListRow {
   pan_masked: string | null;
 }
 
+/** Richer board row (FR-052 pipeline board) — the list row plus requested
+ *  amount, owner name (users join), created_at (for ageing) and the
+ *  optimistic-lock version. Raw `name`/`mobile` are fetched only for the
+ *  service's masked projection — never serialised raw. */
+export interface LeadBoardRow {
+  lead_id: string;
+  lead_code: string;
+  stage: LeadStage;
+  product_code: ProductCode;
+  is_hot: boolean;
+  score: number | null;
+  consent_status: ConsentStatus;
+  kyc_status: KycStatus;
+  requested_amount: string | null;
+  created_at: Date;
+  version: number;
+  name: string;
+  mobile: string;
+  owner_full_name: string | null;
+}
+
 /** Minimal lead facts the bulk-action re-scope check reads. */
 export interface ScopedLeadRef {
   lead_id: string;
@@ -98,6 +119,51 @@ export class LeadListRepository {
       totalQuery.executeTakeFirst(),
     ]);
     return { rows, total: Number(totalRow?.total ?? 0) };
+  }
+
+  /**
+   * FR-052 — one pipeline-board column: scoped + stage-filtered, with the richer
+   * board projection (owner name via `users` join, requested amount, created_at
+   * for ageing, version for the optimistic lock). Raw `name`/`mobile` are
+   * returned only so the service can mask them; LIMIT-bounded (≤ 100).
+   */
+  async boardColumn(
+    orgId: string,
+    predicate: ScopePredicate | undefined,
+    stage: LeadStage,
+    page: number,
+    limit: number,
+  ): Promise<{ rows: LeadBoardRow[]; total: number }> {
+    const base = this.scope
+      .applyScope(leadListBase(this.db, orgId), predicate)
+      .where('l.stage', '=', stage);
+
+    const rowsQuery = base
+      .leftJoin('users as owner', 'owner.user_id', 'l.owner_id')
+      .select([
+        'l.lead_id',
+        'l.lead_code',
+        'l.stage',
+        'l.product_code',
+        'l.is_hot',
+        'l.score',
+        'l.consent_status',
+        'l.kyc_status',
+        'l.requested_amount',
+        'l.created_at',
+        'l.version',
+        'li.name',
+        'li.mobile',
+        'owner.full_name as owner_full_name',
+      ])
+      .orderBy('l.created_at', 'desc')
+      .limit(limit)
+      .offset((page - 1) * limit);
+
+    const totalQuery = base.select((eb) => eb.fn.countAll<string>().as('total'));
+
+    const [rows, totalRow] = await Promise.all([rowsQuery.execute(), totalQuery.executeTakeFirst()]);
+    return { rows: rows as LeadBoardRow[], total: Number(totalRow?.total ?? 0) };
   }
 
   /**

@@ -181,6 +181,8 @@ paths:
     post: { summary: "Create saved view", operationId: createSavedView, tags: [Workspace], x-frs: [FR-050], responses: { "201": { $ref: '#/components/responses/Created' }, "400": { $ref: '#/components/responses/ValidationError' } } }
   /dashboard:
     get: { summary: "Role-scoped dashboard widgets", operationId: getDashboard, tags: [Workspace], x-frs: [FR-053], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
+  /pipeline-board:
+    get: { summary: "Pipeline board column (scope-filtered, masked, enriched with amount/owner/ageing/version)", operationId: getPipelineBoardColumn, tags: [Workspace], x-frs: [FR-052], parameters: [{ name: stage, in: query, required: true, schema: { type: string } }, { name: page, in: query, schema: { type: integer, minimum: 1 } }, { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' } } }
   /search:
     get: { summary: "Global masked search (scope-filtered, top-N)", operationId: globalSearch, tags: [Workspace], x-frs: [FR-054], parameters: [{ name: q, in: query, required: true, schema: { type: string, minLength: 2 } }], responses: { "200": { $ref: '#/components/responses/Ok' }, "429": { $ref: '#/components/responses/RateLimited' } } }
 

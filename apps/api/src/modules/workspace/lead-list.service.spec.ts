@@ -3,9 +3,9 @@ import { AuditAction, Capability } from '@lms/shared';
 import type { AuditAppender } from '../../core/audit';
 import type { AuthUser } from '../../core/auth';
 import { MaskingService } from '../../core/masking';
-import type { LeadListRepository, LeadListRow } from './lead-list.repository';
+import type { LeadListRepository, LeadListRow, LeadBoardRow } from './lead-list.repository';
 import { LeadListService, type WorkspaceScopeContext } from './lead-list.service';
-import { ListLeadsQuerySchema } from './dto/list-leads.dto';
+import { ListLeadsQuerySchema, BoardColumnQuerySchema } from './dto/list-leads.dto';
 
 /**
  * FR-050 — service-level analogues of the deferred API cases: TC-01 (scoped
@@ -163,5 +163,71 @@ describe('LeadListService.list', () => {
       { effectiveScope: 'A', predicate: { type: 'all', orgId: ORG }, maskingLevel: 'partial' },
     );
     expect(result.pagination).toEqual({ page: 1, limit: 100, total: 150 });
+  });
+});
+
+describe('LeadListService.boardColumn', () => {
+  function boardRow(overrides: Partial<LeadBoardRow> = {}): LeadBoardRow {
+    return {
+      lead_id: 'lead-1',
+      lead_code: 'LD-2026-000123',
+      stage: 'assigned',
+      product_code: 'CV',
+      is_hot: true,
+      score: 78,
+      consent_status: 'captured',
+      kyc_status: 'in_progress',
+      requested_amount: '500000.00',
+      created_at: new Date(Date.now() - 3 * 86_400_000),
+      version: 4,
+      name: 'Ramesh Kumar',
+      mobile: '9812345610',
+      owner_full_name: 'Anita Sharma',
+      ...overrides,
+    };
+  }
+
+  function makeBoardHarness(rows: LeadBoardRow[] = [boardRow()], total = rows.length) {
+    const repo = { boardColumn: jest.fn().mockResolvedValue({ rows, total }) };
+    const audit = { append: jest.fn().mockResolvedValue(undefined) };
+    const logger = { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() };
+    const service = new LeadListService(
+      repo as unknown as LeadListRepository,
+      new MaskingService(),
+      audit as unknown as AuditAppender,
+      logger as unknown as ConstructorParameters<typeof LeadListService>[3],
+    );
+    return { service, repo, audit };
+  }
+
+  const boardQuery = (input: Record<string, unknown> = { stage: 'assigned' }) =>
+    BoardColumnQuerySchema.parse(input);
+
+  it('returns a masked, enriched card (amount/owner/ageing/version); raw PII never serialised', async () => {
+    const { service, repo } = makeBoardHarness([boardRow()], 5);
+    const result = await service.boardColumn(rm, boardQuery(), ownCtx);
+
+    expect(repo.boardColumn).toHaveBeenCalledWith(ORG, ownCtx.predicate, 'assigned', 1, 25);
+    expect(result.pagination).toEqual({ page: 1, limit: 25, total: 5 });
+    expect(result.data[0]).toMatchObject({
+      lead_code: 'LD-2026-000123',
+      name_masked: 'Ramesh Kumar',
+      mobile_masked: '98xxxxxx10',
+      requested_amount: '500000.00',
+      owner_name: 'Anita Sharma',
+      ageing_days: 3,
+      version: 4,
+    });
+    expect(Object.keys(result.data[0] ?? {})).not.toContain('name');
+    expect(JSON.stringify(result)).not.toContain('9812345610');
+  });
+
+  it('denies a non-internal (PARTNER) scope with FORBIDDEN + audited deny', async () => {
+    const { service, repo, audit } = makeBoardHarness();
+    await expect(
+      service.boardColumn(partner, boardQuery(), { predicate: { type: 'partner', partnerId: 'p-9' } }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(repo.boardColumn).not.toHaveBeenCalled();
+    expect(audit.append).toHaveBeenCalledTimes(1);
   });
 });

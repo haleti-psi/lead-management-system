@@ -12,6 +12,7 @@ import { Lead360Controller } from './lead360.controller';
 import { Lead360Repository } from './lead360.repository';
 import { Lead360Service } from './lead360.service';
 import { PipelineBoardController } from './pipeline-board.controller';
+import { PipelineBoardReadController } from './pipeline-board-read.controller';
 import { PipelineBoardService } from './pipeline-board.service';
 import { LeadSearchRepository } from './repositories/lead-search.repository';
 import { PartnerSearchRepository } from './repositories/partner-search.repository';
@@ -31,7 +32,7 @@ import { SearchService } from './search.service';
  * `StageGuardService` and `LeadService` are available from the @Global CaptureModule.
  */
 @Module({
-  controllers: [LeadListController, Lead360Controller, SavedViewController, PipelineBoardController, DashboardController, SearchController],
+  controllers: [LeadListController, Lead360Controller, SavedViewController, PipelineBoardController, PipelineBoardReadController, DashboardController, SearchController],
   providers: [
     LeadScopeService,
     LeadListRepository,
