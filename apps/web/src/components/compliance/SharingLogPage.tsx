@@ -12,7 +12,7 @@
 
 import { useState } from 'react';
 import { DataTable, type DataTableColumn, type PaginationState } from '@/components/data/DataTable';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';

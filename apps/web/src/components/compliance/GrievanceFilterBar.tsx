@@ -7,7 +7,7 @@
 
 import type { ListGrievancesParams } from './useGrievances';
 import type { GrievanceCategory, GrievanceStatus } from './grievance.types';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 

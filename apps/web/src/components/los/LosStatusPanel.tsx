@@ -6,7 +6,7 @@ import { toZonedTime } from 'date-fns-tz';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { apiClient } from '@/lib/api';
 import { LosStatusTimeline } from './LosStatusTimeline';
 import type { LosStatusEntry, LosStatusResponse } from './los-status.types';

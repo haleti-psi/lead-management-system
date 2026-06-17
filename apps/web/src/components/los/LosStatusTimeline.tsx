@@ -1,6 +1,6 @@
 import { type ReactElement } from 'react';
 
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { formatStatusDate } from './LosStatusPanel';
 import type { LosStatusEntry } from './los-status.types';
 

@@ -22,7 +22,7 @@ import { Flame } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 
 import { Card, CardContent } from '@/components/ui/card';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { cn } from '@/lib/utils';
 import type { PipelineLeadCard } from './pipeline-board.types';
 

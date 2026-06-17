@@ -17,7 +17,7 @@ import { useState } from 'react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { AlertTriangle } from 'lucide-react';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { DataRightsDetailDrawer } from './DataRightsDetailDrawer';
 import {
   useDataRights,

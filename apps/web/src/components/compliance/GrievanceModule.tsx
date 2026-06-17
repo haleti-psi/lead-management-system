@@ -12,7 +12,7 @@ import { isApiClientError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { GrievanceFilterBar } from './GrievanceFilterBar';
 import { GrievanceDrawer } from './GrievanceDrawer';
 import {

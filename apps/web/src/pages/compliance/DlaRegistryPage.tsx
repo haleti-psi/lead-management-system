@@ -22,7 +22,7 @@ import { PlusCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { DlaRegistryDrawer } from '@/components/compliance/DlaRegistryDrawer';
 import {
   useDlaRegistry,

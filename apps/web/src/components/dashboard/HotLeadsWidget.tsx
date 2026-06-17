@@ -4,7 +4,7 @@ import { Flame } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 import type { HotLeadRow, WidgetError } from '@/hooks/use-dashboard';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { EmptyState } from '@/components/common/EmptyState';
 import { WidgetErrorState } from './WidgetErrorState';
 

@@ -19,7 +19,7 @@ import { X, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { isApiClientError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { useProcessDataRights } from './use-data-rights';
 import {
   RIGHTS_TYPE_LABELS,

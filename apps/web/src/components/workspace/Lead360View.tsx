@@ -11,7 +11,7 @@ import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { isApiClientError } from '@/lib/api';
 import { SectionTabs } from './SectionTabs';
-import { StatusChip } from './StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { useLead360 } from './use-lead360';
 import type { Lead360Response } from './lead360.types';
 

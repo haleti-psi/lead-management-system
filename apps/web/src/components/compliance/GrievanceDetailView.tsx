@@ -7,7 +7,7 @@
 
 import { format, parseISO } from 'date-fns';
 import type { GrievanceItem } from './grievance.types';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 
 interface Props {
   grievance: GrievanceItem;

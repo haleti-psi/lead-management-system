@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { EligibilityDetails } from './EligibilityDetails';
 import { useEligibilitySnapshot, useRequestEligibility } from './hooks/use-eligibility';
 import type { EligibilitySnapshot } from './hooks/use-eligibility';

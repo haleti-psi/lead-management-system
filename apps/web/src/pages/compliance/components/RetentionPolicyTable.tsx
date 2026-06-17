@@ -3,7 +3,7 @@
  */
 
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
-import { StatusChip } from '@/components/workspace/StatusChip';
+import { StatusChip } from '@/components/ui/StatusChip';
 import {
   DATA_CATEGORY_LABELS,
   LEAD_OUTCOME_LABELS,
