@@ -4,6 +4,7 @@ import { Eye } from 'lucide-react';
 import { MaskedField, type MaskedFieldType } from '@/components/ui/MaskedField';
 import { StatusChip, type ChipTone } from '@/components/ui/StatusChip';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useCan } from '@/lib/auth/capabilities';
 import { isApiClientError } from '@/lib/api';
 import { useAudit } from '@/hooks/use-audit';
@@ -170,15 +171,11 @@ export function AuditExplorerPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Audit Explorer</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Tamper-evident, hash-chained activity log. Values are masked; reveals are individually audited.
-          </p>
-        </div>
-        <IntegrityBadge integrity={result?.integrity ?? NO_INTEGRITY} />
-      </div>
+      <PageHeader
+        title="Audit Explorer"
+        description="Tamper-evident, hash-chained activity log. Values are masked; reveals are individually audited."
+        actions={<IntegrityBadge integrity={result?.integrity ?? NO_INTEGRITY} />}
+      />
 
       <AuditFilterBar
         onApply={(next) => {

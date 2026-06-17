@@ -6,6 +6,7 @@ import { useReport } from '@/hooks/use-report';
 import type { ReportCode, ReportParams } from '@/lib/api/reports';
 import { ReportFilterBar } from './ReportFilterBar';
 import { ReportViewer } from './ReportViewer';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 const REPORT_OPTIONS: { code: ReportCode; label: string }[] = [
   // FR-120 core pack
@@ -40,16 +41,7 @@ export function ReportsPage(): ReactElement {
 
   return (
     <div className="space-y-4">
-      {/* Page header */}
-      <div>
-        <h1 className="text-xl font-semibold">
-          {/* i18n key: reports.title */}
-          Reports
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Aggregate reports scoped to your access level.
-        </p>
-      </div>
+      <PageHeader title="Reports" description="Aggregate reports scoped to your access level." />
 
       {/* Report selector — tabs */}
       <div role="tablist" aria-label="Report type" className="flex gap-1 border-b">
