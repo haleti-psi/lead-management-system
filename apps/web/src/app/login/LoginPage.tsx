@@ -65,7 +65,13 @@ export function LoginPage(): JSX.Element {
   return (
     <main className="flex min-h-[100dvh] items-center justify-center bg-muted/40 px-4">
       <Card className="w-full max-w-[420px]">
-        <CardHeader>
+        <CardHeader className="space-y-3 text-center">
+          <div
+            className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground"
+            aria-hidden
+          >
+            L
+          </div>
           <CardTitle>{challengeToken ? 'Two-factor authentication' : 'Sign in to LMS'}</CardTitle>
         </CardHeader>
         <CardContent>
