@@ -8,6 +8,7 @@ import { MaskedField } from '@/components/ui/MaskedField';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { isApiClientError } from '@/lib/api';
 import { SectionTabs } from './SectionTabs';
 import { StatusChip } from './StatusChip';
@@ -49,6 +50,10 @@ export function Lead360View({ leadId }: { leadId: string }): ReactElement {
 
   return (
     <div className="space-y-4">
+      <PageHeader
+        breadcrumbs={[{ label: 'Leads', to: '/leads' }, { label: data.leadCode }]}
+        title={data.leadCode}
+      />
       <LeadSummaryCard lead={data} />
       <SectionTabs
         ariaLabel="Lead sections"

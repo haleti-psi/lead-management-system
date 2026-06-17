@@ -21,7 +21,6 @@ export function LeadDetailPage(): ReactElement {
 
   return (
     <section aria-label="Lead 360">
-      <h1 className="sr-only">Lead 360</h1>
       <Lead360View leadId={id} />
     </section>
   );

@@ -6,6 +6,7 @@
 // mocked so the component runs in isolation without a network or server.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 // ── mock the hook (must be declared before any import of the module) ──────────
 vi.mock('./use-lead360', () => ({
@@ -92,7 +93,11 @@ describe('Lead360View', () => {
       refetch: vi.fn(),
     });
 
-    render(<Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />);
+    render(
+      <MemoryRouter>
+        <Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />
+      </MemoryRouter>,
+    );
 
     // LoadingSkeleton renders role="status" aria-label="Loading"
     expect(screen.getByRole('status', { name: /loading/i })).not.toBeNull();
@@ -114,7 +119,11 @@ describe('Lead360View', () => {
       refetch: vi.fn(),
     });
 
-    render(<Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />);
+    render(
+      <MemoryRouter>
+        <Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />
+      </MemoryRouter>,
+    );
 
     // ErrorState renders role="alert"
     const alert = screen.getByRole('alert');
@@ -132,7 +141,11 @@ describe('Lead360View', () => {
       refetch: vi.fn(),
     });
 
-    render(<Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />);
+    render(
+      <MemoryRouter>
+        <Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />
+      </MemoryRouter>,
+    );
 
     // MaskedField renders span[aria-label="masked PAN"] and span[aria-label="masked mobile"]
     const maskedPan = screen.getByLabelText('masked PAN');
@@ -157,7 +170,11 @@ describe('Lead360View', () => {
       refetch: vi.fn(),
     });
 
-    render(<Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />);
+    render(
+      <MemoryRouter>
+        <Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />
+      </MemoryRouter>,
+    );
 
     // EmptyState renders text content — spot-check a few
     expect(screen.getByText('No stage changes yet')).not.toBeNull();
@@ -175,7 +192,11 @@ describe('Lead360View', () => {
       refetch: vi.fn(),
     });
 
-    render(<Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />);
+    render(
+      <MemoryRouter>
+        <Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />
+      </MemoryRouter>,
+    );
 
     const tablist = screen.getByRole('tablist', { name: 'Lead sections' });
     expect(tablist).not.toBeNull();
@@ -211,7 +232,11 @@ describe('Lead360View', () => {
       refetch: vi.fn(),
     });
 
-    render(<Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />);
+    render(
+      <MemoryRouter>
+        <Lead360View leadId="f6b7c1de-0000-4000-8000-000000000051" />
+      </MemoryRouter>,
+    );
 
     // The lead name appears in the summary card header
     expect(screen.getByText('Rajesh K')).not.toBeNull();
