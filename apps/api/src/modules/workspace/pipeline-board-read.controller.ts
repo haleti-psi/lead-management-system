@@ -12,7 +12,7 @@ import {
 import { ZodValidationPipe } from '../../core/common';
 import { paginated, type PaginatedResult } from '../../core/http';
 import { LEADS_RESOURCE_TYPE } from '../capture/capture.constants';
-import { LeadListService, type BoardCardItem } from './lead-list.service';
+import { LeadListService, type BoardCardItem, type DashboardMetricsResult } from './lead-list.service';
 import { scopeContext } from './lead-list.controller';
 import { BoardColumnQuerySchema, type BoardColumnQuery } from './dto/list-leads.dto';
 
@@ -41,5 +41,15 @@ export class PipelineBoardReadController {
   ): Promise<PaginatedResult<BoardCardItem[]>> {
     const result = await this.list.boardColumn(user, query, scopeContext(req));
     return paginated(result.data, result.pagination);
+  }
+
+  /** GET /api/v1/pipeline-board/trends — scoped pipeline value + 14-day captures series. */
+  @Get('trends')
+  @Requires(Capability.VIEW_LEAD, leadsResource)
+  async trends(
+    @CurrentUser() user: AuthUser,
+    @Req() req: AbacRequestContext,
+  ): Promise<DashboardMetricsResult> {
+    return this.list.dashboardMetrics(user, scopeContext(req));
   }
 }

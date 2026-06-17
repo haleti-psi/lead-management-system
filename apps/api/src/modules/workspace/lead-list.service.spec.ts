@@ -231,3 +231,36 @@ describe('LeadListService.boardColumn', () => {
     expect(audit.append).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('LeadListService.dashboardMetrics', () => {
+  function makeMetricsHarness(pipelineValue = '0', recentCreatedAt: Date[] = []) {
+    const repo = { dashboardMetrics: jest.fn().mockResolvedValue({ pipelineValue, recentCreatedAt }) };
+    const audit = { append: jest.fn().mockResolvedValue(undefined) };
+    const logger = { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() };
+    const service = new LeadListService(
+      repo as unknown as LeadListRepository,
+      new MaskingService(),
+      audit as unknown as AuditAppender,
+      logger as unknown as ConstructorParameters<typeof LeadListService>[3],
+    );
+    return { service, repo, audit };
+  }
+
+  it('returns the scoped pipeline value + a 14-day daily captures series', async () => {
+    const { service, repo } = makeMetricsHarness('1250000.00', [new Date(), new Date()]);
+    const result = await service.dashboardMetrics(rm, ownCtx);
+
+    expect(repo.dashboardMetrics).toHaveBeenCalledWith(ORG, ownCtx.predicate, expect.any(Date));
+    expect(result.pipeline_value).toBe('1250000.00');
+    expect(result.captured_series).toHaveLength(14);
+    expect(result.captured_series.reduce((sum, b) => sum + b.count, 0)).toBe(2);
+  });
+
+  it('denies a non-internal (PARTNER) scope with FORBIDDEN', async () => {
+    const { service, repo } = makeMetricsHarness();
+    await expect(
+      service.dashboardMetrics(partner, { predicate: { type: 'partner', partnerId: 'p-9' } }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(repo.dashboardMetrics).not.toHaveBeenCalled();
+  });
+});

@@ -167,6 +167,37 @@ export class LeadListRepository {
   }
 
   /**
+   * FR-053/FR-052 — dashboard trend inputs: the scoped active-pipeline value
+   * (Σ requested_amount for non-terminal leads) and the recent `created_at`
+   * timestamps (last ~14 days, capped) which the service buckets into a daily
+   * captures series. Both reuse the lead-list scope SQL. No PII; counts + a sum.
+   */
+  async dashboardMetrics(
+    orgId: string,
+    predicate: ScopePredicate | undefined,
+    since: Date,
+  ): Promise<{ pipelineValue: string; recentCreatedAt: Date[] }> {
+    const valueRow = await this.scope
+      .applyScope(leadListBase(this.db, orgId), predicate)
+      .where('l.stage', 'not in', ['handed_off', 'rejected', 'dormant'])
+      .select((eb) => eb.fn.sum('l.requested_amount').as('v'))
+      .executeTakeFirst();
+
+    const recent = await this.scope
+      .applyScope(leadListBase(this.db, orgId), predicate)
+      .where('l.created_at', '>=', since)
+      .select('l.created_at')
+      .orderBy('l.created_at')
+      .limit(1000)
+      .execute();
+
+    return {
+      pipelineValue: valueRow?.v == null ? '0' : String(valueRow.v),
+      recentCreatedAt: recent.map((r) => r.created_at as Date),
+    };
+  }
+
+  /**
    * Bulk-action re-scope (LLD §Backend Flow bulk step 2): of the requested ids,
    * return those actually inside the caller's scope (org + not deleted +
    * scope predicate, all in SQL). Bounded by the ids themselves (≤ 100 by DTO)

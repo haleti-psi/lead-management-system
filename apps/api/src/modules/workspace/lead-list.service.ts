@@ -85,6 +85,31 @@ function ageingDaysFrom(createdAt: Date): number {
   return Math.floor((Date.now() - createdAt.getTime()) / 86_400_000);
 }
 
+/** Dashboard trend metrics (FR-053): scoped pipeline value + daily captures series. */
+export interface DashboardMetricsResult {
+  /** Σ requested_amount of active (non-terminal) scoped leads, as a string. */
+  pipeline_value: string;
+  /** Daily captured counts for the trailing window (oldest → newest). */
+  captured_series: { date: string; count: number }[];
+}
+
+/** Bucket created-at timestamps into a trailing `days`-day daily series (UTC days). */
+function capturedSeriesFrom(timestamps: Date[], days: number): { date: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const t of timestamps) {
+    const key = t.toISOString().slice(0, 10);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const series: { date: string; count: number }[] = [];
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  for (let i = days - 1; i >= 0; i--) {
+    const key = new Date(today.getTime() - i * 86_400_000).toISOString().slice(0, 10);
+    series.push({ date: key, count: counts.get(key) ?? 0 });
+  }
+  return series;
+}
+
 /**
  * FR-050 — orchestrates the scoped lead list (LLD §Backend Flow): scope is
  * compiled into SQL by the repository (never post-filtered), rows are
@@ -179,6 +204,30 @@ export class LeadListService {
     }));
 
     return { data, pagination: { page: params.page, limit: params.limit, total } };
+  }
+
+  /**
+   * FR-053 — dashboard trend metrics: scoped active-pipeline value + a 14-day
+   * daily captures series. Same scope / deny-by-default contract as the list.
+   */
+  async dashboardMetrics(user: AuthUser, ctx: WorkspaceScopeContext): Promise<DashboardMetricsResult> {
+    if (!ctx.predicate || !INTERNAL_LIST_PREDICATE_TYPES.has(ctx.predicate.type)) {
+      await this.auditDeny(user);
+      throw new DomainException(ERROR_CODES.FORBIDDEN, undefined, {
+        detail: { reason: 'OUT_OF_SCOPE' },
+      });
+    }
+    const TREND_DAYS = 14;
+    const since = new Date(Date.now() - TREND_DAYS * 86_400_000);
+    const { pipelineValue, recentCreatedAt } = await this.repo.dashboardMetrics(
+      user.orgId,
+      ctx.predicate,
+      since,
+    );
+    return {
+      pipeline_value: pipelineValue,
+      captured_series: capturedSeriesFrom(recentCreatedAt, TREND_DAYS),
+    };
   }
 
   /** Append an `abac_deny` audit intent; a sink failure must not mask the 403. */
