@@ -1,6 +1,8 @@
 import type { ReactElement } from 'react';
 
 import type { ReportCode, ReportData } from '@/lib/api/reports';
+import { ErrorState } from '@/components/common/ErrorState';
+import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
 import { ReportChart } from '@/components/reporting/ReportChart';
 
 interface ReportViewerProps {
@@ -26,13 +28,7 @@ export function ReportViewer({
 }: ReportViewerProps): ReactElement {
   // U-04: LoadingSkeleton while in-flight
   if (isLoading) {
-    return (
-      <div role="status" aria-label="Loading report" className="space-y-2">
-        {[...Array<number>(5)].map((_, i) => (
-          <div key={i} className="h-8 rounded bg-muted animate-pulse" />
-        ))}
-      </div>
-    );
+    return <LoadingSkeleton rows={5} label="Loading report" />;
   }
 
   // U-06: ErrorState on FORBIDDEN / VALIDATION_ERROR / INTERNAL_ERROR
@@ -45,12 +41,10 @@ export function ReportViewer({
           : 'An error occurred while loading this report. Please try again.';
 
     return (
-      <div role="alert" aria-label="Report error" className="rounded-lg border border-destructive p-6 text-destructive">
-        <p className="font-medium">{message}</p>
-        {errorCode && (
-          <p className="mt-1 text-sm opacity-75">Error code: {errorCode}</p>
-        )}
-      </div>
+      <ErrorState
+        title="Report error"
+        message={errorCode ? `${message} (Error code: ${errorCode})` : message}
+      />
     );
   }
 

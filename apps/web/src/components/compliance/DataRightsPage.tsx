@@ -15,7 +15,6 @@
 
 import { useState } from 'react';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { AlertTriangle } from 'lucide-react';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { DataRightsDetailDrawer } from './DataRightsDetailDrawer';
@@ -143,13 +142,7 @@ function buildColumns(onRowClick: (row: DataRightsItem) => void): DataTableColum
         >
           {RIGHTS_TYPE_LABELS[row.requestType]}
           {isOverdue(row) ? (
-            <span
-              aria-label="Overdue"
-              className="ml-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800"
-            >
-              <AlertTriangle className="h-3 w-3" aria-hidden />
-              Overdue
-            </span>
+            <StatusChip tone="warning" label="Overdue" className="ml-1" />
           ) : null}
         </button>
       ),
@@ -158,7 +151,7 @@ function buildColumns(onRowClick: (row: DataRightsItem) => void): DataTableColum
       id: 'customerProfileId',
       header: 'Customer',
       cell: (row) => (
-        <span className="font-mono text-xs text-slate-600" title={row.customerProfileId}>
+        <span className="font-mono text-xs text-slate-600 dark:text-slate-400" title={row.customerProfileId}>
           {row.customerProfileId.slice(0, 8)}…
         </span>
       ),
@@ -175,11 +168,11 @@ function buildColumns(onRowClick: (row: DataRightsItem) => void): DataTableColum
       header: 'Due By (IST)',
       cell: (row) =>
         row.dueAt ? (
-          <span className={isOverdue(row) ? 'font-semibold text-amber-600' : 'text-slate-700'}>
+          <span className={isOverdue(row) ? 'font-semibold text-amber-600' : 'text-slate-700 dark:text-slate-300'}>
             {formatIST(row.dueAt)}
           </span>
         ) : (
-          <span className="text-slate-400">—</span>
+          <span className="text-slate-400 dark:text-slate-500">—</span>
         ),
     },
     {
@@ -189,7 +182,7 @@ function buildColumns(onRowClick: (row: DataRightsItem) => void): DataTableColum
         row.ownerId ? (
           <span className="font-mono text-xs">{row.ownerId.slice(0, 8)}</span>
         ) : (
-          <span className="text-slate-400 text-xs">Unassigned</span>
+          <span className="text-slate-400 dark:text-slate-500 text-xs">Unassigned</span>
         ),
     },
     {

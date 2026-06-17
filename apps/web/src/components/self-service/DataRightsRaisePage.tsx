@@ -87,16 +87,16 @@ export function DataRightsRaisePage({
 
   if (submitState === 'success') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 px-4">
         <div
           role="alert"
-          className="max-w-md w-full bg-white rounded-lg shadow p-8 text-center"
+          className="max-w-md w-full bg-white dark:bg-card rounded-lg shadow p-8 text-center"
         >
           <div className="text-green-600 text-4xl mb-4" aria-hidden="true">
             ✓
           </div>
           <h1 className="text-xl font-semibold mb-2">Request Registered</h1>
-          <p className="text-slate-600 text-sm mb-4">
+          <p className="text-slate-600 dark:text-slate-400 text-sm mb-4">
             Your request has been registered.
             {referenceId && (
               <>
@@ -106,7 +106,7 @@ export function DataRightsRaisePage({
               </>
             )}
           </p>
-          <p className="text-slate-500 text-xs">
+          <p className="text-slate-500 dark:text-slate-400 text-xs">
             Our Data Protection Officer will review and respond within the applicable
             regulatory timeframe.
           </p>
@@ -116,12 +116,12 @@ export function DataRightsRaisePage({
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-      <div className="max-w-md w-full bg-white rounded-lg shadow p-8">
-        <h1 className="text-2xl font-semibold text-slate-800 mb-2">
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 px-4">
+      <div className="max-w-md w-full bg-white dark:bg-card rounded-lg shadow p-8">
+        <h1 className="text-2xl font-semibold text-slate-800 dark:text-slate-200 mb-2">
           Exercise Your Data Rights
         </h1>
-        <p className="text-slate-500 text-sm mb-6">
+        <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">
           Submit a request to access, correct, update, erase, or withdraw consent for
           your personal data.
         </p>
@@ -131,7 +131,7 @@ export function DataRightsRaisePage({
           <div>
             <label
               htmlFor="request-type"
-              className="block text-sm font-medium text-slate-700 mb-1"
+              className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1"
             >
               Request Type <span className="text-red-500">*</span>
             </label>

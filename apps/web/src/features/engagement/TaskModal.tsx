@@ -222,7 +222,7 @@ export function TaskModal(props: TaskModalProps): ReactElement {
               value={type}
               onChange={(e) => setType(e.target.value as TaskType)}
               disabled={!isCreate}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
             >
               {TASK_TYPES.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -286,7 +286,7 @@ export function TaskModal(props: TaskModalProps): ReactElement {
               id="task-priority"
               value={priority}
               onChange={(e) => setPriority(e.target.value as TaskPriority)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {PRIORITY_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -309,7 +309,7 @@ export function TaskModal(props: TaskModalProps): ReactElement {
                 onChange={(e) => setDisposition(e.target.value as TaskDisposition | '')}
                 aria-invalid={errors.disposition != null}
                 aria-describedby={errors.disposition ? 'task-disposition-error' : undefined}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="">— select —</option>
                 {DISPOSITION_OPTIONS.map((o) => (
@@ -373,14 +373,14 @@ export function TaskModal(props: TaskModalProps): ReactElement {
             <button
               type="button"
               onClick={props.onClose}
-              className="rounded-md border border-input px-4 py-2 text-sm hover:bg-muted"
+              className="rounded-md border border-input px-4 py-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isPending}
-              className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {isPending ? 'Saving…' : isCreate ? 'Create Task' : 'Update Task'}
             </button>

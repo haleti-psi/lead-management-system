@@ -46,8 +46,8 @@ function ConfirmDialog({ open, onConfirm, onCancel }: ConfirmDialogProps): JSX.E
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/40" aria-hidden="true" onClick={onCancel} />
-      <div className="relative z-10 w-full max-w-sm rounded-lg bg-white p-6 shadow-xl">
-        <p className="text-sm text-gray-700">
+      <div className="relative z-10 w-full max-w-sm rounded-lg bg-white dark:bg-card p-6 shadow-xl">
+        <p className="text-sm text-gray-700 dark:text-gray-300">
           This will hide the entry from customer disclosures. Confirm?
         </p>
         <div className="mt-4 flex justify-end gap-2">
@@ -269,16 +269,16 @@ export function DlaRegistryDrawer({
         role="dialog"
         aria-modal="true"
         aria-label={isEdit ? 'Edit DLA/LSP entry' : 'Add DLA/LSP entry'}
-        className="fixed right-0 top-0 z-40 flex h-full w-full max-w-md flex-col overflow-y-auto bg-white shadow-xl"
+        className="fixed right-0 top-0 z-40 flex h-full w-full max-w-md flex-col overflow-y-auto bg-white dark:bg-card shadow-xl"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b px-6 py-4">
-          <h2 className="text-lg font-semibold text-gray-900">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             {isEdit ? 'Edit DLA/LSP Entry' : 'Add DLA/LSP Entry'}
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close drawer">
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close drawer">
             <X className="h-5 w-5" />
-          </button>
+          </Button>
         </div>
 
         {/* Form */}
@@ -342,7 +342,7 @@ export function DlaRegistryDrawer({
 
           {/* Grievance Officer */}
           <fieldset className="rounded border p-4">
-            <legend className="px-1 text-sm font-medium text-gray-700">Grievance Officer</legend>
+            <legend className="px-1 text-sm font-medium text-gray-700 dark:text-gray-300">Grievance Officer</legend>
             <div className="mt-2 flex flex-col gap-3">
               <div>
                 <Label htmlFor="go-name">Officer Name</Label>

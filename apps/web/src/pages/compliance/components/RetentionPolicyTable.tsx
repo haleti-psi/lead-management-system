@@ -34,7 +34,7 @@ const columns: DataTableColumn<RetentionPolicy>[] = [
     id: 'data_category',
     header: 'Data Category',
     cell: (row) => (
-      <span className="font-medium text-gray-900">
+      <span className="font-medium text-gray-900 dark:text-gray-100">
         {DATA_CATEGORY_LABELS[row.data_category] ?? row.data_category}
       </span>
     ),
@@ -43,7 +43,7 @@ const columns: DataTableColumn<RetentionPolicy>[] = [
     id: 'lead_outcome',
     header: 'Lead Outcome',
     cell: (row) => (
-      <span className="text-sm text-gray-600">
+      <span className="text-sm text-gray-600 dark:text-gray-400">
         {row.lead_outcome ? (LEAD_OUTCOME_LABELS[row.lead_outcome] ?? row.lead_outcome) : '—'}
       </span>
     ),
@@ -51,13 +51,13 @@ const columns: DataTableColumn<RetentionPolicy>[] = [
   {
     id: 'retain_days',
     header: 'Retain (days)',
-    cell: (row) => <span className="text-sm text-gray-600">{row.retain_days}</span>,
+    cell: (row) => <span className="text-sm text-gray-600 dark:text-gray-400">{row.retain_days}</span>,
   },
   {
     id: 'action',
     header: 'Action',
     cell: (row) => (
-      <span className="text-sm text-gray-600">
+      <span className="text-sm text-gray-600 dark:text-gray-400">
         {RETENTION_ACTION_LABELS[row.action] ?? row.action}
       </span>
     ),
@@ -66,7 +66,7 @@ const columns: DataTableColumn<RetentionPolicy>[] = [
     id: 'legal_hold',
     header: 'Legal Hold',
     cell: (row) => (
-      <span className={`text-sm font-medium ${row.legal_hold ? 'text-red-600' : 'text-gray-400'}`}>
+      <span className={`text-sm font-medium ${row.legal_hold ? 'text-red-600' : 'text-gray-400 dark:text-gray-500'}`}>
         {row.legal_hold ? 'Yes' : 'No'}
       </span>
     ),
@@ -79,7 +79,7 @@ const columns: DataTableColumn<RetentionPolicy>[] = [
   {
     id: 'updated_at',
     header: 'Updated',
-    cell: (row) => <span className="text-sm text-gray-500">{formatDate(row.updated_at)}</span>,
+    cell: (row) => <span className="text-sm text-gray-500 dark:text-gray-400">{formatDate(row.updated_at)}</span>,
   },
 ];
 

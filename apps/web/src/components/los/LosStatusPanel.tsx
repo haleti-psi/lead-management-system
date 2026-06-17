@@ -82,7 +82,7 @@ export function LosStatusPanel({ leadId }: { leadId: string }): ReactElement {
       {/* Panel header */}
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-base font-semibold">LOS Application Status</h3>
-        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+        <span className="rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs text-slate-600 dark:text-slate-400">
           LOS-owned · Read-only
         </span>
       </div>

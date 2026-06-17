@@ -88,7 +88,7 @@ export function KanbanColumn({
   return (
     <section
       aria-label={`${label} column`}
-      className={cn('flex w-64 shrink-0 flex-col overflow-hidden rounded-lg border bg-muted/40')}
+      className={cn('flex w-[85vw] sm:w-64 shrink-0 flex-col overflow-hidden rounded-lg border bg-muted/40')}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >

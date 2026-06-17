@@ -123,17 +123,17 @@ export function DlaRegistryPage({ callerRole }: DlaRegistryPageProps): JSX.Eleme
     {
       id: 'name',
       header: 'Name',
-      cell: (row) => <span className="font-medium text-gray-900">{row.name}</span>,
+      cell: (row) => <span className="font-medium text-gray-900 dark:text-gray-100">{row.name}</span>,
     },
     {
       id: 'type',
       header: 'Type',
-      cell: (row) => <span className="text-sm text-gray-600">{DLA_TYPE_LABELS[row.type]}</span>,
+      cell: (row) => <span className="text-sm text-gray-600 dark:text-gray-400">{DLA_TYPE_LABELS[row.type]}</span>,
     },
     {
       id: 'owner',
       header: 'Owner',
-      cell: (row) => <span className="text-sm text-gray-600">{row.owner ?? '—'}</span>,
+      cell: (row) => <span className="text-sm text-gray-600 dark:text-gray-400">{row.owner ?? '—'}</span>,
     },
     {
       id: 'status',
@@ -143,7 +143,7 @@ export function DlaRegistryPage({ callerRole }: DlaRegistryPageProps): JSX.Eleme
     {
       id: 'updated_at',
       header: 'Updated',
-      cell: (row) => <span className="text-sm text-gray-500">{formatDate(row.updatedAt)}</span>,
+      cell: (row) => <span className="text-sm text-gray-500 dark:text-gray-400">{formatDate(row.updatedAt)}</span>,
     },
     {
       id: 'actions',

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { StatusChip } from '@/components/ui/StatusChip';
 import { isApiClientError } from '@/lib/api';
 
 import type { CommChannel, ConsentPurpose, TemplateDto } from '../../admin/templates/use-templates';
@@ -20,16 +21,12 @@ function ConsentIndicator({ isGranted, purpose }: ConsentIndicatorProps): ReactE
   if (purpose === '') return null;
   if (isGranted) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
-        Consent: Granted
-      </span>
+      <StatusChip tone="positive" label="Consent: Granted" />
     );
   }
   return (
     <div>
-      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
-        Consent: Not Granted
-      </span>
+      <StatusChip tone="negative" label="Consent: Not Granted" />
       <p role="alert" className="mt-1 text-xs text-red-600">
         Customer has not granted consent for this purpose.
       </p>
@@ -171,7 +168,7 @@ export function SendCommunicationDrawer({
       role="dialog"
       aria-modal="true"
       aria-label="Send Message"
-      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-white shadow-2xl"
+      className="fixed inset-y-0 right-0 z-50 flex w-full sm:max-w-md flex-col bg-white dark:bg-card shadow-2xl"
     >
       <div className="flex items-center justify-between border-b px-6 py-4">
         <h2 className="text-base font-semibold">Send Message</h2>

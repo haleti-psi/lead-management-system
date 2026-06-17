@@ -15,7 +15,7 @@ interface Props {
 
 function Row({ label, value }: { label: string; value: string | null | undefined }): JSX.Element {
   return (
-    <div className="grid grid-cols-3 gap-2 py-2 text-sm">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 py-2 text-sm">
       <dt className="font-medium text-muted-foreground">{label}</dt>
       <dd className="col-span-2 break-words">{value ?? '—'}</dd>
     </div>
@@ -34,7 +34,7 @@ function fmtDate(iso: string | null | undefined): string {
 export function GrievanceDetailView({ grievance }: Props): JSX.Element {
   return (
     <dl className="divide-y divide-border">
-      <div className="grid grid-cols-3 gap-2 py-2 text-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 py-2 text-sm">
         <dt className="font-medium text-muted-foreground">Status</dt>
         <dd className="col-span-2">
           <StatusChip status={grievance.status} label="Grievance status" />

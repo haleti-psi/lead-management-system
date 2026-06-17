@@ -39,7 +39,7 @@ export function PartnerDetailDialog({
           <StatusChip label={partner.status} tone={STATUS_TONE[partner.status] ?? 'neutral'} />
         </div>
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
           <Field label="Contact person" value={partner.contactPerson} />
           <Field label="Contact mobile" value={partner.contactMobile} />
           <Field

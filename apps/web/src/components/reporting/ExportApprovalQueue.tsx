@@ -2,6 +2,8 @@ import type { ReactElement } from 'react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import { ErrorState } from '@/components/common/ErrorState';
+import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { useApproveExport, useListExports } from '@/hooks/useExports';
 import type { ExportJob } from '@/lib/api/exports';
@@ -45,20 +47,16 @@ export function ExportApprovalQueue(): ReactElement {
   }
 
   if (isLoading) {
-    return (
-      <div role="status" aria-label="Loading approval queue" className="space-y-2">
-        {[...Array<number>(3)].map((_, i) => (
-          <div key={i} className="h-8 rounded bg-muted animate-pulse" />
-        ))}
-      </div>
-    );
+    return <LoadingSkeleton rows={3} />;
   }
 
   if (isError) {
     return (
-      <div role="alert" className="rounded-lg border border-destructive p-4 text-destructive text-sm">
-        Failed to load approval queue.
-      </div>
+      <ErrorState
+        title="Failed to load approvals"
+        message="Please try again."
+        onRetry={() => void refetch()}
+      />
     );
   }
 

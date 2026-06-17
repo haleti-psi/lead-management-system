@@ -58,7 +58,7 @@ export function TaskFiltersBar({ filters, onChange }: TaskFiltersProps): ReactEl
         </label>
         <select
           id="task-filter-status"
-          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           value={filters.status ?? ''}
           onChange={handleStatus}
         >
@@ -78,7 +78,7 @@ export function TaskFiltersBar({ filters, onChange }: TaskFiltersProps): ReactEl
         </label>
         <select
           id="task-filter-type"
-          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           value={filters.type ?? ''}
           onChange={handleType}
         >
@@ -99,7 +99,7 @@ export function TaskFiltersBar({ filters, onChange }: TaskFiltersProps): ReactEl
         <input
           id="task-filter-due-before"
           type="datetime-local"
-          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onChange={handleDueBefore}
         />
       </div>

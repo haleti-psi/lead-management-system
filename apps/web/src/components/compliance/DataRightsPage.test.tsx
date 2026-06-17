@@ -115,8 +115,8 @@ describe('DataRightsPage — UI-07 Overdue highlighting', () => {
       idleQuery(makeResult(1, { dueAt: pastDue, status: 'open' })),
     );
     render(<DataRightsPage />);
-    // Overdue badge should appear
-    expect(screen.getAllByLabelText('Overdue').length).toBeGreaterThan(0);
+    // Overdue badge should appear (canonical StatusChip renders "Overdue" as visible text)
+    expect(screen.getAllByText('Overdue').length).toBeGreaterThan(0);
   });
 
   it('fulfilled row with past due_at does NOT show Overdue badge', () => {
@@ -125,7 +125,7 @@ describe('DataRightsPage — UI-07 Overdue highlighting', () => {
       idleQuery(makeResult(1, { dueAt: pastDue, status: 'fulfilled' })),
     );
     render(<DataRightsPage />);
-    expect(screen.queryByLabelText('Overdue')).toBeNull();
+    expect(screen.queryByText('Overdue')).toBeNull();
   });
 });
 

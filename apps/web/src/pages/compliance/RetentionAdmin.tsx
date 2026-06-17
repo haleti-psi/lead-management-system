@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import { PlusCircle, PlayCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { RetentionPolicyTable } from './components/RetentionPolicyTable';
 import { NewPolicyDrawer } from './components/NewPolicyDrawer';
 import { TriggerRunModal } from './components/TriggerRunModal';
@@ -52,35 +53,33 @@ export function RetentionAdmin({ callerRole }: RetentionAdminProps): JSX.Element
   return (
     <div className="flex flex-col gap-6 p-6">
       {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">Retention Policies</h1>
-          <p className="mt-0.5 text-sm text-gray-500">
-            Configure data retention, purge, and anonymisation rules for this organisation.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setTriggerRunOpen(true)}
-            aria-label="Trigger retention run"
-          >
-            <PlayCircle className="mr-1.5 h-4 w-4" />
-            Trigger Run
-          </Button>
-          {canCreate && (
+      <PageHeader
+        title="Retention Policies"
+        description="Configure data retention, purge, and anonymisation rules for this organisation."
+        actions={
+          <>
             <Button
+              variant="outline"
               size="sm"
-              onClick={() => setNewPolicyOpen(true)}
-              aria-label="New retention policy"
+              onClick={() => setTriggerRunOpen(true)}
+              aria-label="Trigger retention run"
             >
-              <PlusCircle className="mr-1.5 h-4 w-4" />
-              New Policy
+              <PlayCircle className="mr-1.5 h-4 w-4" />
+              Trigger Run
             </Button>
-          )}
-        </div>
-      </div>
+            {canCreate && (
+              <Button
+                size="sm"
+                onClick={() => setNewPolicyOpen(true)}
+                aria-label="New retention policy"
+              >
+                <PlusCircle className="mr-1.5 h-4 w-4" />
+                New Policy
+              </Button>
+            )}
+          </>
+        }
+      />
 
       {/* Table */}
       <RetentionPolicyTable

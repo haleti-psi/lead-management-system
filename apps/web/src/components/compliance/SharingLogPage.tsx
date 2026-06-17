@@ -46,11 +46,11 @@ const COLUMNS: DataTableColumn<SharingLogItem>[] = [
     header: 'Consent Reference',
     cell: (row) =>
       row.consentId ? (
-        <span className="font-mono text-xs text-slate-600" title={row.consentId}>
+        <span className="font-mono text-xs text-slate-600 dark:text-slate-400" title={row.consentId}>
           {row.consentId.slice(0, 8) + '…'}
         </span>
       ) : (
-        <span className="text-slate-400">—</span>
+        <span className="text-slate-400 dark:text-slate-500">—</span>
       ),
   },
   {
@@ -62,7 +62,7 @@ const COLUMNS: DataTableColumn<SharingLogItem>[] = [
     id: 'sharedAt',
     header: 'Shared At',
     cell: (row) => (
-      <time dateTime={row.sharedAt} className="text-sm text-slate-600">
+      <time dateTime={row.sharedAt} className="text-sm text-slate-600 dark:text-slate-400">
         {formatIst(row.sharedAt)}
       </time>
     ),
@@ -127,7 +127,7 @@ export function SharingLogPage({ leadId }: SharingLogPageProps): JSX.Element {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Data Sharing Log</h2>
-        <span className="text-sm text-slate-500">{pagination.total} event(s)</span>
+        <span className="text-sm text-slate-500 dark:text-slate-400">{pagination.total} event(s)</span>
       </div>
       <DataTable
         columns={COLUMNS}

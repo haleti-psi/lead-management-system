@@ -21,9 +21,9 @@ const CONFIG_STATUS_LABEL: Record<ConfigStatus, string> = {
 };
 
 const CONFIG_STATUS_COLOUR: Record<ConfigStatus, string> = {
-  draft: 'bg-yellow-100 text-yellow-800',
-  active: 'bg-green-100 text-green-800',
-  retired: 'bg-gray-100 text-gray-600',
+  draft: 'bg-yellow-100 text-yellow-800 dark:bg-amber-950 dark:text-amber-200',
+  active: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200',
+  retired: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
 };
 
 function StatusChip({ status }: { status: ConfigStatus }): ReactElement {

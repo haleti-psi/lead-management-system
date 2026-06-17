@@ -56,7 +56,7 @@ export function VisitLoggerSection({ geo, onCapture }: VisitLoggerSectionProps):
           <button
             type="button"
             onClick={clearLocation}
-            className="text-xs text-destructive underline-offset-2 hover:underline"
+            className="rounded text-xs text-destructive underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Clear
           </button>

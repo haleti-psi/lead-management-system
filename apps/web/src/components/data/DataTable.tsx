@@ -145,7 +145,7 @@ export function DataTable<T>({
             Columns
           </Button>
           {columnMenuOpen ? (
-            <div className="absolute right-0 z-10 mt-1 w-48 rounded-md border bg-popover p-1 shadow-md">
+            <div className="absolute right-0 z-10 mt-1 w-48 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-1 shadow-md">
               {columns.map((column) => (
                 <label
                   key={column.id}
@@ -153,7 +153,7 @@ export function DataTable<T>({
                 >
                   <input
                     type="checkbox"
-                    className="h-4 w-4"
+                    className="h-4 w-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                     checked={!hidden.has(column.id)}
                     onChange={() => toggleColumn(column.id)}
                   />
@@ -179,13 +179,15 @@ export function DataTable<T>({
               <TableRow>
                 {selectable ? (
                   <TableHead className="w-10">
-                    <input
-                      type="checkbox"
-                      aria-label="Select all on page"
-                      className="h-4 w-4"
-                      checked={allOnPageSelected}
-                      onChange={toggleAllOnPage}
-                    />
+                    <label className="inline-flex items-center justify-center p-2 -m-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all on page"
+                        className="h-4 w-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        checked={allOnPageSelected}
+                        onChange={toggleAllOnPage}
+                      />
+                    </label>
                   </TableHead>
                 ) : null}
                 {visibleColumns.map((column) => {
@@ -225,13 +227,15 @@ export function DataTable<T>({
                   <TableRow key={id} data-state={isSelected ? 'selected' : undefined}>
                     {selectable ? (
                       <TableCell className="w-10">
-                        <input
-                          type="checkbox"
-                          aria-label="Select row"
-                          className="h-4 w-4"
-                          checked={isSelected}
-                          onChange={() => toggleRow(id)}
-                        />
+                        <label className="inline-flex items-center justify-center p-2 -m-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            aria-label="Select row"
+                            className="h-4 w-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                            checked={isSelected}
+                            onChange={() => toggleRow(id)}
+                          />
+                        </label>
                       </TableCell>
                     ) : null}
                     {visibleColumns.map((column) => (

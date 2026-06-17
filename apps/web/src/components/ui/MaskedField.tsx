@@ -84,7 +84,7 @@ export function MaskedField({
           onClick={() => {
             void handleReveal();
           }}
-          className="masked-field__reveal"
+          className="masked-field__reveal inline-flex items-center rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {loading ? (
             <Loader2 aria-hidden className="masked-field__spinner" role="status" />

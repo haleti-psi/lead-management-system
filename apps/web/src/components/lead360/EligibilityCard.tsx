@@ -147,13 +147,9 @@ export function EligibilityCard({
         <p className="text-sm font-medium">Eligibility</p>
         <span role="status" aria-live="polite"><StatusChip status="received" label="Eligibility status" /></span>
         {!isFinal ? (
-          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-            Indicative
-          </span>
+          <StatusChip tone="warning" label="Indicative" />
         ) : (
-          <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
-            Final
-          </span>
+          <StatusChip tone="success" label="Final" />
         )}
       </div>
       <EligibilityDetails snapshot={resolved} />

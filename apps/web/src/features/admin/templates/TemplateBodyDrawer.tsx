@@ -19,7 +19,7 @@ export function TemplateBodyDrawer({ template, onClose }: TemplateBodyDrawerProp
       role="dialog"
       aria-modal="true"
       aria-label={`Template body — ${template.code} v${String(template.version)}`}
-      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-white shadow-2xl"
+      className="fixed inset-y-0 right-0 z-50 flex w-full sm:max-w-md flex-col bg-white dark:bg-card shadow-2xl"
     >
       <div className="flex items-center justify-between border-b px-6 py-4">
         <div>
@@ -35,7 +35,7 @@ export function TemplateBodyDrawer({ template, onClose }: TemplateBodyDrawerProp
 
       <div className="flex-1 overflow-y-auto px-6 py-4">
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">Body</p>
-        <pre className="whitespace-pre-wrap rounded bg-gray-50 p-4 text-sm">
+        <pre className="whitespace-pre-wrap rounded bg-gray-50 dark:bg-gray-900 p-4 text-sm">
           {template.body}
         </pre>
 

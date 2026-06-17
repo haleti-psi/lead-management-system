@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { apiClient, isApiClientError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
+import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
+import { ErrorState } from '@/components/common/ErrorState';
 
 import type { CommChannel, ConsentPurpose, PreferenceItem } from '../engagement/PreferenceCentre';
 
@@ -157,16 +158,18 @@ export function CustomerPreferenceCentre({
   if (isLoading) {
     return (
       <div aria-busy="true" aria-label="Loading preferences" className="p-4">
-        <Skeleton className="h-64 w-full" />
+        <LoadingSkeleton rows={4} />
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div role="alert" className="p-4 text-red-600">
-        Unable to load your preferences. Please try again later.
-      </div>
+      <ErrorState
+        title="Unable to load your preferences"
+        message="Please try again later."
+        onRetry={() => void queryClient.invalidateQueries({ queryKey })}
+      />
     );
   }
 
@@ -230,7 +233,7 @@ export function CustomerPreferenceCentre({
                           className={[
                             'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent',
                             'transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2',
-                            optedIn ? 'bg-primary' : 'bg-gray-200',
+                            optedIn ? 'bg-primary' : 'bg-gray-200 dark:bg-gray-600',
                           ].join(' ')}
                           onClick={() => handleToggle(purpose, channel, !optedIn)}
                           onKeyDown={(e) => {
@@ -244,7 +247,7 @@ export function CustomerPreferenceCentre({
                           <span
                             aria-hidden="true"
                             className={[
-                              'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0',
+                              'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white dark:bg-slate-200 shadow ring-0',
                               'transition duration-200 ease-in-out',
                               optedIn ? 'translate-x-5' : 'translate-x-0',
                             ].join(' ')}

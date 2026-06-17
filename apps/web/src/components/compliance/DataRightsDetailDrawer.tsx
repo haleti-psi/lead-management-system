@@ -148,11 +148,11 @@ export function DataRightsDetailDrawer({
         role="dialog"
         aria-modal="true"
         aria-label="Data Rights Request Detail"
-        className="fixed right-0 top-0 z-50 flex h-full w-full flex-col bg-white shadow-2xl sm:w-[480px]"
+        className="fixed right-0 top-0 z-50 flex h-full w-full flex-col bg-white dark:bg-card shadow-2xl sm:w-[480px]"
       >
         {/* Drawer header */}
         <div className="flex items-center justify-between border-b px-6 py-4">
-          <h2 className="text-base font-semibold text-slate-800">Data Rights Request</h2>
+          <h2 className="text-base font-semibold text-slate-800 dark:text-slate-200">Data Rights Request</h2>
           <Button
             variant="ghost"
             size="icon"
@@ -166,7 +166,7 @@ export function DataRightsDetailDrawer({
         {/* Drawer body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           {/* Request summary */}
-          <section className="space-y-2 text-sm text-slate-700">
+          <section className="space-y-2 text-sm text-slate-700 dark:text-slate-300">
             <div className="flex gap-2">
               <span className="font-medium w-28 shrink-0">Type:</span>
               <span>{RIGHTS_TYPE_LABELS[request.requestType]}</span>
@@ -174,7 +174,7 @@ export function DataRightsDetailDrawer({
             <div className="flex gap-2">
               <span className="font-medium w-28 shrink-0">Customer:</span>
               <span
-                className="font-mono text-slate-600 truncate"
+                className="font-mono text-slate-600 dark:text-slate-400 truncate"
                 title={request.customerProfileId}
               >
                 {request.customerProfileId.slice(0, 8)}…
@@ -183,7 +183,7 @@ export function DataRightsDetailDrawer({
             {request.leadId && (
               <div className="flex gap-2">
                 <span className="font-medium w-28 shrink-0">Lead:</span>
-                <span className="font-mono text-slate-600">{request.leadId}</span>
+                <span className="font-mono text-slate-600 dark:text-slate-400">{request.leadId}</span>
               </div>
             )}
             <div className="flex items-center gap-2">
@@ -201,7 +201,7 @@ export function DataRightsDetailDrawer({
             {request.disposition && (
               <div className="flex gap-2">
                 <span className="font-medium w-28 shrink-0">Disposition:</span>
-                <span className="text-slate-600">{request.disposition}</span>
+                <span className="text-slate-600 dark:text-slate-400">{request.disposition}</span>
               </div>
             )}
           </section>
@@ -231,7 +231,7 @@ export function DataRightsDetailDrawer({
               <div className="space-y-1">
                 <label
                   htmlFor="dr-status-select"
-                  className="block text-sm font-medium text-slate-700"
+                  className="block text-sm font-medium text-slate-700 dark:text-slate-300"
                 >
                   Transition to
                 </label>
@@ -264,7 +264,7 @@ export function DataRightsDetailDrawer({
               <div className="space-y-1">
                 <label
                   htmlFor="dr-disposition"
-                  className="block text-sm font-medium text-slate-700"
+                  className="block text-sm font-medium text-slate-700 dark:text-slate-300"
                 >
                   Disposition
                   {targetStatus && requiresDisposition(targetStatus) ? (
@@ -302,7 +302,7 @@ export function DataRightsDetailDrawer({
               <div className="space-y-1">
                 <label
                   htmlFor="dr-owner-id"
-                  className="block text-sm font-medium text-slate-700"
+                  className="block text-sm font-medium text-slate-700 dark:text-slate-300"
                 >
                   Assign Owner (UUID)
                 </label>
@@ -324,7 +324,7 @@ export function DataRightsDetailDrawer({
           )}
 
           {isTerminal && (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               This request is in a terminal state and cannot be updated.
             </p>
           )}
