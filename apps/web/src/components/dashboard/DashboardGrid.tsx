@@ -13,6 +13,7 @@ import { HotLeadsWidget } from './HotLeadsWidget';
 import { MyTasksWidget } from './MyTasksWidget';
 import { SourceSummaryWidget } from './SourceSummaryWidget';
 import { HandoffFailureWidget } from './HandoffFailureWidget';
+import { PipelineTrendsWidget } from './PipelineTrendsWidget';
 
 /**
  * FR-053 — Orchestrates the dashboard widget layout.
@@ -109,6 +110,13 @@ export function DashboardGrid({ data, isLoading, isError, onRetry }: DashboardGr
           return null and simply take no cell). SLA alerts span the full width
           as the priority strip. */}
       <div className="grid items-start gap-4 lg:grid-cols-2">
+        {/* Pipeline value + captures trend — lead-viewing roles (scoped server-side) */}
+        {role !== 'KYC' ? (
+          <div className="lg:col-span-2">
+            <PipelineTrendsWidget />
+          </div>
+        ) : null}
+
         {/* SLA Alerts — all roles */}
         <div className="lg:col-span-2">
           <SlaAlertWidget

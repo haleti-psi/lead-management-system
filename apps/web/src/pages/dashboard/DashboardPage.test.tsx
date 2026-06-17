@@ -18,6 +18,15 @@ vi.mock('@/hooks/use-auth', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
+vi.mock('@/hooks/use-pipeline-trends', () => ({
+  usePipelineTrends: vi.fn(() => ({
+    data: { pipeline_value: '0', captured_series: [] },
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+  })),
+}));
+
 import { useDashboard } from '@/hooks/use-dashboard';
 import { useAuth } from '@/hooks/use-auth';
 import { DashboardPage } from './DashboardPage';
