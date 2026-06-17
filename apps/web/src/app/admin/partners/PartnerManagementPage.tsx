@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/Modal';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { DataTable, type DataTableColumn, type SortState } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { PartnerForm } from '@/components/partner/PartnerForm';
 import { useCan } from '@/lib/auth/capabilities';
 import { usePartners } from '@/hooks/use-partners';
@@ -125,13 +126,16 @@ export function PartnerManagementPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Partner Management</h1>
-        <Button onClick={() => setModal({ mode: 'create' })}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Add Partner
-        </Button>
-      </div>
+      <PageHeader
+        title="Partner Management"
+        description="DSA / dealer onboarding and administration."
+        actions={
+          <Button onClick={() => setModal({ mode: 'create' })}>
+            <Plus className="h-4 w-4" aria-hidden />
+            Add Partner
+          </Button>
+        }
+      />
 
       <div className="flex flex-wrap gap-2">
         <FilterSelect

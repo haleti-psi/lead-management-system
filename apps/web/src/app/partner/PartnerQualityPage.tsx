@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusChip, type ChipTone } from '@/components/ui/StatusChip';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { isApiClientError } from '@/lib/api';
 import { usePartnerQuality } from '@/hooks/use-partner-quality';
 import type { PartnerQualityData } from '@/types/partner-quality';
@@ -56,12 +57,10 @@ export function PartnerQualityPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Partner Quality</h1>
-        <p className="text-sm text-muted-foreground">
-          {data.legal_name} · {data.partner_code} · {data.window.from} → {data.window.to}
-        </p>
-      </div>
+      <PageHeader
+        title="Partner Quality"
+        description={`${data.legal_name} · ${data.partner_code} · ${data.window.from} → ${data.window.to}`}
+      />
 
       {data.insufficient_data ? (
         <EmptyState title="Not enough data" message="Not enough lead data to compute a quality score yet." />

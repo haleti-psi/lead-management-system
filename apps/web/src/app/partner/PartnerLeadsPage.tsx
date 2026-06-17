@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/Modal';
 import { StatusChip, type ChipTone } from '@/components/ui/StatusChip';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { SubmitLeadForm } from '@/components/partner/SubmitLeadForm';
 import { usePartnerLeads } from '@/hooks/use-partner-leads';
 import type { PartnerLeadView } from '@/types/partner-lead';
@@ -44,13 +45,16 @@ export function PartnerLeadsPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">My Leads</h1>
-        <Button onClick={() => setSubmitting(true)}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Submit lead
-        </Button>
-      </div>
+      <PageHeader
+        title="My Leads"
+        description="Leads you've submitted and their current status."
+        actions={
+          <Button onClick={() => setSubmitting(true)}>
+            <Plus className="h-4 w-4" aria-hidden />
+            Submit lead
+          </Button>
+        }
+      />
 
       <DataTable
         columns={columns}
