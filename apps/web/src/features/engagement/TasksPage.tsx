@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { StatusChip, type ChipTone } from '@/components/ui/StatusChip';
 
 import type { TaskDto, TaskFilters } from './use-tasks';
 import { useTasks } from './use-tasks';
@@ -13,29 +14,21 @@ import { TaskFiltersBar } from './TaskFilters';
 import { TaskModal } from './TaskModal';
 import { OverdueQueuePanel } from './OverdueQueuePanel';
 
-/** Status chip — maps task_status values to colour classes. */
-function StatusChip({ status }: { status: TaskDto['status'] }): ReactElement {
-  const colourMap: Record<TaskDto['status'], string> = {
-    open: 'bg-blue-100 text-blue-800',
-    in_progress: 'bg-yellow-100 text-yellow-800',
-    done: 'bg-green-100 text-green-800',
-    overdue: 'bg-red-100 text-red-800',
-    cancelled: 'bg-gray-100 text-gray-600',
-  };
-  const labelMap: Record<TaskDto['status'], string> = {
-    open: 'Open',
-    in_progress: 'In Progress',
-    done: 'Done',
-    overdue: 'Overdue',
-    cancelled: 'Cancelled',
-  };
-
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${colourMap[status]}`}>
-      {labelMap[status]}
-    </span>
-  );
-}
+/** task_status → canonical StatusChip tone + label. */
+const TASK_STATUS_TONE: Record<TaskDto['status'], ChipTone> = {
+  open: 'info',
+  in_progress: 'warning',
+  done: 'success',
+  overdue: 'danger',
+  cancelled: 'neutral',
+};
+const TASK_STATUS_LABEL: Record<TaskDto['status'], string> = {
+  open: 'Open',
+  in_progress: 'In Progress',
+  done: 'Done',
+  overdue: 'Overdue',
+  cancelled: 'Cancelled',
+};
 
 /** Priority badge. */
 function PriorityBadge({ priority }: { priority: TaskDto['priority'] }): ReactElement {
@@ -88,7 +81,7 @@ const COLUMNS: DataTableColumn<TaskDto>[] = [
   {
     id: 'status',
     header: 'Status',
-    cell: (row) => <StatusChip status={row.status} />,
+    cell: (row) => <StatusChip label={TASK_STATUS_LABEL[row.status]} tone={TASK_STATUS_TONE[row.status]} />,
   },
   {
     id: 'disposition',
