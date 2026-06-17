@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 
 import type { ReportCode, ReportData } from '@/lib/api/reports';
+import { ReportChart } from '@/components/reporting/ReportChart';
 
 interface ReportViewerProps {
   code: ReportCode;
@@ -63,8 +64,10 @@ export function ReportViewer({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm" aria-label={`${code} report`}>
+    <div className="space-y-4">
+      <ReportChart code={code} rows={data.rows} />
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm" aria-label={`${code} report`}>
         <thead>
           <tr className="border-b">
             {getColumns(code).map((col) => (
@@ -92,7 +95,8 @@ export function ReportViewer({
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
   );
 }
