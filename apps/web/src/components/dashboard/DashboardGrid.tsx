@@ -98,51 +98,58 @@ export function DashboardGrid({ data, isLoading, isError, onRetry }: DashboardGr
 
   return (
     <div className="space-y-4">
-      {/* KPI Cards */}
+      {/* KPI Cards (full-width strip) */}
       {widgets.kpi ? (
         <KpiCardRow kpi={widgets.kpi} />
       ) : findWidgetError(errors, 'kpi') ? (
         <div className="text-sm text-destructive">KPI data temporarily unavailable.</div>
       ) : null}
 
-      {/* SLA Alerts — all roles */}
-      <SlaAlertWidget
-        rows={widgets.sla_alerts}
-        widgetError={findWidgetError(errors, 'sla_alerts')}
-        onRetry={onRetry}
-      />
+      {/* Secondary widgets — responsive 2-column grid (role-hidden widgets
+          return null and simply take no cell). SLA alerts span the full width
+          as the priority strip. */}
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        {/* SLA Alerts — all roles */}
+        <div className="lg:col-span-2">
+          <SlaAlertWidget
+            rows={widgets.sla_alerts}
+            widgetError={findWidgetError(errors, 'sla_alerts')}
+            onRetry={onRetry}
+          />
+        </div>
 
-      {/* Hot Leads — not KYC */}
-      <HotLeadsWidget
-        rows={widgets.hot_leads}
-        widgetError={findWidgetError(errors, 'hot_leads')}
-        visible={visibility.hotLeads}
-        onRetry={onRetry}
-      />
+        {/* Hot Leads — not KYC */}
+        <HotLeadsWidget
+          rows={widgets.hot_leads}
+          widgetError={findWidgetError(errors, 'hot_leads')}
+          visible={visibility.hotLeads}
+          onRetry={onRetry}
+        />
 
-      {/* My Tasks — not HEAD */}
-      <MyTasksWidget
-        rows={widgets.my_tasks}
-        widgetError={findWidgetError(errors, 'my_tasks')}
-        visible={visibility.myTasks}
-        onRetry={onRetry}
-      />
+        {/* My Tasks — not HEAD */}
+        <MyTasksWidget
+          rows={widgets.my_tasks}
+          widgetError={findWidgetError(errors, 'my_tasks')}
+          visible={visibility.myTasks}
+          onRetry={onRetry}
+        />
 
-      {/* Source Summary — BM, SM, HEAD */}
-      <SourceSummaryWidget
-        rows={widgets.source_summary}
-        widgetError={findWidgetError(errors, 'source_summary')}
-        visible={visibility.sourceSummary}
-        onRetry={onRetry}
-      />
+        {/* Source Summary — BM, SM, HEAD */}
+        <SourceSummaryWidget
+          rows={widgets.source_summary}
+          widgetError={findWidgetError(errors, 'source_summary')}
+          visible={visibility.sourceSummary}
+          onRetry={onRetry}
+        />
 
-      {/* Hand-off Failures — BM, SM, HEAD */}
-      <HandoffFailureWidget
-        data={widgets.handoff_failures}
-        widgetError={findWidgetError(errors, 'handoff_failures')}
-        visible={visibility.handoffFailures}
-        onRetry={onRetry}
-      />
+        {/* Hand-off Failures — BM, SM, HEAD */}
+        <HandoffFailureWidget
+          data={widgets.handoff_failures}
+          widgetError={findWidgetError(errors, 'handoff_failures')}
+          visible={visibility.handoffFailures}
+          onRetry={onRetry}
+        />
+      </div>
     </div>
   );
 }
