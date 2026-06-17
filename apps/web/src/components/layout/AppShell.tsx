@@ -52,13 +52,24 @@ function useVisibleNav(): NavItem[] {
 const navLinkClass = ({ isActive }: { isActive: boolean }): string =>
   cn(
     'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-    isActive ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+    'ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+    isActive
+      ? 'bg-primary/10 font-semibold text-primary'
+      : 'text-muted-foreground hover:bg-accent hover:text-foreground',
   );
 
 function Sidebar({ items }: { items: NavItem[] }): JSX.Element {
   return (
     <aside className="hidden w-60 shrink-0 border-r bg-card md:block">
-      <div className="flex h-14 items-center border-b px-4 font-semibold">LMS</div>
+      <div className="flex h-14 items-center gap-2.5 border-b px-4">
+        <div
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground"
+          aria-hidden
+        >
+          L
+        </div>
+        <span className="text-base font-semibold tracking-tight">LMS</span>
+      </div>
       <nav aria-label="Primary" className="space-y-1 p-2">
         {items.map((item) => (
           <NavLink key={item.path} to={item.path} end={item.path === '/'} className={navLinkClass}>
@@ -123,8 +134,9 @@ function MobileNav({ items }: { items: NavItem[] }): JSX.Element {
           end={item.path === '/'}
           className={({ isActive }) =>
             cn(
-              'flex flex-1 flex-col items-center justify-center gap-1 py-2 text-[11px]',
-              isActive ? 'text-foreground' : 'text-muted-foreground',
+              'flex flex-1 flex-col items-center justify-center gap-1 py-2 text-[11px] transition-colors',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+              isActive ? 'text-primary' : 'text-muted-foreground',
             )
           }
         >

@@ -27,6 +27,7 @@ import { useTransitionStage } from '@/hooks/use-transition-stage';
 import { KanbanColumn } from './KanbanColumn';
 import { MobileStageSelectorSheet } from './MobileStageSelectorSheet';
 import type { PipelineLeadCard } from './pipeline-board.types';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 /** Payload stored in drag dataTransfer (the version is resolved at drop time). */
 interface DragPayload {
@@ -107,19 +108,18 @@ export function KanbanBoard(): ReactElement {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="mb-4">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold">Pipeline Board</h1>
-          {!anyPending && totalLeads > 0 ? (
-            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
-              {totalLeads}
+      <PageHeader
+        className="mb-4"
+        title="Pipeline Board"
+        description="Drag a card between columns to move a lead through your pipeline."
+        actions={
+          !anyPending && totalLeads > 0 ? (
+            <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium tabular-nums text-muted-foreground">
+              {totalLeads} {totalLeads === 1 ? 'lead' : 'leads'}
             </span>
-          ) : null}
-        </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Drag a card between columns to move a lead through your pipeline.
-        </p>
-      </div>
+          ) : undefined
+        }
+      />
 
       {/* Desktop: horizontal scroll; mobile: vertical stack */}
       <div

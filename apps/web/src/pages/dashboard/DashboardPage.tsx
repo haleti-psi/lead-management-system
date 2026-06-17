@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 
 import { useDashboard } from '@/hooks/use-dashboard';
 import { DashboardGrid } from '@/components/dashboard/DashboardGrid';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 /**
  * FR-053 — Dashboard home page. Fetches `GET /dashboard` via `useDashboard`
@@ -14,12 +15,7 @@ export function DashboardPage(): ReactElement {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">Home</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Your role-scoped overview
-        </p>
-      </div>
+      <PageHeader title="Home" description="Your role-scoped overview" />
       <DashboardGrid
         data={data}
         isLoading={isLoading}
