@@ -4,6 +4,7 @@ import type {
   FunnelConversionRow,
   ReportCode,
   ReportRow,
+  RmPerformanceRow,
   SourcePerformanceRow,
 } from '@/lib/api/reports';
 
@@ -18,6 +19,7 @@ export function ReportChart({ code, rows }: { code: ReportCode; rows: ReportRow[
   if (rows.length === 0) return null;
   if (code === 'funnel_conversion') return <FunnelChart rows={rows as FunnelConversionRow[]} />;
   if (code === 'source_performance') return <SourceBars rows={rows as SourcePerformanceRow[]} />;
+  if (code === 'rm_performance') return <RmBars rows={rows as RmPerformanceRow[]} />;
   return null;
 }
 
@@ -76,6 +78,28 @@ function FunnelChart({ rows }: { rows: FunnelConversionRow[] }): ReactElement {
             value={t.count}
             pctOfMax={(t.count / max) * 100}
             badge={captured > 0 ? `${Math.round((t.count / captured) * 100)}%` : '–'}
+          />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+/** Handed-off-by-RM bars (descending) with the captured workload as context. */
+function RmBars({ rows }: { rows: RmPerformanceRow[] }): ReactElement {
+  const sorted = [...rows].sort((a, b) => b.handed_off - a.handed_off);
+  const max = Math.max(1, ...sorted.map((r) => r.handed_off));
+  return (
+    <section aria-label="RM performance" className="rounded-lg border bg-card p-4">
+      <h2 className="mb-3 text-sm font-semibold">Handed off by RM</h2>
+      <ol className="space-y-2">
+        {sorted.map((r) => (
+          <Bar
+            key={r.owner_id}
+            label={r.owner_name}
+            value={r.handed_off}
+            pctOfMax={(r.handed_off / max) * 100}
+            badge={`/${r.captured}`}
           />
         ))}
       </ol>
