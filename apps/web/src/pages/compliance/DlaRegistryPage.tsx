@@ -21,6 +21,7 @@ import { useState } from 'react';
 import { PlusCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { StatusChip } from '@/components/workspace/StatusChip';
 import { DlaRegistryDrawer } from '@/components/compliance/DlaRegistryDrawer';
 import {
@@ -182,17 +183,19 @@ export function DlaRegistryPage({ callerRole }: DlaRegistryPageProps): JSX.Eleme
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-gray-900">DLA / LSP Registry</h1>
-        {canManage && (
-          <Button onClick={openAddDrawer} className="gap-2">
-            <PlusCircle className="h-4 w-4" />
-            Add Entry
-          </Button>
-        )}
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="DLA / LSP Registry"
+        description="Digital lending agents & lending service providers — disclosure governance."
+        actions={
+          canManage ? (
+            <Button onClick={openAddDrawer} className="gap-2">
+              <PlusCircle className="h-4 w-4" />
+              Add Entry
+            </Button>
+          ) : undefined
+        }
+      />
 
       {/* Filter bar */}
       <FilterBar filters={filters} onChange={setFilters} />
