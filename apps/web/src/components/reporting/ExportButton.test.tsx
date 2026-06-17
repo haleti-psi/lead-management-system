@@ -226,7 +226,7 @@ describe('ExportJobsPage', () => {
   it('shows loading skeleton while loading', () => {
     mockUseListExports.mockReturnValue({ data: undefined, isLoading: true, isError: false, refetch: vi.fn() });
     render(<ExportJobsPage />);
-    expect(screen.getByRole('status', { name: /loading exports/i })).toBeTruthy();
+    expect(screen.getByRole('status', { name: /loading/i })).toBeTruthy();
   });
 
   it('shows empty state when no exports', () => {

@@ -5,6 +5,10 @@ import { toast } from 'sonner';
 import type { ChipTone } from '@/components/ui/StatusChip';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { useGetExport, useListExports } from '@/hooks/useExports';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { EmptyState } from '@/components/common/EmptyState';
+import { ErrorState } from '@/components/common/ErrorState';
+import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
 import type { JobStatus } from '@lms/shared';
 
 const STATUS_TONE: Readonly<Record<string, ChipTone>> = {
@@ -28,33 +32,22 @@ export function ExportJobsPage(): ReactElement {
   const hasNext = page * 25 < total;
 
   if (isLoading) {
-    return (
-      <div role="status" aria-label="Loading exports" className="space-y-2">
-        {[...Array<number>(5)].map((_, i) => (
-          <div key={i} className="h-8 rounded bg-muted animate-pulse" />
-        ))}
-      </div>
-    );
+    return <LoadingSkeleton rows={6} />;
   }
 
   if (isError) {
-    return (
-      <div role="alert" className="rounded-lg border border-destructive p-4 text-destructive text-sm">
-        Failed to load export history.
-      </div>
-    );
+    return <ErrorState message="Failed to load export history." />;
   }
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg border p-8 text-center text-muted-foreground text-sm">
-        No exports yet.
-      </div>
+      <EmptyState title="No exports yet" message="Exports you generate from Reports will appear here." />
     );
   }
 
   return (
     <div className="space-y-4">
+      <PageHeader title="Exports" description="Your report export jobs and downloads." />
       <div className="overflow-x-auto rounded-lg border">
         <table className="min-w-full divide-y divide-border text-sm">
           <thead className="bg-muted/50">
