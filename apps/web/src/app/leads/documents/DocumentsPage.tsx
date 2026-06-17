@@ -1,5 +1,6 @@
 import { Navigate, useParams } from 'react-router-dom';
 import { DocumentChecklistPanel } from '@/components/kyc/DocumentChecklistPanel';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 /**
  * Standalone host for the FR-070 document checklist at `/leads/:id/documents`
@@ -13,7 +14,11 @@ export function DocumentsPage(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Documents</h1>
+      <PageHeader
+        breadcrumbs={[{ label: 'Leads', to: '/leads' }, { label: 'Lead', to: `/leads/${id}` }, { label: 'Documents' }]}
+        title="Documents"
+        description="Document checklist, upload and verification status."
+      />
       <DocumentChecklistPanel leadId={id} />
     </div>
   );

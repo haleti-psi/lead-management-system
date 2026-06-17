@@ -5,6 +5,7 @@ import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 import type { TaskDto, TaskFilters } from './use-tasks';
 import { useTasks } from './use-tasks';
@@ -134,22 +135,19 @@ export function TasksPage(): ReactElement {
 
   return (
     <div className="space-y-4">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Tasks</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Manage follow-up activities for your leads
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowCreateModal(true)}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-        >
-          + Create Task
-        </button>
-      </div>
+      <PageHeader
+        title="Tasks"
+        description="Manage follow-up activities for your leads."
+        actions={
+          <button
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background"
+          >
+            + Create Task
+          </button>
+        }
+      />
 
       {/* Overdue queue */}
       <OverdueQueuePanel />
