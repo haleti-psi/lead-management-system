@@ -14,6 +14,7 @@
  */
 
 import { useState } from 'react';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { AlertTriangle } from 'lucide-react';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
 import { StatusChip } from '@/components/workspace/StatusChip';
@@ -218,10 +219,10 @@ export function DataRightsPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Data Rights Requests</h1>
-      </div>
+      <PageHeader
+        title="Data Rights Requests"
+        description="Data-principal access & erasure requests (DPDPA), with legal-hold awareness."
+      />
 
       {/* Filter bar */}
       <FilterBar

@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { isApiClientError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { StatusChip } from '@/components/workspace/StatusChip';
 import { GrievanceFilterBar } from './GrievanceFilterBar';
 import { GrievanceDrawer } from './GrievanceDrawer';
@@ -236,13 +237,15 @@ export function GrievanceModule({ showOwnerFilter = false }: GrievanceModuleProp
 
   return (
     <div className="space-y-4">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Grievances</h1>
-        <Button onClick={() => setCreating((c) => !c)}>
-          {creating ? 'Cancel' : 'Create grievance'}
-        </Button>
-      </div>
+      <PageHeader
+        title="Grievances"
+        description="Customer grievances with SLA-driven escalation."
+        actions={
+          <Button onClick={() => setCreating((c) => !c)}>
+            {creating ? 'Cancel' : 'Create grievance'}
+          </Button>
+        }
+      />
 
       {creating ? <CreateGrievancePanel onClose={() => setCreating(false)} /> : null}
 
