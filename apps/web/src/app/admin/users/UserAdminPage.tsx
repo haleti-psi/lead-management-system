@@ -5,6 +5,7 @@ import { Modal } from '@/components/ui/Modal';
 import { StatusChip, type ChipTone } from '@/components/ui/StatusChip';
 import { MaskedField } from '@/components/ui/MaskedField';
 import { DataTable, type DataTableColumn, type SortState } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { cn } from '@/lib/utils';
 import { useCan } from '@/lib/auth/capabilities';
 import { useAdminUsers, useUpdateUser } from '@/hooks/use-admin-users';
@@ -62,7 +63,7 @@ export function UserAdminPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">User Administration</h1>
+      <PageHeader title="User Administration" description="Users, roles, teams and lead reassignment." />
 
       <div role="tablist" aria-label="Administration sections" className="flex gap-1 border-b">
         {TABS.map((t) => (

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/Modal';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useCan } from '@/lib/auth/capabilities';
 import { useMasterList } from '@/hooks/use-master-data';
 import {
@@ -87,13 +88,16 @@ export function MasterDataPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Master Data</h1>
-        <Button onClick={() => setModal({ kind: 'create' })}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Add {meta.singular}
-        </Button>
-      </div>
+      <PageHeader
+        title="Master Data"
+        description="Branches, products, sources and other reference lists."
+        actions={
+          <Button onClick={() => setModal({ kind: 'create' })}>
+            <Plus className="h-4 w-4" aria-hidden />
+            Add {meta.singular}
+          </Button>
+        }
+      />
 
       {/* Resource selector */}
       <nav aria-label="Master resource" className="flex flex-wrap gap-2 border-b pb-2">

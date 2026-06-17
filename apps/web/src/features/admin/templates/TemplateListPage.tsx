@@ -1,6 +1,7 @@
 import { useState, type ReactElement } from 'react';
 
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
@@ -148,10 +149,11 @@ export function TemplateListPage(): ReactElement {
 
   return (
     <div className="space-y-4 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Communication Templates</h1>
-        <Button onClick={() => setShowCreate(true)}>New Template</Button>
-      </div>
+      <PageHeader
+        title="Communication Templates"
+        description="SMS / email / WhatsApp message templates (versioned, consent-gated)."
+        actions={<Button onClick={() => setShowCreate(true)}>New Template</Button>}
+      />
 
       <FilterBar filters={filters} onFilterChange={handleFilterChange} />
 

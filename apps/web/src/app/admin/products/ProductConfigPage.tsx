@@ -5,6 +5,7 @@ import { Modal } from '@/components/ui/Modal';
 import { StatusChip, type ChipTone } from '@/components/ui/StatusChip';
 import { DataTable, type DataTableColumn, type SortState } from '@/components/data/DataTable';
 import { ErrorState } from '@/components/common/ErrorState';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useCan } from '@/lib/auth/capabilities';
 import {
   useProductConfig,
@@ -125,13 +126,16 @@ export function ProductConfigPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Product Configurations</h1>
-        <Button onClick={() => setModal({ kind: 'create' })}>
-          <Plus className="h-4 w-4" aria-hidden />
-          New configuration
-        </Button>
-      </div>
+      <PageHeader
+        title="Product Configurations"
+        description="Product eligibility rules and intake configuration (draft → approve → active)."
+        actions={
+          <Button onClick={() => setModal({ kind: 'create' })}>
+            <Plus className="h-4 w-4" aria-hidden />
+            New configuration
+          </Button>
+        }
+      />
 
       <div className="flex flex-wrap gap-2">
         <FilterSelect

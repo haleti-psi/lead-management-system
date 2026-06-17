@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/Modal';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useCan } from '@/lib/auth/capabilities';
 import {
   configGovernanceKeys,
@@ -83,13 +84,10 @@ export function ConfigGovernancePage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Configuration Approvals</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Maker-checker review of pending configuration changes. View the change, then approve or reject it,
-          or roll back an active one.
-        </p>
-      </div>
+      <PageHeader
+        title="Configuration Approvals"
+        description="Maker-checker review of pending configuration changes — view, then approve, reject, or roll back."
+      />
 
       <DataTable
         columns={columns}
