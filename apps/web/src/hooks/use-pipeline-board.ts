@@ -1,12 +1,10 @@
 /**
  * FR-052 — usePipelineBoard hook.
  *
- * Loads all Kanban columns in parallel by calling `GET /api/v1/leads` once per
- * stage (with `filter[stage]=<stage>`). The list endpoint returns the contract
- * `Lead` array in the envelope `data` with pagination in `meta.pagination`, so
- * we use `apiClient.getPage` (NOT `get`) and map each row to a board card.
- * Each column has its own react-query cache key and can be refetched
- * independently after a stage transition.
+ * Loads each Kanban column from `GET /api/v1/pipeline-board?stage=<stage>` — the
+ * masked, scope-filtered board projection (carries amount / owner / ageing /
+ * version). Each stage is an independent react-query so a single column error
+ * doesn't block the others and columns refetch individually after a transition.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -28,11 +26,7 @@ export const BOARD_STAGES = [
 
 export type BoardStage = typeof BOARD_STAGES[number];
 
-/**
- * Map a `GET /leads` contract row to a board card. Fields the list projection
- * does not carry (amount / owner / ageing / next-action / version) are left
- * undefined and the card renders without them.
- */
+/** Map a `GET /pipeline-board` row (snake_case, masked) to a board card. */
 export function toCard(row: BoardLeadRow): PipelineLeadCard {
   return {
     leadId: row.lead_id,
@@ -44,17 +38,11 @@ export function toCard(row: BoardLeadRow): PipelineLeadCard {
     consentStatus: row.consent_status,
     kycStatus: row.kyc_status,
     score: row.score,
+    requestedAmount: row.requested_amount,
+    ownerName: row.owner_name,
+    ageingDays: row.ageing_days,
+    version: row.version,
   };
-}
-
-/**
- * Fetch a lead's current optimistic-lock `version` for a stage move. The board
- * list projection does not expose it, so we read it just-in-time from the
- * Lead-360 aggregate (`GET /leads/:id`) — the only endpoint that returns it.
- */
-export async function fetchLeadVersion(leadId: string): Promise<number> {
-  const lead = await apiClient.get<{ version: number }>(`/leads/${leadId}`);
-  return lead.version;
 }
 
 export interface BoardColumnState {
@@ -69,8 +57,8 @@ function useBoardColumn(stage: BoardStage, pageLimit = 25): BoardColumnState {
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: ['pipeline-board', stage],
     queryFn: async () => {
-      const page = await apiClient.getPage<BoardLeadRow>('/leads', {
-        query: { 'filter[stage]': stage, limit: pageLimit, page: 1 },
+      const page = await apiClient.getPage<BoardLeadRow>('/pipeline-board', {
+        query: { stage, limit: pageLimit, page: 1 },
       });
       return {
         cards: page.data.map(toCard),

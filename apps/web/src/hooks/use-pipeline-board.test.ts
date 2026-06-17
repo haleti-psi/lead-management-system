@@ -20,6 +20,10 @@ function row(overrides: Partial<BoardLeadRow> = {}): BoardLeadRow {
     kyc_status: 'not_started',
     name_masked: 'Su**** P****',
     mobile_masked: '98xxxxxx05',
+    requested_amount: '500000.00',
+    owner_name: 'Anita Sharma',
+    ageing_days: 3,
+    version: 2,
     ...overrides,
   } as BoardLeadRow;
 }
@@ -43,12 +47,11 @@ describe('toCard', () => {
     expect(toCard(row({ name_masked: null })).customerName).toBe('—');
   });
 
-  it('leaves projection-only fields undefined (amount/owner/ageing/version)', () => {
+  it('maps the enriched projection fields (amount / owner / ageing / version)', () => {
     const card = toCard(row());
-    expect(card.requestedAmount).toBeUndefined();
-    expect(card.ownerName).toBeUndefined();
-    expect(card.ageingDays).toBeUndefined();
-    expect(card.nextActionAt).toBeUndefined();
-    expect(card.version).toBeUndefined();
+    expect(card.requestedAmount).toBe('500000.00');
+    expect(card.ownerName).toBe('Anita Sharma');
+    expect(card.ageingDays).toBe(3);
+    expect(card.version).toBe(2);
   });
 });
