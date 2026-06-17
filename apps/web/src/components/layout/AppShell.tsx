@@ -16,6 +16,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { useCan, type Capability } from '@/lib/auth/capabilities';
 import { cn } from '@/lib/utils';
 import { SearchPalette } from '@/components/workspace/SearchPalette';
+import { ThemeToggle } from './ThemeToggle';
 
 /**
  * Authenticated app shell (ui.md §Layout shell): role-filtered left nav, a top
@@ -112,6 +113,7 @@ function TopBar({ onSearchOpen }: { onSearchOpen: () => void }): JSX.Element {
         <span className="hidden text-sm text-muted-foreground sm:inline">
           {user?.role} · scope {user?.scope}
         </span>
+        <ThemeToggle />
         <Button variant="outline" size="sm" onClick={logout}>
           <LogOut className="h-4 w-4" aria-hidden />
           Sign out
