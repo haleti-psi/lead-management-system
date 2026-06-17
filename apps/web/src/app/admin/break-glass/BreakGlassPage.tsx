@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal';
 import { StatusChip, type ChipTone } from '@/components/ui/StatusChip';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useCan } from '@/lib/auth/capabilities';
 import { useAuth } from '@/hooks/use-auth';
 import { useBreakGlassGrants } from '@/hooks/use-break-glass';
@@ -123,13 +124,16 @@ export function BreakGlassPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Break-Glass Access</h1>
-        <Button onClick={() => setAction({ kind: 'request' })}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Request grant
-        </Button>
-      </div>
+      <PageHeader
+        title="Break-Glass Access"
+        description="Time-boxed emergency elevated access — every grant needs four-eyes approval."
+        actions={
+          <Button onClick={() => setAction({ kind: 'request' })}>
+            <Plus className="h-4 w-4" aria-hidden />
+            Request grant
+          </Button>
+        }
+      />
 
       <label className="flex items-center gap-1 text-sm">
         <span className="sr-only">Filter by status</span>

@@ -1,18 +1,20 @@
 import { Link } from 'react-router-dom';
 import {
   Boxes,
+  ChevronRight,
   FileText,
-  KeyRound,
+  MessageSquare,
   PackageOpen,
   ShieldAlert,
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 /**
- * Configuration hub at `/admin` (capability `configuration`): a simple landing
- * page that links out to the individual admin/configuration consoles. The nav's
+ * Configuration hub at `/admin` (capability `configuration`): a landing page
+ * that links out to the individual admin/configuration consoles. The nav's
  * "Configuration" item points here; each section is also guarded by `AbacGuard`
  * on the API, so this is a convenience index only.
  */
@@ -58,34 +60,36 @@ const ADMIN_LINKS: readonly AdminLink[] = [
     label: 'Communication templates',
     description: 'Manage SMS / email / WhatsApp message templates.',
     to: '/admin/templates',
-    icon: KeyRound,
+    icon: MessageSquare,
   },
 ];
 
 export function AdminHomePage(): JSX.Element {
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">Configuration</h1>
-        <p className="text-sm text-muted-foreground">
-          Administration and configuration consoles.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader title="Configuration" description="Administration and configuration consoles." />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {ADMIN_LINKS.map((item) => (
           <Link
             key={item.to}
             to={item.to}
-            className="rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Card className="h-full transition-colors hover:bg-accent">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <item.icon className="h-5 w-5 text-muted-foreground" aria-hidden />
-                  <CardTitle>{item.label}</CardTitle>
-                </div>
-                <CardDescription>{item.description}</CardDescription>
-              </CardHeader>
+            <Card className="flex h-full items-start gap-3 p-4 transition-colors hover:border-foreground/20 hover:bg-accent/40">
+              <span
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"
+                aria-hidden
+              >
+                <item.icon className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold leading-none">{item.label}</p>
+                <p className="mt-1.5 text-sm text-muted-foreground">{item.description}</p>
+              </div>
+              <ChevronRight
+                className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                aria-hidden
+              />
             </Card>
           </Link>
         ))}
