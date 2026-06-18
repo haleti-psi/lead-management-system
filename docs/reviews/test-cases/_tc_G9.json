@@ -1,0 +1,2058 @@
+[
+  {
+    "test_id": "TC-FR120-01",
+    "test_name": "Happy path — funnel_conversion report for HEAD scope",
+    "category": "Happy Path",
+    "linked_fr": "FR-120",
+    "priority": "Critical",
+    "preconditions": [
+      "Org has 20 leads seeded across May 2026: 8 captured, 5 handed_off, 4 rejected, 3 active in pipeline",
+      "HEAD JWT available (user id: head-user-uuid-001)",
+      "API running and authenticated"
+    ],
+    "test_steps": [
+      "Authenticate as HEAD user and obtain JWT",
+      "GET /api/v1/reports/funnel_conversion?from=2026-05-01&to=2026-05-31",
+      "Assert HTTP 200 response",
+      "Assert response envelope: { data: { code: 'funnel_conversion', rows: [...] }, meta: { pagination: {...} }, error: null }",
+      "Assert data.rows is non-empty array",
+      "Assert each row has: product_code, captured, handed_off, rejected, active_pipeline, overall_conversion_pct",
+      "Assert active_pipeline = captured - handed_off - rejected for each row",
+      "Assert meta.pagination contains page, limit, total fields"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/funnel_conversion",
+      "query_params": { "from": "2026-05-01", "to": "2026-05-31" },
+      "seed": {
+        "leads": 20,
+        "stages": { "captured": 8, "handed_off": 5, "rejected": 4, "active_pipeline": 3 }
+      }
+    },
+    "expected_result": "HTTP 200; data.rows non-empty; active_pipeline = captured - handed_off - rejected per row; meta.pagination.total >= seeded count; error null",
+    "postconditions": [
+      "No rows written to stage_history, audit_logs, event_outbox, or leads (read-only op)",
+      "INV-01: SELECT count(*) FROM stage_history WHERE created_at > now() - interval '5 seconds' = 0",
+      "INV-02: SELECT count(*) FROM audit_logs WHERE created_at > now() - interval '5 seconds' = 0"
+    ]
+  },
+  {
+    "test_id": "TC-FR120-02",
+    "test_name": "Zero-denominator returns '–' not '0' or NaN",
+    "category": "Boundary",
+    "linked_fr": "FR-120",
+    "priority": "Critical",
+    "preconditions": [
+      "One product code (e.g. 'LAP') has captured = 0 for the requested period",
+      "HEAD JWT available"
+    ],
+    "test_steps": [
+      "Seed 1 lead with product_code='PL' (not 'LAP'); leave 'LAP' with zero leads in period",
+      "GET /api/v1/reports/funnel_conversion?from=2026-05-01&to=2026-05-31",
+      "Find the row where product_code = 'LAP'",
+      "Assert overall_conversion_pct === '–'",
+      "Assert kyc_conversion_pct === '–'",
+      "Assert active_pipeline === 0 or omitted (not NaN or undefined)"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/funnel_conversion",
+      "query_params": { "from": "2026-05-01", "to": "2026-05-31" },
+      "seed": { "product_LAP_leads": 0, "product_PL_leads": 5 }
+    },
+    "expected_result": "Row for product_code='LAP': overall_conversion_pct='–', kyc_conversion_pct='–'; values are not '0', '0%', 'NaN', 'null', or empty string",
+    "postconditions": ["No writes to any table"]
+  },
+  {
+    "test_id": "TC-FR120-03",
+    "test_name": "Scope enforcement — RM forced to own leads only",
+    "category": "Permission",
+    "linked_fr": "FR-120",
+    "priority": "Critical",
+    "preconditions": [
+      "RM user rm-user-uuid-001 owns 3 leads",
+      "Another RM rm-user-uuid-002 owns 5 leads",
+      "RM JWT for rm-user-uuid-001 available"
+    ],
+    "test_steps": [
+      "Authenticate as RM rm-user-uuid-001",
+      "GET /api/v1/reports/rm_performance",
+      "Assert HTTP 200",
+      "Assert data.rows contains only leads owned by rm-user-uuid-001",
+      "Assert no row references rm-user-uuid-002 data"
+    ],
+    "test_data": {
+      "jwt_role": "RM",
+      "jwt_user_id": "rm-user-uuid-001",
+      "endpoint": "GET /api/v1/reports/rm_performance",
+      "seed": {
+        "rm1_leads": 3,
+        "rm2_leads": 5,
+        "rm1_id": "rm-user-uuid-001",
+        "rm2_id": "rm-user-uuid-002"
+      }
+    },
+    "expected_result": "HTTP 200; data.rows shows only RM rm-user-uuid-001's data; total_leads = 3; no other RM's leads included",
+    "postconditions": ["No writes to any table"]
+  },
+  {
+    "test_id": "TC-FR120-04",
+    "test_name": "Scope violation — RM passes another RM's owner_id",
+    "category": "Negative/Error",
+    "linked_fr": "FR-120",
+    "priority": "Critical",
+    "preconditions": [
+      "RM user rm-user-uuid-001 authenticated",
+      "Another RM rm-user-uuid-002 exists in same org"
+    ],
+    "test_steps": [
+      "Authenticate as RM rm-user-uuid-001",
+      "GET /api/v1/reports/rm_performance?owner_id=rm-user-uuid-002",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "jwt_role": "RM",
+      "jwt_user_id": "rm-user-uuid-001",
+      "endpoint": "GET /api/v1/reports/rm_performance",
+      "query_params": { "owner_id": "rm-user-uuid-002" }
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no data returned",
+    "postconditions": ["No writes to any table; no data for rm-user-uuid-002 exposed"]
+  },
+  {
+    "test_id": "TC-FR120-05",
+    "test_name": "Scope violation — BM passes another branch_id",
+    "category": "Negative/Error",
+    "linked_fr": "FR-120",
+    "priority": "Critical",
+    "preconditions": [
+      "BM user bm-user-uuid-001 belongs to branch branch-A-uuid",
+      "branch-B-uuid exists in same org"
+    ],
+    "test_steps": [
+      "Authenticate as BM bm-user-uuid-001",
+      "GET /api/v1/reports/funnel_conversion?branch_id=branch-B-uuid",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "jwt_role": "BM",
+      "jwt_branch_id": "branch-A-uuid",
+      "endpoint": "GET /api/v1/reports/funnel_conversion",
+      "query_params": { "branch_id": "branch-B-uuid" }
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'",
+    "postconditions": ["No data from branch-B exposed"]
+  },
+  {
+    "test_id": "TC-FR120-06",
+    "test_name": "ADMIN role denied — no reports capability",
+    "category": "Permission",
+    "linked_fr": "FR-120",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN JWT available (ADMIN has no 'reports' capability per auth-matrix.json)"
+    ],
+    "test_steps": [
+      "Authenticate as ADMIN",
+      "GET /api/v1/reports/funnel_conversion",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "jwt_role": "ADMIN",
+      "endpoint": "GET /api/v1/reports/funnel_conversion"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'",
+    "postconditions": ["No data returned"]
+  },
+  {
+    "test_id": "TC-FR120-07",
+    "test_name": "Unauthenticated request returns 401",
+    "category": "Negative/Error",
+    "linked_fr": "FR-120",
+    "priority": "Critical",
+    "preconditions": ["No Authorization header"],
+    "test_steps": [
+      "Send GET /api/v1/reports/funnel_conversion with no Authorization header",
+      "Assert HTTP 401",
+      "Assert error.code = 'AUTH_REQUIRED'"
+    ],
+    "test_data": {
+      "jwt_role": null,
+      "endpoint": "GET /api/v1/reports/funnel_conversion"
+    },
+    "expected_result": "HTTP 401; error.code='AUTH_REQUIRED'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR120-08",
+    "test_name": "Invalid report code returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-120",
+    "priority": "High",
+    "preconditions": ["HEAD JWT available"],
+    "test_steps": [
+      "GET /api/v1/reports/made_up_code",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.fields[0].field = 'code'"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/made_up_code"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[0].field='code'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR120-09",
+    "test_name": "Date range inversion returns VALIDATION_ERROR",
+    "category": "Boundary",
+    "linked_fr": "FR-120",
+    "priority": "High",
+    "preconditions": ["HEAD JWT available"],
+    "test_steps": [
+      "GET /api/v1/reports/funnel_conversion?from=2026-06-15&to=2026-06-01",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.fields contains entry for 'from' or 'to'"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/funnel_conversion",
+      "query_params": { "from": "2026-06-15", "to": "2026-06-01" }
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; fields references 'from' or 'to'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR120-10",
+    "test_name": "Empty state — no data in requested period",
+    "category": "Boundary",
+    "linked_fr": "FR-120",
+    "priority": "High",
+    "preconditions": [
+      "No leads exist in the org for the requested date range (2020-01-01 to 2020-01-31)",
+      "HEAD JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/funnel_conversion?from=2020-01-01&to=2020-01-31",
+      "Assert HTTP 200",
+      "Assert data.rows is an empty array []",
+      "Assert meta.pagination.total = 0",
+      "Assert error is null"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/funnel_conversion",
+      "query_params": { "from": "2020-01-01", "to": "2020-01-31" }
+    },
+    "expected_result": "HTTP 200; data.rows=[]; meta.pagination.total=0; no error",
+    "postconditions": ["No writes occurred"]
+  },
+  {
+    "test_id": "TC-FR120-11",
+    "test_name": "Pagination — page 2 returns correct slice and correct meta",
+    "category": "Boundary",
+    "linked_fr": "FR-120",
+    "priority": "High",
+    "preconditions": [
+      "Org has 7 distinct product rows in rejection_summary report",
+      "HEAD JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/rejection_summary?page=2&limit=3",
+      "Assert HTTP 200",
+      "Assert data.rows.length = 3 (rows 4-6 of 7)",
+      "Assert meta.pagination = { page: 2, limit: 3, total: 7 }",
+      "Assert row IDs do not overlap with page 1 results"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/rejection_summary",
+      "query_params": { "page": "2", "limit": "3" },
+      "seed": { "total_rejection_reason_groups": 7 }
+    },
+    "expected_result": "HTTP 200; data.rows.length=3; meta.pagination.page=2; meta.pagination.total=7; no row_id overlap with page 1",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR120-12",
+    "test_name": "Reconciliation — captured = active_pipeline + rejected + handed_off",
+    "category": "Data Integrity",
+    "linked_fr": "FR-120",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed 15 leads for May 2026: 6 active_pipeline, 5 handed_off, 4 rejected",
+      "HEAD JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/funnel_conversion?from=2026-05-01&to=2026-05-31",
+      "For each row: assert row.active_pipeline + row.handed_off + row.rejected = row.captured",
+      "Sum all rows: total_captured = sum(row.captured); total_active + total_handed_off + total_rejected = total_captured",
+      "Run SQL invariant: SELECT (COUNT(*) FILTER (WHERE stage NOT IN ('handed_off','rejected') AND deleted_at IS NULL) + COUNT(*) FILTER (WHERE stage='rejected') + COUNT(*) FILTER (WHERE stage='handed_off')) - COUNT(*) FILTER (WHERE deleted_at IS NULL) AS delta FROM leads WHERE org_id='<org-uuid>' AND created_at BETWEEN '2026-05-01' AND '2026-05-31 23:59:59'; EXPECT: 0"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/funnel_conversion",
+      "query_params": { "from": "2026-05-01", "to": "2026-05-31" },
+      "seed": { "active_pipeline": 6, "handed_off": 5, "rejected": 4 }
+    },
+    "expected_result": "For each row: active_pipeline + rejected + handed_off = captured; SQL reconciliation delta = 0",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO leads ... (15 rows with stages as seeded)",
+      "action": "GET /api/v1/reports/funnel_conversion",
+      "invariant_query": "SELECT (COUNT(*) FILTER (WHERE stage NOT IN ('handed_off','rejected') AND deleted_at IS NULL) + COUNT(*) FILTER (WHERE stage='rejected') + COUNT(*) FILTER (WHERE stage='handed_off')) - COUNT(*) FILTER (WHERE deleted_at IS NULL) AS delta FROM leads WHERE org_id='00000000-0000-0000-0000-000000000001' AND created_at BETWEEN '2026-05-01' AND '2026-05-31 23:59:59'",
+      "cleanup": "DELETE FROM leads WHERE created_at BETWEEN '2026-05-01' AND '2026-05-31'"
+    }
+  },
+  {
+    "test_id": "TC-FR120-UI-01",
+    "test_name": "Playwright — HEAD user full funnel_conversion journey",
+    "category": "UI/E2E",
+    "linked_fr": "FR-120",
+    "priority": "High",
+    "preconditions": [
+      "HEAD user seeded with credentials (head@test.com / Test@1234)",
+      "At least 5 leads seeded for June 2026",
+      "App running at localhost:5173"
+    ],
+    "test_steps": [
+      "Navigate to /login; login as HEAD",
+      "Navigate to /reports",
+      "Select 'Funnel Conversion' from report selector",
+      "Set from=2026-06-01, to=2026-06-30 in date range inputs",
+      "Click Apply Filters",
+      "Wait for DataTable to appear (waitForSelector('[data-testid=\"report-data-table\"]'))",
+      "Assert at least 1 row visible",
+      "Assert pagination controls present",
+      "Click page 2 if total > limit; assert different rows appear"
+    ],
+    "test_data": {
+      "login": { "email": "head@test.com", "password": "Test@1234" },
+      "report_code": "funnel_conversion",
+      "date_from": "2026-06-01",
+      "date_to": "2026-06-30"
+    },
+    "expected_result": "DataTable loads with rows; pagination controls functional; no console errors; no stack traces visible",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/reports",
+      "locators": {
+        "report_selector": "getByRole('combobox', { name: 'Report' })",
+        "date_from": "getByTestId('filter-date-from')",
+        "date_to": "getByTestId('filter-date-to')",
+        "apply_btn": "getByRole('button', { name: 'Apply' })",
+        "data_table": "getByTestId('report-data-table')",
+        "pagination": "getByTestId('pagination-controls')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "HEAD authenticated",
+      "network_wait": "waitForResponse('/api/v1/reports/funnel_conversion')",
+      "visual_assert": "DataTable visible and non-empty; LoadingSkeleton absent after load",
+      "a11y": "Run axe on report viewer; assert 0 critical violations"
+    }
+  },
+  {
+    "test_id": "TC-FR120-UI-02",
+    "test_name": "Playwright — EmptyState shown when no data for date range",
+    "category": "UI/E2E",
+    "linked_fr": "FR-120",
+    "priority": "Medium",
+    "preconditions": [
+      "HEAD user logged in",
+      "No leads exist for the date range 2020-01-01 to 2020-01-31"
+    ],
+    "test_steps": [
+      "Navigate to /reports",
+      "Select 'Funnel Conversion'",
+      "Set date range to 2020-01-01 — 2020-01-31",
+      "Click Apply",
+      "Assert EmptyState component is visible (getByTestId('empty-state'))",
+      "Assert DataTable is NOT in DOM"
+    ],
+    "test_data": {
+      "login": { "email": "head@test.com", "password": "Test@1234" },
+      "date_from": "2020-01-01",
+      "date_to": "2020-01-31"
+    },
+    "expected_result": "EmptyState visible; DataTable absent; no error state shown",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/reports",
+      "locators": {
+        "empty_state": "getByTestId('empty-state')",
+        "data_table": "getByTestId('report-data-table')"
+      },
+      "viewport": "375x667",
+      "auth_state": "HEAD authenticated",
+      "network_wait": "waitForResponse('/api/v1/reports/funnel_conversion')",
+      "visual_assert": "EmptyState text visible; table rows count = 0",
+      "a11y": "EmptyState has role='status' or aria-live"
+    }
+  },
+  {
+    "test_id": "TC-FR120-UI-03",
+    "test_name": "Playwright — Zero-denominator cells render as '–' not blank or 0",
+    "category": "UI/E2E",
+    "linked_fr": "FR-120",
+    "priority": "High",
+    "preconditions": [
+      "HEAD user logged in",
+      "Seed: product LAP has 0 leads; product PL has 5 leads in current month"
+    ],
+    "test_steps": [
+      "Navigate to /reports; select Funnel Conversion",
+      "Apply filter for current month",
+      "Locate row for product_code = 'LAP'",
+      "Assert overall_conversion_pct cell text = '–'",
+      "Assert cell is not empty, not '0', not '0%', not 'NaN'"
+    ],
+    "test_data": {
+      "product_with_zero_denominator": "LAP",
+      "date_from": "2026-06-01",
+      "date_to": "2026-06-30"
+    },
+    "expected_result": "Cell for LAP overall_conversion_pct displays '–' as literal string",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/reports",
+      "locators": {
+        "zero_denom_cell": "getByTestId('cell-LAP-overall_conversion_pct')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "HEAD authenticated",
+      "network_wait": "waitForResponse('/api/v1/reports/funnel_conversion')",
+      "visual_assert": "Cell text === '–'",
+      "a11y": "Cell has aria-label describing null rate for screen readers"
+    }
+  },
+  {
+    "test_id": "TC-FR120-DI-01",
+    "test_name": "Data Integrity — no writes during any report fetch",
+    "category": "Data Integrity",
+    "linked_fr": "FR-120",
+    "priority": "Critical",
+    "preconditions": [
+      "HEAD JWT; 5 leads seeded"
+    ],
+    "test_steps": [
+      "Record timestamps: t_before = now()",
+      "GET /api/v1/reports/funnel_conversion",
+      "GET /api/v1/reports/source_performance",
+      "GET /api/v1/reports/rm_performance",
+      "GET /api/v1/reports/rejection_summary",
+      "Run each invariant SQL query and assert result = 0"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "operations": ["funnel_conversion", "source_performance", "rm_performance", "rejection_summary"]
+    },
+    "expected_result": "All four SQL invariants return 0",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT now() AS t_before",
+      "action": "Four sequential GET /api/v1/reports/* calls",
+      "invariant_query": "SELECT count(*) FROM stage_history WHERE created_at > :t_before UNION ALL SELECT count(*) FROM audit_logs WHERE created_at > :t_before UNION ALL SELECT count(*) FROM event_outbox WHERE created_at > :t_before UNION ALL SELECT count(*) FROM leads WHERE updated_at > :t_before",
+      "cleanup": "None"
+    }
+  },
+  {
+    "test_id": "TC-FR121-01",
+    "test_name": "Happy path — first_contact_sla for HEAD scope",
+    "category": "Happy Path",
+    "linked_fr": "FR-121",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: 10 leads — 5 contacted within SLA, 3 SLA breached, 2 pending first contact",
+      "HEAD JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/first_contact_sla",
+      "Assert HTTP 200",
+      "Assert data.code = 'first_contact_sla'",
+      "Assert data.summary.contacted_in_sla = 5",
+      "Assert data.summary.sla_breached = 3",
+      "Assert data.summary.sla_compliance_pct is a non-null numeric string or number",
+      "Assert data.reconciliation block present with numerator and denominator",
+      "Assert meta.pagination present"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/first_contact_sla",
+      "seed": {
+        "leads_in_sla": 5,
+        "leads_sla_breached": 3,
+        "leads_pending": 2
+      }
+    },
+    "expected_result": "HTTP 200; summary.contacted_in_sla=5; summary.sla_breached=3; sla_compliance_pct non-null; reconciliation block present",
+    "postconditions": ["No writes to any table"]
+  },
+  {
+    "test_id": "TC-FR121-02",
+    "test_name": "Happy path — dsa_dealer_quality returns ranked partner list",
+    "category": "Happy Path",
+    "linked_fr": "FR-121",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: 2 active DSA partners (P1, P2) with 15+ leads each",
+      "HEAD JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/dsa_dealer_quality",
+      "Assert HTTP 200",
+      "Assert data.rows.length = 2",
+      "Assert each row has: partner_id, quality_score, metrics, factors",
+      "Assert rows are ordered descending by quality_score",
+      "Assert quality_score computation was delegated to PartnerQualityService (not recomputed inline)"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/dsa_dealer_quality",
+      "seed": {
+        "partner_P1_leads": 20,
+        "partner_P2_leads": 18
+      }
+    },
+    "expected_result": "HTTP 200; 2 rows; each has quality_score; ordered desc; no raw formula logic in ReportingService",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR121-03",
+    "test_name": "Happy path — consent_privacy_ops accessible to DPO only with masked PII",
+    "category": "Happy Path",
+    "linked_fr": "FR-121",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: 6 leads with consent_status split across pending(2), partial(2), captured(2); 2 open data_rights_requests",
+      "DPO JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/consent_privacy_ops with DPO JWT",
+      "Assert HTTP 200",
+      "Assert data.summary.consent_status_breakdown contains pending=2, partial=2, captured=2",
+      "Assert data.summary.open_data_rights_requests = 2",
+      "Assert any lead-level identifiers in rows are masked per masking_level rules",
+      "Assert PAN and mobile are not present in unmasked form in response body"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/reports/consent_privacy_ops",
+      "seed": {
+        "leads_consent_pending": 2,
+        "leads_consent_partial": 2,
+        "leads_consent_captured": 2,
+        "open_data_rights_requests": 2
+      }
+    },
+    "expected_result": "HTTP 200; consent_status_breakdown matches seed; open_data_rights_requests=2; PII fields masked",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR121-04",
+    "test_name": "DPO denied non-compliance report (rm_capacity_load)",
+    "category": "Permission",
+    "linked_fr": "FR-121",
+    "priority": "High",
+    "preconditions": ["DPO JWT available"],
+    "test_steps": [
+      "GET /api/v1/reports/rm_capacity_load with DPO JWT",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/reports/rm_capacity_load"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR121-05",
+    "test_name": "PARTNER auto-scoped to own partner — dsa_dealer_quality shows only own row",
+    "category": "Permission",
+    "linked_fr": "FR-121",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: PARTNER P1 and PARTNER P2 both with leads",
+      "PARTNER P1 JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/dsa_dealer_quality with PARTNER P1 JWT",
+      "Assert HTTP 200",
+      "Assert data.rows.length = 1",
+      "Assert data.rows[0].partner_id = P1 UUID",
+      "Assert no P2 data in response"
+    ],
+    "test_data": {
+      "jwt_role": "PARTNER",
+      "jwt_partner_id": "partner-P1-uuid",
+      "endpoint": "GET /api/v1/reports/dsa_dealer_quality",
+      "seed": {
+        "partner_P1_leads": 10,
+        "partner_P2_leads": 10
+      }
+    },
+    "expected_result": "HTTP 200; data.rows.length=1; row.partner_id=partner-P1-uuid; P2 data absent",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR121-06",
+    "test_name": "PARTNER cross-scope blocked — cannot query another partner's data",
+    "category": "Negative/Error",
+    "linked_fr": "FR-121",
+    "priority": "Critical",
+    "preconditions": [
+      "PARTNER P1 JWT; P2 UUID known"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/dsa_dealer_quality?partner_id=partner-P2-uuid with PARTNER P1 JWT",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "jwt_role": "PARTNER",
+      "jwt_partner_id": "partner-P1-uuid",
+      "endpoint": "GET /api/v1/reports/dsa_dealer_quality",
+      "query_params": { "partner_id": "partner-P2-uuid" }
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR121-07",
+    "test_name": "Zero-denominator — SLA compliance is null when no leads",
+    "category": "Boundary",
+    "linked_fr": "FR-121",
+    "priority": "High",
+    "preconditions": [
+      "No leads in date range",
+      "HEAD JWT"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/first_contact_sla?from=2020-01-01&to=2020-01-31",
+      "Assert HTTP 200",
+      "Assert data.summary.sla_compliance_pct is null (not 0, not NaN)",
+      "Assert data.summary.contacted_in_sla = 0",
+      "Assert data.summary.sla_breached = 0"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/first_contact_sla",
+      "query_params": { "from": "2020-01-01", "to": "2020-01-31" }
+    },
+    "expected_result": "HTTP 200; sla_compliance_pct=null; contacted_in_sla=0; sla_breached=0",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR121-08",
+    "test_name": "Async threshold — large result triggers 202 with export suggestion",
+    "category": "Boundary",
+    "linked_fr": "FR-121",
+    "priority": "High",
+    "preconditions": [
+      "REPORT_ASYNC_THRESHOLD set to 1",
+      "Seed: 2 leads",
+      "HEAD JWT"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/duplicate_leakage with HEAD JWT",
+      "Assert HTTP 202",
+      "Assert data.export_endpoint = 'POST /api/v1/exports'",
+      "Assert data.suggested_body.report_code = 'duplicate_leakage'",
+      "Assert meta.async_threshold_hit = true"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/duplicate_leakage",
+      "env_override": { "REPORT_ASYNC_THRESHOLD": 1 },
+      "seed": { "leads": 2 }
+    },
+    "expected_result": "HTTP 202; data.export_endpoint present; suggested_body.report_code='duplicate_leakage'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR121-09",
+    "test_name": "SM scope — first_contact_sla shows only own team leads",
+    "category": "Permission",
+    "linked_fr": "FR-121",
+    "priority": "High",
+    "preconditions": [
+      "Seed: 6 leads — 3 in team A (SM's team), 3 in team B",
+      "SM JWT scoped to team A"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/first_contact_sla with SM JWT",
+      "Assert HTTP 200",
+      "Sum all summary.contacted_in_sla + summary.sla_breached + summary.pending = 3 (not 6)",
+      "Assert no team B leads appear in rows"
+    ],
+    "test_data": {
+      "jwt_role": "SM",
+      "jwt_team_id": "team-A-uuid",
+      "endpoint": "GET /api/v1/reports/first_contact_sla",
+      "seed": {
+        "team_A_leads": 3,
+        "team_B_leads": 3
+      }
+    },
+    "expected_result": "HTTP 200; total leads in scope = 3; team B leads absent",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR121-10",
+    "test_name": "Reconciliation block always present with correct arithmetic",
+    "category": "Data Integrity",
+    "linked_fr": "FR-121",
+    "priority": "High",
+    "preconditions": [
+      "HEAD JWT; any seeded data"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/handoff_failure",
+      "Assert data.reconciliation block present",
+      "Assert data.reconciliation.numerator is integer",
+      "Assert data.reconciliation.denominator is integer",
+      "Assert rate = numerator / denominator matches summary.*_pct within floating-point epsilon (0.001)"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/handoff_failure"
+    },
+    "expected_result": "reconciliation.numerator / denominator = summary rate within epsilon",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO integration_logs (status='failed', integration='LOS') -- 7 rows",
+      "action": "GET /api/v1/reports/handoff_failure",
+      "invariant_query": "SELECT COUNT(*) FROM leads WHERE updated_at > now() - interval '5 seconds'",
+      "cleanup": "DELETE FROM integration_logs WHERE created_at > now() - interval '1 minute'"
+    }
+  },
+  {
+    "test_id": "TC-FR121-11",
+    "test_name": "Pagination — second page for dsa_dealer_quality has no overlap with page 1",
+    "category": "Boundary",
+    "linked_fr": "FR-121",
+    "priority": "High",
+    "preconditions": [
+      "Seed: 30 partner rows",
+      "HEAD JWT"
+    ],
+    "test_steps": [
+      "GET /api/v1/reports/dsa_dealer_quality?page=1&limit=10",
+      "Collect data.rows IDs from page 1",
+      "GET /api/v1/reports/dsa_dealer_quality?page=2&limit=10",
+      "Collect data.rows IDs from page 2",
+      "Assert intersection of page 1 and page 2 IDs is empty",
+      "Assert meta.pagination.page = 2 on second request"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/reports/dsa_dealer_quality",
+      "seed": { "partner_count": 30 }
+    },
+    "expected_result": "No partner_id overlap between page 1 and page 2; meta.pagination.page=2 on second response",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR121-UI-01",
+    "test_name": "Playwright — null rate renders as '–' in NBFC report DataTable",
+    "category": "UI/E2E",
+    "linked_fr": "FR-121",
+    "priority": "High",
+    "preconditions": [
+      "HEAD logged in",
+      "Seed includes a source group with zero attempts (contactability_rate_pct = null)"
+    ],
+    "test_steps": [
+      "Navigate to /reports",
+      "Select 'Contactability' report",
+      "Apply current month filter",
+      "Locate row for source with zero attempts",
+      "Assert contactability_rate_pct cell text = '–'"
+    ],
+    "test_data": {
+      "login": { "email": "head@test.com", "password": "Test@1234" },
+      "report_code": "contactability",
+      "zero_source": "WALK_IN"
+    },
+    "expected_result": "Cell displays '–' not '0%' or 'null'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/reports",
+      "locators": {
+        "null_rate_cell": "getByTestId('cell-WALK_IN-contactability_rate_pct')"
+      },
+      "viewport": "375x667",
+      "auth_state": "HEAD authenticated",
+      "network_wait": "waitForResponse('/api/v1/reports/contactability')",
+      "visual_assert": "Cell text === '–'",
+      "a11y": "axe scan on report table; 0 critical violations"
+    }
+  },
+  {
+    "test_id": "TC-FR121-UI-02",
+    "test_name": "Playwright — AsyncThresholdBanner shown when threshold exceeded",
+    "category": "UI/E2E",
+    "linked_fr": "FR-121",
+    "priority": "Medium",
+    "preconditions": [
+      "HEAD logged in",
+      "API mocked to return 202 with meta.async_threshold_hit=true"
+    ],
+    "test_steps": [
+      "Navigate to /reports",
+      "Select 'Duplicate Leakage'",
+      "Apply filters; wait for response",
+      "Assert AsyncThresholdBanner visible (getByTestId('async-threshold-banner'))",
+      "Assert banner contains link/button pointing to export screen"
+    ],
+    "test_data": {
+      "login": { "email": "head@test.com", "password": "Test@1234" },
+      "mock_response": { "status": 202, "meta": { "async_threshold_hit": true }, "data": { "export_endpoint": "POST /api/v1/exports" } }
+    },
+    "expected_result": "AsyncThresholdBanner visible; export link navigates to /exports",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/reports",
+      "locators": {
+        "banner": "getByTestId('async-threshold-banner')",
+        "export_link": "getByRole('link', { name: /export/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "HEAD authenticated",
+      "network_wait": "waitForResponse('/api/v1/reports/duplicate_leakage')",
+      "visual_assert": "Banner visible; DataTable absent",
+      "a11y": "Banner has role='alert'"
+    }
+  },
+  {
+    "test_id": "TC-FR122-01",
+    "test_name": "Happy path — create queued export below threshold",
+    "category": "Happy Path",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "HEAD JWT available",
+      "Estimated row count < EXPORT_APPROVAL_ROW_THRESHOLD",
+      "masking_level = 'partial' (valid for HEAD)"
+    ],
+    "test_steps": [
+      "POST /api/v1/exports with body: { report_code:'funnel_conversion', filters:{date_from:'2026-05-01',date_to:'2026-05-31'}, scope:'A', masking_level:'partial', purpose:'monthly_review' }",
+      "Assert HTTP 202",
+      "Assert response.data.status = 'queued'",
+      "Assert response.data.export_job_id is a UUID",
+      "Assert response.error is null",
+      "Query DB: SELECT status FROM export_jobs WHERE export_job_id=<id>; expect 'queued'",
+      "Query audit_logs: SELECT * WHERE entity_id=<id> AND action='export_generate'; expect 1 row",
+      "Assert audit_logs.detail does not contain PAN or mobile in plaintext"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "POST /api/v1/exports",
+      "body": {
+        "report_code": "funnel_conversion",
+        "filters": { "date_from": "2026-05-01", "date_to": "2026-05-31" },
+        "scope": "A",
+        "masking_level": "partial",
+        "purpose": "monthly_review"
+      }
+    },
+    "expected_result": "HTTP 202; status='queued'; audit_log written with action='export_generate'; no PII in audit detail",
+    "postconditions": [
+      "export_jobs row with status='queued' exists",
+      "audit_logs row with action='export_generate' exists"
+    ],
+    "di_meta": {
+      "setup_sql": "-- No special setup; relies on seed org and HEAD user",
+      "action": "POST /api/v1/exports",
+      "invariant_query": "SELECT export_job_id FROM export_jobs ej LEFT JOIN audit_logs al ON al.entity_id = ej.export_job_id AND al.action = 'export_generate' WHERE al.audit_id IS NULL",
+      "cleanup": "DELETE FROM export_jobs WHERE requested_by = 'head-user-uuid'"
+    }
+  },
+  {
+    "test_id": "TC-FR122-02",
+    "test_name": "Approval gate — unmasked PII triggers awaiting_approval + 409",
+    "category": "Negative/Error",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "DPO JWT available",
+      "masking_level = 'unmasked' requires approval per governance config"
+    ],
+    "test_steps": [
+      "POST /api/v1/exports with body: { report_code:'consent_ops', filters:{date_from:'2026-01-01',date_to:'2026-05-31'}, scope:'A', masking_level:'unmasked', purpose:'regulatory_audit' } with DPO JWT",
+      "Assert HTTP 409",
+      "Assert error.code = 'CONFLICT'",
+      "Assert error.detail.reason = 'EXPORT_APPROVAL_REQUIRED'",
+      "Assert error.detail.export_job_id is a UUID",
+      "Query DB: SELECT status, approver_id FROM export_jobs WHERE export_job_id=<id>",
+      "Assert status = 'awaiting_approval'",
+      "Assert approver_id IS NULL"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "POST /api/v1/exports",
+      "body": {
+        "report_code": "consent_ops",
+        "filters": { "date_from": "2026-01-01", "date_to": "2026-05-31" },
+        "scope": "A",
+        "masking_level": "unmasked",
+        "purpose": "regulatory_audit"
+      }
+    },
+    "expected_result": "HTTP 409; CONFLICT / EXPORT_APPROVAL_REQUIRED; job row in awaiting_approval with approver_id=NULL",
+    "postconditions": [
+      "export_jobs row with status='awaiting_approval' persists",
+      "approver_id is NULL"
+    ],
+    "di_meta": {
+      "setup_sql": "-- Ensure DPO user exists",
+      "action": "POST /api/v1/exports",
+      "invariant_query": "SELECT export_job_id FROM export_jobs WHERE status = 'awaiting_approval' AND approver_id IS NOT NULL",
+      "cleanup": "DELETE FROM export_jobs WHERE masking_level = 'unmasked' AND status = 'awaiting_approval'"
+    }
+  },
+  {
+    "test_id": "TC-FR122-03",
+    "test_name": "Approval gate — row count at threshold triggers awaiting_approval",
+    "category": "Boundary",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "HEAD JWT",
+      "EXPORT_APPROVAL_ROW_THRESHOLD = 1000",
+      "Estimated rows = 1000 (exactly at threshold)"
+    ],
+    "test_steps": [
+      "POST /api/v1/exports with HEAD JWT; mock EstimateRowCount to return 1000",
+      "Assert HTTP 409",
+      "Assert error.detail.reason = 'EXPORT_APPROVAL_REQUIRED'",
+      "Assert export_jobs.status = 'awaiting_approval'"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "POST /api/v1/exports",
+      "mock": { "estimateRowCount": 1000 },
+      "EXPORT_APPROVAL_ROW_THRESHOLD": 1000
+    },
+    "expected_result": "HTTP 409; EXPORT_APPROVAL_REQUIRED; row at threshold = at-or-above triggers approval",
+    "postconditions": ["export_jobs row in awaiting_approval"]
+  },
+  {
+    "test_id": "TC-FR122-04",
+    "test_name": "Boundary — row count one below threshold does NOT trigger approval",
+    "category": "Boundary",
+    "linked_fr": "FR-122",
+    "priority": "High",
+    "preconditions": [
+      "HEAD JWT",
+      "EXPORT_APPROVAL_ROW_THRESHOLD = 1000",
+      "Estimated rows = 999 (below threshold)",
+      "masking_level = 'partial'"
+    ],
+    "test_steps": [
+      "POST /api/v1/exports with HEAD JWT; mock EstimateRowCount to return 999",
+      "Assert HTTP 202",
+      "Assert response.data.status = 'queued'",
+      "Assert no 409 returned"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "POST /api/v1/exports",
+      "mock": { "estimateRowCount": 999 },
+      "EXPORT_APPROVAL_ROW_THRESHOLD": 1000
+    },
+    "expected_result": "HTTP 202; status='queued'; no approval required",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR122-05",
+    "test_name": "Approval workflow — happy path (approve transitions awaiting_approval to queued)",
+    "category": "Workflow",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "Export job in awaiting_approval state, requested by DPO (dpo-uuid)",
+      "Approver SM (sm-uuid) has scope covering requester's scope",
+      "SM JWT available"
+    ],
+    "test_steps": [
+      "POST /api/v1/exports/<job-uuid>/approve with SM JWT",
+      "Assert HTTP 200",
+      "Assert response.data.status = 'queued'",
+      "Query DB: SELECT status, approver_id FROM export_jobs WHERE export_job_id=<uuid>",
+      "Assert status = 'queued'",
+      "Assert approver_id = sm-uuid",
+      "Assert audit_log row for approval action exists"
+    ],
+    "test_data": {
+      "jwt_role": "SM",
+      "jwt_user_id": "sm-uuid",
+      "endpoint": "POST /api/v1/exports/<job-uuid>/approve",
+      "seed_job": { "status": "awaiting_approval", "requested_by": "dpo-uuid", "approver_id": null }
+    },
+    "expected_result": "HTTP 200; job.status='queued'; job.approver_id='sm-uuid'; audit log written",
+    "postconditions": [
+      "Cloud Tasks job enqueued for export generation",
+      "INV: approver_id != requested_by (no self-approval)"
+    ]
+  },
+  {
+    "test_id": "TC-FR122-06",
+    "test_name": "Self-approval blocked — requester cannot approve own job",
+    "category": "Negative/Error",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "Export job in awaiting_approval state requested by DPO (dpo-uuid)",
+      "DPO JWT available"
+    ],
+    "test_steps": [
+      "POST /api/v1/exports/<job-uuid>/approve with DPO JWT (same user as requested_by)",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'",
+      "Query DB: approver_id IS NULL; status = 'awaiting_approval'"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "jwt_user_id": "dpo-uuid",
+      "endpoint": "POST /api/v1/exports/<job-uuid>/approve",
+      "seed_job": { "status": "awaiting_approval", "requested_by": "dpo-uuid", "approver_id": null }
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; approver_id still null; status unchanged",
+    "postconditions": [
+      "INV: SELECT export_job_id FROM export_jobs WHERE approver_id = requested_by -- expects 0 rows"
+    ],
+    "di_meta": {
+      "setup_sql": "INSERT INTO export_jobs (status='awaiting_approval', requested_by='dpo-uuid', approver_id=NULL, ...)",
+      "action": "POST /api/v1/exports/<uuid>/approve with dpo-uuid JWT",
+      "invariant_query": "SELECT export_job_id FROM export_jobs WHERE approver_id IS NOT NULL AND approver_id = requested_by",
+      "cleanup": "DELETE FROM export_jobs WHERE export_job_id = '<uuid>'"
+    }
+  },
+  {
+    "test_id": "TC-FR122-07",
+    "test_name": "ExportJob lifecycle — queued→running→completed with artefact and outbox event",
+    "category": "Workflow",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "Export job in status='queued' with valid filters",
+      "GCS storage accessible (or mocked)",
+      "Async worker running"
+    ],
+    "test_steps": [
+      "Trigger async export worker for queued job (invoke exportGenerationTask.run(<id>))",
+      "Assert export_jobs.status transitions: queued → running → completed",
+      "Assert artefact_ref is non-null after completion",
+      "Assert row_count is non-null after completion",
+      "Assert event_outbox row with event_code='EXPORT_COMPLETED' and aggregate_id=<job-uuid> exists",
+      "Assert audit_logs has entry for export_generate completion"
+    ],
+    "test_data": {
+      "seed_job": { "status": "queued", "masking_level": "partial", "report_code": "funnel_conversion" }
+    },
+    "expected_result": "status='completed'; artefact_ref set; row_count set; EXPORT_COMPLETED in outbox",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO export_jobs (status='queued', ...)",
+      "action": "exportGenerationTask.run(<uuid>)",
+      "invariant_query": "SELECT export_job_id FROM export_jobs WHERE status='completed' AND artefact_ref IS NULL UNION ALL SELECT export_job_id FROM export_jobs WHERE status='completed' AND row_count IS NULL",
+      "cleanup": "DELETE FROM export_jobs WHERE export_job_id='<uuid>'"
+    }
+  },
+  {
+    "test_id": "TC-FR122-08",
+    "test_name": "Download — signed URL returned; artefact_ref NOT exposed; audit log written",
+    "category": "Happy Path",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "HEAD JWT",
+      "Export job in status='completed' with artefact_ref='gs://bucket/path.csv'"
+    ],
+    "test_steps": [
+      "GET /api/v1/exports/<job-uuid> with HEAD JWT",
+      "Assert HTTP 200",
+      "Assert response.data.download_url is a signed URL (starts with https://storage.googleapis.com or similar)",
+      "Assert response.data does NOT contain artefact_ref key",
+      "Assert audit_logs has entry with action='export_download' and entity_id=<job-uuid>"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "GET /api/v1/exports/<job-uuid>",
+      "seed_job": { "status": "completed", "artefact_ref": "gs://lms-exports/test-file.csv", "requested_by": "head-uuid" }
+    },
+    "expected_result": "HTTP 200; download_url is signed URL; artefact_ref absent from response body; audit_log action='export_download'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR122-09",
+    "test_name": "Masking — partial masking in generated file",
+    "category": "Data Integrity",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "Export job with masking_level='partial' in 'queued' status",
+      "Seed data contains leads with pan_masked='ABCDE1234F', mobile='9812345678'"
+    ],
+    "test_steps": [
+      "Run exportGenerationTask.run(<job-uuid>)",
+      "Parse generated CSV artefact",
+      "Assert pan_masked column matches pattern /^[A-Z]{3}xxxx[0-9][A-Z]$/ (e.g. ABCxxxx4F)",
+      "Assert mobile column matches pattern /^[6-9][0-9]xxxxxx[0-9]{2}$/ (e.g. 98xxxxxx78)",
+      "Assert non-PII columns (branch, product_code) are intact",
+      "Assert no raw PAN value ABCDE1234F appears anywhere in file"
+    ],
+    "test_data": {
+      "masking_level": "partial",
+      "seed_lead": { "pan_masked": "ABCDE1234F", "mobile": "9812345678", "branch": "Mumbai", "product_code": "PL" }
+    },
+    "expected_result": "pan_masked matches masked pattern; mobile matches masked pattern; branch='Mumbai' unchanged",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR122-10",
+    "test_name": "Watermark embedded in first row of CSV",
+    "category": "Data Integrity",
+    "linked_fr": "FR-122",
+    "priority": "High",
+    "preconditions": [
+      "Export job with masking_level='partial', report_code='funnel_conversion'",
+      "Requestor: HEAD user with display_name='Head User', user_id='head-uuid'"
+    ],
+    "test_steps": [
+      "Run exportGenerationTask.run(<job-uuid>)",
+      "Read first row of generated CSV",
+      "Assert first row contains: display_name='Head User'",
+      "Assert first row contains: user_id='head-uuid'",
+      "Assert first row contains: ISO timestamp (e.g. 2026-06-17T...Z)",
+      "Assert first row contains: report_code='funnel_conversion'",
+      "Assert first row contains: masking_level='partial'"
+    ],
+    "test_data": {
+      "requestor": { "display_name": "Head User", "user_id": "head-uuid" },
+      "report_code": "funnel_conversion",
+      "masking_level": "partial"
+    },
+    "expected_result": "CSV row 1 is watermark containing display_name, user_id, ISO timestamp, report_code, masking_level",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR122-11",
+    "test_name": "GCS upload failure — job marked failed, no partial artefact_ref, no EXPORT_COMPLETED event",
+    "category": "Negative/Error",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "Export job in 'queued' status",
+      "GCS storage mocked to throw StorageException"
+    ],
+    "test_steps": [
+      "Mock GCS upload to throw StorageException",
+      "Run exportGenerationTask.run(<job-uuid>)",
+      "Query DB: SELECT status, artefact_ref FROM export_jobs WHERE export_job_id=<uuid>",
+      "Assert status = 'failed'",
+      "Assert artefact_ref IS NULL",
+      "Query event_outbox: SELECT * WHERE event_code='EXPORT_COMPLETED' AND aggregate_id=<uuid>; expect 0 rows",
+      "Assert server error was logged with correlation_id and export_job_id"
+    ],
+    "test_data": {
+      "seed_job": { "status": "queued" },
+      "mock": { "gcs_upload": "throw StorageException('GCS unavailable')" }
+    },
+    "expected_result": "status='failed'; artefact_ref=null; no EXPORT_COMPLETED event; error logged",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO export_jobs (status='queued', ...)",
+      "action": "exportGenerationTask.run(<uuid>) with GCS mock throwing",
+      "invariant_query": "SELECT event_id FROM event_outbox eo JOIN export_jobs ej ON ej.export_job_id::text = eo.aggregate_id::text WHERE eo.event_code = 'EXPORT_COMPLETED' AND ej.status = 'failed'",
+      "cleanup": "DELETE FROM export_jobs WHERE export_job_id='<uuid>'"
+    }
+  },
+  {
+    "test_id": "TC-FR122-12",
+    "test_name": "Transaction rollback — audit write failure leaves no orphan export_jobs row",
+    "category": "Data Integrity",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "HEAD JWT",
+      "AuditAppender.emit mocked to throw mid-UnitOfWork"
+    ],
+    "test_steps": [
+      "Mock AuditAppender.emit to throw Error('audit failure')",
+      "POST /api/v1/exports with valid HEAD payload",
+      "Assert HTTP 500",
+      "Assert error.code = 'INTERNAL_ERROR'",
+      "Query DB: SELECT COUNT(*) FROM export_jobs WHERE requested_by='head-uuid' AND created_at > :t_before",
+      "Assert count = 0 (no orphan row persisted)"
+    ],
+    "test_data": {
+      "jwt_role": "HEAD",
+      "endpoint": "POST /api/v1/exports",
+      "body": { "report_code": "funnel_conversion", "filters": {}, "scope": "A", "masking_level": "partial", "purpose": "test" },
+      "mock": { "auditAppender": "throw Error('audit failure')" }
+    },
+    "expected_result": "HTTP 500; INTERNAL_ERROR; no export_jobs row created (full rollback)",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT now() AS t_before",
+      "action": "POST /api/v1/exports with AuditAppender mocked to throw",
+      "invariant_query": "SELECT COUNT(*) FROM export_jobs WHERE requested_by = 'head-uuid' AND created_at > :t_before",
+      "cleanup": "None (rollback should have left nothing)"
+    }
+  },
+  {
+    "test_id": "TC-FR122-13",
+    "test_name": "Masking level below role minimum returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "RM JWT (masking minimum = 'full')",
+      "Request attempts masking_level = 'partial'"
+    ],
+    "test_steps": [
+      "POST /api/v1/exports with RM JWT and masking_level='partial'",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.fields[0].field = 'masking_level'",
+      "Query DB: SELECT COUNT(*) FROM export_jobs WHERE requested_by='rm-uuid' AND created_at > :t_before; expect 0"
+    ],
+    "test_data": {
+      "jwt_role": "RM",
+      "endpoint": "POST /api/v1/exports",
+      "body": { "report_code": "funnel_conversion", "filters": {}, "scope": "O", "masking_level": "partial", "purpose": "test" }
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; fields[0].field='masking_level'; no export_jobs row created",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR122-14",
+    "test_name": "Cross-scope read blocked — RM cannot read BM's export job",
+    "category": "Permission",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "BM export job exists (requested_by=bm-uuid)",
+      "RM JWT (rm-uuid) from same org"
+    ],
+    "test_steps": [
+      "GET /api/v1/exports/<bm-job-uuid> with RM JWT",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "jwt_role": "RM",
+      "jwt_user_id": "rm-uuid",
+      "endpoint": "GET /api/v1/exports/<bm-job-uuid>",
+      "seed_job": { "requested_by": "bm-uuid", "status": "completed" }
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; BM job data not exposed to RM",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR122-15",
+    "test_name": "List own exports — default pagination applied",
+    "category": "Happy Path",
+    "linked_fr": "FR-122",
+    "priority": "High",
+    "preconditions": [
+      "RM has 30 export jobs",
+      "RM JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/exports with RM JWT",
+      "Assert HTTP 200",
+      "Assert data.rows.length <= 25",
+      "Assert meta.pagination.limit = 25",
+      "Assert all rows have requested_by = rm-uuid",
+      "Assert no other user's jobs appear"
+    ],
+    "test_data": {
+      "jwt_role": "RM",
+      "jwt_user_id": "rm-uuid",
+      "endpoint": "GET /api/v1/exports",
+      "seed": { "rm_export_jobs": 30 }
+    },
+    "expected_result": "HTTP 200; rows <= 25; meta.pagination.limit=25; all requested_by=rm-uuid",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR122-UI-01",
+    "test_name": "Playwright — export button creates queued job; toast shown",
+    "category": "UI/E2E",
+    "linked_fr": "FR-122",
+    "priority": "High",
+    "preconditions": [
+      "HEAD user logged in",
+      "On /reports/funnel_conversion with data loaded",
+      "Below-threshold row count configured"
+    ],
+    "test_steps": [
+      "Click [data-testid='export-button']",
+      "Select 'partial' from [data-testid='masking-level-select']",
+      "Fill [data-testid='export-purpose-input'] with 'monthly review'",
+      "Click [data-testid='request-export-submit']",
+      "Assert toast contains 'Export queued'",
+      "Navigate to /exports; assert new row with status badge 'queued' appears"
+    ],
+    "test_data": {
+      "login": { "email": "head@test.com", "password": "Test@1234" },
+      "masking_level": "partial",
+      "purpose": "monthly review"
+    },
+    "expected_result": "'Export queued' toast visible; /exports shows new row with status='queued'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/reports/funnel_conversion",
+      "locators": {
+        "export_button": "getByTestId('export-button')",
+        "masking_select": "getByTestId('masking-level-select')",
+        "purpose_input": "getByTestId('export-purpose-input')",
+        "submit_btn": "getByTestId('request-export-submit')",
+        "toast": "getByTestId('toast')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "HEAD authenticated",
+      "network_wait": "waitForResponse('**/api/v1/exports', { method: 'POST' })",
+      "visual_assert": "Toast text contains 'queued'",
+      "a11y": "Form fields have associated labels; axe 0 critical"
+    }
+  },
+  {
+    "test_id": "TC-FR122-UI-02",
+    "test_name": "Playwright — RM export form shows only 'full' masking option",
+    "category": "UI/E2E",
+    "linked_fr": "FR-122",
+    "priority": "High",
+    "preconditions": ["RM logged in"],
+    "test_steps": [
+      "Navigate to /reports/funnel_conversion",
+      "Click [data-testid='export-button']",
+      "Get all option values from [data-testid='masking-level-select']",
+      "Assert options array equals ['full']",
+      "Assert 'partial' and 'unmasked' are NOT in options"
+    ],
+    "test_data": {
+      "login": { "email": "rm@test.com", "password": "Test@1234" }
+    },
+    "expected_result": "Masking select has exactly one option: 'full'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/reports/funnel_conversion",
+      "locators": {
+        "export_button": "getByTestId('export-button')",
+        "masking_select": "getByTestId('masking-level-select')"
+      },
+      "viewport": "375x667",
+      "auth_state": "RM authenticated",
+      "network_wait": null,
+      "visual_assert": "Masking options: only 'full' visible",
+      "a11y": "Select has aria-label; 0 axe critical"
+    }
+  },
+  {
+    "test_id": "TC-FR122-UI-03",
+    "test_name": "Playwright — approval required toast shown on large export; download disabled for non-completed",
+    "category": "UI/E2E",
+    "linked_fr": "FR-122",
+    "priority": "High",
+    "preconditions": [
+      "HEAD logged in",
+      "API returns 409 EXPORT_APPROVAL_REQUIRED for large export"
+    ],
+    "test_steps": [
+      "Mock POST /api/v1/exports to return 409 with EXPORT_APPROVAL_REQUIRED body",
+      "Navigate to /reports/consent_ops",
+      "Click export-button; fill purpose; submit",
+      "Assert toast contains 'requires approval'",
+      "Navigate to /exports",
+      "Locate a queued job row",
+      "Assert download-btn is disabled on queued row",
+      "Locate a completed job row",
+      "Assert download-btn is enabled on completed row"
+    ],
+    "test_data": {
+      "mock_response": { "status": 409, "error": { "code": "CONFLICT", "detail": { "reason": "EXPORT_APPROVAL_REQUIRED" } } }
+    },
+    "expected_result": "'requires approval' toast; download disabled for queued; download enabled for completed",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/reports/consent_ops then /exports",
+      "locators": {
+        "toast": "getByTestId('toast')",
+        "download_queued": "getByTestId('export-row-queued').getByTestId('download-btn')",
+        "download_completed": "getByTestId('export-row-completed').getByTestId('download-btn')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "HEAD authenticated",
+      "network_wait": "waitForResponse('**/api/v1/exports', { method: 'POST' })",
+      "visual_assert": "Toast contains 'requires approval'; download buttons in correct enabled states",
+      "a11y": "Disabled button has aria-disabled; toast has role='alert'"
+    }
+  },
+  {
+    "test_id": "TC-FR122-UI-04",
+    "test_name": "Playwright — full export governance E2E: request → approve → download",
+    "category": "Integration",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "HEAD user and SM user seeded",
+      "App running; async worker mocked to complete immediately after approval"
+    ],
+    "test_steps": [
+      "Login as HEAD; navigate to /reports/first_contact_sla",
+      "Click export; fill purpose='compliance_audit'; submit; expect toast 'requires approval'",
+      "Open new browser context; login as SM",
+      "Navigate to /exports/approvals",
+      "Click approve-btn; click confirm in confirm-dialog",
+      "Assert toast 'approved'",
+      "Return to HEAD context; navigate to /exports",
+      "Wait for export-row-completed to appear",
+      "Click download-btn; assert download starts; filename contains 'first_contact_sla'"
+    ],
+    "test_data": {
+      "head_login": { "email": "head@test.com", "password": "Test@1234" },
+      "sm_login": { "email": "sm@test.com", "password": "Test@1234" },
+      "report_code": "first_contact_sla",
+      "purpose": "compliance_audit"
+    },
+    "expected_result": "File downloaded; filename contains report_code; watermark row present in CSV; audit log has generate+approve+download entries",
+    "postconditions": ["audit_logs has 3 entries: export_generate, export_approve(implied), export_download"],
+    "ui_meta": {
+      "route": "/reports/first_contact_sla → /exports/approvals → /exports",
+      "locators": {
+        "export_button": "getByTestId('export-button')",
+        "purpose_input": "getByTestId('export-purpose-input')",
+        "submit": "getByTestId('request-export-submit')",
+        "approve_btn": "getByTestId('approve-btn')",
+        "confirm_btn": "getByTestId('confirm-dialog-confirm')",
+        "download_btn": "getByTestId('download-btn')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "Multi-user (HEAD + SM contexts)",
+      "network_wait": "waitForSelector('[data-testid=\"export-row-completed\"]')",
+      "visual_assert": "Download triggered; filename correct",
+      "a11y": "Confirm dialog has role='dialog' with aria-modal"
+    }
+  },
+  {
+    "test_id": "TC-FR122-DI-01",
+    "test_name": "Data Integrity — no export_jobs row without matching audit_log export_generate",
+    "category": "Data Integrity",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": [
+      "Multiple export requests executed including both successful and failed transactions"
+    ],
+    "test_steps": [
+      "After all export tests, run invariant SQL INV-01",
+      "Assert 0 rows returned"
+    ],
+    "test_data": {},
+    "expected_result": "Every export_jobs row has a corresponding audit_logs row with action='export_generate'",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Run after export test suite",
+      "action": "SQL invariant check",
+      "invariant_query": "SELECT ej.export_job_id FROM export_jobs ej LEFT JOIN audit_logs al ON al.entity_id = ej.export_job_id AND al.action = 'export_generate' WHERE al.audit_id IS NULL",
+      "cleanup": "None"
+    }
+  },
+  {
+    "test_id": "TC-FR122-DI-02",
+    "test_name": "Data Integrity — no self-approval ever persisted in DB",
+    "category": "Data Integrity",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": ["Export test suite has run including self-approval attempt"],
+    "test_steps": [
+      "Run SQL: SELECT export_job_id FROM export_jobs WHERE approver_id IS NOT NULL AND approver_id = requested_by",
+      "Assert 0 rows returned"
+    ],
+    "test_data": {},
+    "expected_result": "0 rows — no self-approval persisted in DB",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Run after export test suite",
+      "action": "SQL invariant check",
+      "invariant_query": "SELECT export_job_id FROM export_jobs WHERE approver_id IS NOT NULL AND approver_id = requested_by",
+      "cleanup": "None"
+    }
+  },
+  {
+    "test_id": "TC-FR122-DI-03",
+    "test_name": "Data Integrity — no EXPORT_COMPLETED outbox event for failed jobs",
+    "category": "Data Integrity",
+    "linked_fr": "FR-122",
+    "priority": "Critical",
+    "preconditions": ["GCS failure test (TC-FR122-11) has been run"],
+    "test_steps": [
+      "Run SQL INV-06",
+      "Assert 0 rows returned"
+    ],
+    "test_data": {},
+    "expected_result": "0 rows — EXPORT_COMPLETED never emitted for failed jobs",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Run after GCS failure test",
+      "action": "SQL invariant check",
+      "invariant_query": "SELECT eo.event_id FROM event_outbox eo JOIN export_jobs ej ON ej.export_job_id::text = eo.aggregate_id::text WHERE eo.event_code = 'EXPORT_COMPLETED' AND ej.status = 'failed'",
+      "cleanup": "None"
+    }
+  },
+  {
+    "test_id": "TC-FR123-01",
+    "test_name": "Happy path — DPO paged audit list with integrity badge",
+    "category": "Happy Path",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": [
+      "30 audit_logs rows seeded with valid sequential hash chain",
+      "DPO JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/audit with DPO JWT (no filters)",
+      "Assert HTTP 200",
+      "Assert data.items.length <= 25",
+      "Assert meta.total >= 30",
+      "Assert data.integrity_badge is one of: 'intact' | 'not_checked'",
+      "Assert no item has ip_device key",
+      "Assert each item has: audit_id, actor_id, action, entity_type, created_at"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/audit",
+      "seed": { "audit_log_rows": 30, "chain_valid": true }
+    },
+    "expected_result": "HTTP 200; items.length<=25; meta.total>=30; integrity_badge in {intact,not_checked}; no ip_device in any item",
+    "postconditions": ["No writes to audit_logs from this read operation"]
+  },
+  {
+    "test_id": "TC-FR123-02",
+    "test_name": "ADMIN scope — only system-event actions returned, lead_id nulled",
+    "category": "Happy Path",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: 30 audit rows including stage_transition (lead action) and config_change (system action)",
+      "ADMIN JWT available"
+    ],
+    "test_steps": [
+      "GET /api/v1/audit with ADMIN JWT",
+      "Assert HTTP 200",
+      "Assert every item.action is in ADMIN_ALLOWED_ACTIONS: ['config_change','user_change','role_change','break_glass_access','login','logout','login_failed','mfa_failed','export_generate','export_download']",
+      "Assert every item.lead_id is null",
+      "Assert no item with action='stage_transition' appears"
+    ],
+    "test_data": {
+      "jwt_role": "ADMIN",
+      "endpoint": "GET /api/v1/audit",
+      "seed": {
+        "stage_transition_rows": 10,
+        "config_change_rows": 5,
+        "user_change_rows": 3,
+        "break_glass_access_rows": 2
+      }
+    },
+    "expected_result": "HTTP 200; all items are system events; all items.lead_id=null; stage_transition rows absent",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-03",
+    "test_name": "Filter by lead_id returns only matching entries",
+    "category": "Happy Path",
+    "linked_fr": "FR-123",
+    "priority": "High",
+    "preconditions": [
+      "Seed: 10 audit rows for lead-A, 5 rows for lead-B",
+      "DPO JWT"
+    ],
+    "test_steps": [
+      "GET /api/v1/audit?lead_id=<lead-A-uuid> with DPO JWT",
+      "Assert HTTP 200",
+      "Assert data.items.length = 10",
+      "Assert every item.lead_id = lead-A-uuid",
+      "Assert no lead-B items appear"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/audit",
+      "query_params": { "lead_id": "<lead-A-uuid>" },
+      "seed": { "lead_A_rows": 10, "lead_B_rows": 5 }
+    },
+    "expected_result": "HTTP 200; 10 items; all lead_id = lead-A-uuid",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-04",
+    "test_name": "Date range filter — only rows within window returned",
+    "category": "Boundary",
+    "linked_fr": "FR-123",
+    "priority": "High",
+    "preconditions": [
+      "Seed: 3 rows at 2026-06-16T00:00:00Z, 5 rows at 2026-06-17T00:00:00Z",
+      "DPO JWT"
+    ],
+    "test_steps": [
+      "GET /api/v1/audit?from=2026-06-17T00:00:00Z&to=2026-06-17T23:59:59Z with DPO JWT",
+      "Assert HTTP 200",
+      "Assert data.items.length = 5",
+      "Assert all item.created_at within [2026-06-17T00:00:00Z, 2026-06-17T23:59:59Z]"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/audit",
+      "query_params": { "from": "2026-06-17T00:00:00Z", "to": "2026-06-17T23:59:59Z" },
+      "seed": { "rows_day1": 3, "rows_day2": 5 }
+    },
+    "expected_result": "HTTP 200; 5 items; all created_at on 2026-06-17",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-05",
+    "test_name": "Empty state — no data in date range returns empty items",
+    "category": "Boundary",
+    "linked_fr": "FR-123",
+    "priority": "High",
+    "preconditions": [
+      "No audit_logs rows in the range 2020-01-01 to 2020-01-31",
+      "DPO JWT"
+    ],
+    "test_steps": [
+      "GET /api/v1/audit?from=2020-01-01T00:00:00Z&to=2020-01-31T23:59:59Z with DPO JWT",
+      "Assert HTTP 200",
+      "Assert data.items = []",
+      "Assert meta.total = 0",
+      "Assert data.integrity_badge = 'not_checked'"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/audit",
+      "query_params": { "from": "2020-01-01T00:00:00Z", "to": "2020-01-31T23:59:59Z" }
+    },
+    "expected_result": "HTTP 200; items=[]; total=0; integrity_badge='not_checked'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-06",
+    "test_name": "Unauthenticated request returns 401",
+    "category": "Negative/Error",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": ["No Authorization header"],
+    "test_steps": [
+      "GET /api/v1/audit with no Authorization header",
+      "Assert HTTP 401",
+      "Assert error.code = 'AUTH_REQUIRED'"
+    ],
+    "test_data": {
+      "jwt_role": null,
+      "endpoint": "GET /api/v1/audit"
+    },
+    "expected_result": "HTTP 401; error.code='AUTH_REQUIRED'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-07",
+    "test_name": "RM role blocked from audit explorer",
+    "category": "Permission",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": ["RM JWT available"],
+    "test_steps": [
+      "GET /api/v1/audit with RM JWT",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "jwt_role": "RM",
+      "endpoint": "GET /api/v1/audit"
+    },
+    "expected_result": "HTTP 403; FORBIDDEN",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-08",
+    "test_name": "BM role blocked from audit explorer",
+    "category": "Permission",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": ["BM JWT available"],
+    "test_steps": [
+      "GET /api/v1/audit with BM JWT",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "jwt_role": "BM",
+      "endpoint": "GET /api/v1/audit"
+    },
+    "expected_result": "HTTP 403; FORBIDDEN",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-09",
+    "test_name": "ADMIN passing lead_id filter is FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN JWT",
+      "A lead UUID exists"
+    ],
+    "test_steps": [
+      "GET /api/v1/audit?lead_id=<lead-uuid> with ADMIN JWT",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "jwt_role": "ADMIN",
+      "endpoint": "GET /api/v1/audit",
+      "query_params": { "lead_id": "some-lead-uuid" }
+    },
+    "expected_result": "HTTP 403; FORBIDDEN — ADMIN cannot filter by lead_id",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-10",
+    "test_name": "Invalid action enum value returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-123",
+    "priority": "High",
+    "preconditions": ["DPO JWT"],
+    "test_steps": [
+      "GET /api/v1/audit?action=DOES_NOT_EXIST with DPO JWT",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.fields[0].field = 'action'"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/audit",
+      "query_params": { "action": "DOES_NOT_EXIST" }
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; fields[0].field='action'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-11",
+    "test_name": "Date range inversion returns VALIDATION_ERROR",
+    "category": "Boundary",
+    "linked_fr": "FR-123",
+    "priority": "High",
+    "preconditions": ["DPO JWT"],
+    "test_steps": [
+      "GET /api/v1/audit?from=2026-06-10T00:00:00Z&to=2026-06-01T00:00:00Z with DPO JWT",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.fields contains 'from' or 'to'"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/audit",
+      "query_params": { "from": "2026-06-10T00:00:00Z", "to": "2026-06-01T00:00:00Z" }
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; fields references from/to",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-12",
+    "test_name": "Hash-chain integrity break detected and reported",
+    "category": "Boundary",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": [
+      "3 audit_log rows seeded where rows[1].prev_audit_hash != rows[0].after_hash (chain broken)",
+      "DPO JWT"
+    ],
+    "test_steps": [
+      "Call AuditService.verifyChainIntegrity([row0, row1, row2])",
+      "Assert return value: { broken: true, breakAt: row1.audit_id }",
+      "Assert no exception thrown",
+      "Assert logger.warn called with event='audit_chain_break'",
+      "Assert GET /api/v1/audit response includes integrity_badge='broken' and meta.integrity_break_at=row1.audit_id"
+    ],
+    "test_data": {
+      "seed_rows": [
+        { "audit_id": "row0-uuid", "after_hash": "hash-abc", "prev_audit_hash": null },
+        { "audit_id": "row1-uuid", "after_hash": "hash-def", "prev_audit_hash": "WRONG-HASH" },
+        { "audit_id": "row2-uuid", "after_hash": "hash-ghi", "prev_audit_hash": "hash-def" }
+      ]
+    },
+    "expected_result": "Chain break detected at row1-uuid; broken=true; integrity_badge='broken'; warn logged; no exception",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-13",
+    "test_name": "PII masked in detail JSONB for DPO without break-glass",
+    "category": "Data Integrity",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": [
+      "audit_log row seeded with detail.mobile='9812345678'",
+      "DPO JWT; no active BreakGlassGrant for this DPO"
+    ],
+    "test_steps": [
+      "GET /api/v1/audit with DPO JWT",
+      "Find item where detail.mobile is present",
+      "Assert item.detail.mobile matches masked pattern: /^98x{6}78$/",
+      "Assert raw value '9812345678' does not appear in response body",
+      "Assert item does not have ip_device key"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/audit",
+      "seed_row": { "detail": { "mobile": "9812345678" }, "ip_device": { "ip": "192.168.1.1", "ua": "Mozilla/5.0" } }
+    },
+    "expected_result": "detail.mobile='98xxxxxx78' (masked); raw mobile absent; ip_device absent from response item",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-14",
+    "test_name": "Evidence export via FR-122 pathway — DPO requests audit evidence export",
+    "category": "Integration",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": [
+      "DPO JWT",
+      "Audit rows exist for a specific lead",
+      "FR-122 export governance is operational"
+    ],
+    "test_steps": [
+      "From /audit, click 'Export Evidence' button",
+      "Confirm ExportConfirmDialog opens",
+      "Click Confirm",
+      "Assert POST /api/v1/exports called with report_code='audit_trail' or similar and scope='A' and masking_level per DPO minimum",
+      "Assert response: 202 queued or 409 awaiting_approval",
+      "Assert export_jobs row created with correct masking_level and purpose",
+      "Assert audit_log row with action='export_generate' exists"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "export_report_code": "audit_trail",
+      "masking_level": "partial",
+      "purpose": "evidence_export"
+    },
+    "expected_result": "ExportJob created via FR-122 pathway; masking applied; audit log written; governance rules enforced",
+    "postconditions": ["export_jobs row exists; audit_logs export_generate entry exists"]
+  },
+  {
+    "test_id": "TC-FR123-15",
+    "test_name": "Pagination — default limit 25 applied; page 2 returns next batch",
+    "category": "Boundary",
+    "linked_fr": "FR-123",
+    "priority": "High",
+    "preconditions": [
+      "Seed: 30 audit rows",
+      "DPO JWT"
+    ],
+    "test_steps": [
+      "GET /api/v1/audit with DPO JWT (no limit param)",
+      "Assert data.items.length <= 25",
+      "Assert meta.pagination.limit = 25",
+      "Collect audit_id values from page 1",
+      "GET /api/v1/audit?page=2&limit=25 with DPO JWT",
+      "Assert data.items.length = 5 (remaining rows)",
+      "Assert no audit_id overlap with page 1"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "endpoint": "GET /api/v1/audit",
+      "seed": { "audit_log_rows": 30 }
+    },
+    "expected_result": "Page 1: 25 items; page 2: 5 items; no overlap; meta.pagination.limit=25",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR123-UI-01",
+    "test_name": "Playwright — DPO loads Audit Explorer, IntegrityBadge visible",
+    "category": "UI/E2E",
+    "linked_fr": "FR-123",
+    "priority": "High",
+    "preconditions": [
+      "DPO logged in",
+      "At least 1 audit row seeded with valid chain"
+    ],
+    "test_steps": [
+      "Navigate to /audit",
+      "Assert page title or heading contains 'Audit Explorer'",
+      "Assert DataTable renders at least 1 row",
+      "Assert IntegrityBadge visible (getByTestId('integrity-badge'))",
+      "Assert 'Audit Explorer' link appears in AppShell sidebar nav"
+    ],
+    "test_data": {
+      "login": { "email": "dpo@test.com", "password": "Test@1234" }
+    },
+    "expected_result": "Audit Explorer page loads; DataTable has rows; IntegrityBadge visible",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/audit",
+      "locators": {
+        "page_heading": "getByRole('heading', { name: /audit explorer/i })",
+        "data_table": "getByTestId('audit-data-table')",
+        "integrity_badge": "getByTestId('integrity-badge')",
+        "nav_link": "getByRole('link', { name: /audit explorer/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "DPO authenticated",
+      "network_wait": "waitForResponse('/api/v1/audit')",
+      "visual_assert": "IntegrityBadge shows 'intact' or 'not_checked' chip; table rows visible",
+      "a11y": "axe audit on /audit; 0 critical violations; table has correct role and caption"
+    }
+  },
+  {
+    "test_id": "TC-FR123-UI-02",
+    "test_name": "Playwright — ADMIN sees no Lead ID column or filter; RM has no nav link",
+    "category": "UI/E2E",
+    "linked_fr": "FR-123",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN and RM user seeded"
+    ],
+    "test_steps": [
+      "Login as ADMIN; navigate to /audit",
+      "Assert 'Lead ID' column header NOT in DataTable",
+      "Assert 'Lead ID' filter input NOT visible in AuditFilterBar",
+      "Logout; login as RM",
+      "Assert 'Audit Explorer' link NOT present in AppShell sidebar"
+    ],
+    "test_data": {
+      "admin_login": { "email": "admin@test.com", "password": "Test@1234" },
+      "rm_login": { "email": "rm@test.com", "password": "Test@1234" }
+    },
+    "expected_result": "ADMIN: no Lead ID column/filter; RM: Audit Explorer nav absent",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/audit (ADMIN); nav (RM)",
+      "locators": {
+        "lead_id_column": "getByRole('columnheader', { name: /lead id/i })",
+        "lead_id_filter": "getByTestId('filter-lead-id')",
+        "audit_nav": "getByRole('link', { name: /audit explorer/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "ADMIN then RM",
+      "network_wait": "waitForResponse('/api/v1/audit') for ADMIN",
+      "visual_assert": "Lead ID column absent for ADMIN; Audit Explorer nav absent for RM",
+      "a11y": "axe 0 critical"
+    }
+  },
+  {
+    "test_id": "TC-FR123-UI-03",
+    "test_name": "Playwright — EmptyState rendered when date filter returns zero results",
+    "category": "UI/E2E",
+    "linked_fr": "FR-123",
+    "priority": "Medium",
+    "preconditions": [
+      "DPO logged in; no audit rows in 2020 date range"
+    ],
+    "test_steps": [
+      "Navigate to /audit",
+      "Open AuditFilterBar",
+      "Set from=2020-01-01 to=2020-01-31; apply",
+      "Wait for response",
+      "Assert getByTestId('empty-state') is visible",
+      "Assert DataTable rows count = 0 or DataTable absent"
+    ],
+    "test_data": {
+      "login": { "email": "dpo@test.com", "password": "Test@1234" },
+      "filter_from": "2020-01-01",
+      "filter_to": "2020-01-31"
+    },
+    "expected_result": "EmptyState component visible; no empty tbody rendered",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/audit",
+      "locators": {
+        "filter_from": "getByTestId('filter-date-from')",
+        "filter_to": "getByTestId('filter-date-to')",
+        "apply_btn": "getByRole('button', { name: 'Apply' })",
+        "empty_state": "getByTestId('empty-state')"
+      },
+      "viewport": "375x667",
+      "auth_state": "DPO authenticated",
+      "network_wait": "waitForResponse('/api/v1/audit')",
+      "visual_assert": "EmptyState text visible; no table rows",
+      "a11y": "EmptyState has aria-live='polite'"
+    }
+  },
+  {
+    "test_id": "TC-FR123-UI-04",
+    "test_name": "Playwright — Export Evidence button opens ExportConfirmDialog and calls POST /exports",
+    "category": "UI/E2E",
+    "linked_fr": "FR-123",
+    "priority": "High",
+    "preconditions": [
+      "DPO logged in; audit rows visible"
+    ],
+    "test_steps": [
+      "Navigate to /audit",
+      "Click 'Export Evidence' button (getByTestId('export-evidence-btn'))",
+      "Assert ExportConfirmDialog is visible (getByRole('dialog'))",
+      "Click Cancel; assert dialog closed",
+      "Click 'Export Evidence' again",
+      "Click Confirm; intercept POST /api/v1/exports request",
+      "Assert request body contains report_code and masking_level",
+      "Assert dialog closed after confirm"
+    ],
+    "test_data": {
+      "login": { "email": "dpo@test.com", "password": "Test@1234" }
+    },
+    "expected_result": "Dialog opens/closes correctly; POST /exports called with correct body; dialog dismissed on confirm",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/audit",
+      "locators": {
+        "export_evidence_btn": "getByTestId('export-evidence-btn')",
+        "confirm_dialog": "getByRole('dialog')",
+        "cancel_btn": "getByRole('button', { name: /cancel/i })",
+        "confirm_btn": "getByRole('button', { name: /confirm/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "DPO authenticated",
+      "network_wait": "waitForRequest('**/api/v1/exports') on Confirm click",
+      "visual_assert": "Dialog visible; dismissed on cancel and confirm",
+      "a11y": "Dialog has role='dialog'; aria-modal='true'; focus trapped"
+    }
+  },
+  {
+    "test_id": "TC-FR123-DI-01",
+    "test_name": "Data Integrity — audit_logs append-only (no rows updated or deleted by this FR)",
+    "category": "Data Integrity",
+    "linked_fr": "FR-123",
+    "priority": "Critical",
+    "preconditions": [
+      "Baseline audit_log row count recorded before tests",
+      "FR-123 read tests executed"
+    ],
+    "test_steps": [
+      "Record count_before = SELECT COUNT(*) FROM audit_logs",
+      "Execute 5 GET /api/v1/audit requests with various filters",
+      "count_after = SELECT COUNT(*) FROM audit_logs",
+      "Assert count_after >= count_before (only additions allowed, no deletions)",
+      "Run: SELECT COUNT(*) FROM audit_logs WHERE org_id IS NULL; expect 0",
+      "Run: SELECT COUNT(*) FROM audit_logs WHERE actor_id IS NULL; expect 0",
+      "Run: SELECT COUNT(*) FROM audit_logs al LEFT JOIN users u ON u.user_id = al.actor_id WHERE u.user_id IS NULL; expect 0"
+    ],
+    "test_data": {
+      "jwt_role": "DPO",
+      "operations": ["5x GET /api/v1/audit with varying filters"]
+    },
+    "expected_result": "audit_logs count unchanged by reads; no null org_id/actor_id; all actor_ids reference valid users",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT COUNT(*) AS count_before FROM audit_logs",
+      "action": "5x GET /api/v1/audit",
+      "invariant_query": "SELECT COUNT(*) FROM audit_logs WHERE org_id IS NULL UNION ALL SELECT COUNT(*) FROM audit_logs WHERE actor_id IS NULL UNION ALL SELECT COUNT(*) FROM audit_logs al LEFT JOIN users u ON u.user_id = al.actor_id WHERE u.user_id IS NULL",
+      "cleanup": "None"
+    }
+  }
+]

@@ -1,0 +1,1040 @@
+[
+  {
+    "test_id": "TC-FR130-01",
+    "test_name": "ADMIN creates a user and receives 201 with masked email",
+    "category": "Happy Path",
+    "linked_fr": "FR-130",
+    "priority": "Critical",
+    "preconditions": ["ADMIN JWT available", "org has at least one role"],
+    "test_steps": [
+      "1. POST /api/v1/admin/users with Authorization: Bearer <ADMIN_JWT>",
+      "2. Body: {\"username\":\"rm_jaya_01\",\"email\":\"jaya.kumar@nbfc.com\",\"mobile\":\"9876543210\",\"role_id\":\"<RM_ROLE_UUID>\",\"branch_id\":\"<BRANCH_UUID>\",\"full_name\":\"Jaya Kumar\"}"
+    ],
+    "test_data": {"username":"rm_jaya_01","email":"jaya.kumar@nbfc.com","mobile":"9876543210","full_name":"Jaya Kumar"},
+    "expected_result": "HTTP 201; data.user_id is UUID; data.status='active'; data.email matches 'j***@nbfc.com' (masked); data.password_hash absent from response; audit_logs row with action='user_change'",
+    "postconditions": ["users row exists in DB", "INV-01: no active user with null password_hash"]
+  },
+  {
+    "test_id": "TC-FR130-02",
+    "test_name": "List users returns paginated 25 results with PII masked",
+    "category": "Happy Path",
+    "linked_fr": "FR-130",
+    "priority": "High",
+    "preconditions": ["30 users seeded in org", "ADMIN JWT available"],
+    "test_steps": [
+      "1. GET /api/v1/admin/users?page=1&limit=25 with ADMIN JWT"
+    ],
+    "test_data": {"page":1,"limit":25,"seed_count":30},
+    "expected_result": "HTTP 200; data.length=25; meta.pagination.total=30; meta.pagination.page=1; every item's email matches masked pattern 'x***@domain'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR130-03",
+    "test_name": "Non-ADMIN (RM) gets FORBIDDEN on user create",
+    "category": "Permission",
+    "linked_fr": "FR-130",
+    "priority": "Critical",
+    "preconditions": ["RM JWT available"],
+    "test_steps": [
+      "1. POST /api/v1/admin/users with Authorization: Bearer <RM_JWT>",
+      "2. Body: {\"username\":\"new_user\",\"email\":\"x@y.com\",\"mobile\":\"9000000001\",\"role_id\":\"<RM_ROLE_UUID>\"}"
+    ],
+    "test_data": {"caller_role":"RM"},
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no user row created in DB",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR130-04",
+    "test_name": "Deactivate user with open leads without reassign_to returns CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-130",
+    "priority": "Critical",
+    "preconditions": ["User 'user_a' has 3 leads in stages: captured, assigned, qualified", "ADMIN JWT available"],
+    "test_steps": [
+      "1. PATCH /api/v1/admin/users/<USER_A_UUID> with ADMIN JWT",
+      "2. Body: {\"status\":\"inactive\"} (no reassign_to field)"
+    ],
+    "test_data": {"target_user_open_lead_count":3,"reassign_to":null},
+    "expected_result": "HTTP 409; error.code='CONFLICT'; error.detail.open_lead_count=3; error.detail.reason contains 'reassign_to'; user.status unchanged='active'",
+    "postconditions": ["INV-02: no open lead owned by inactive user"]
+  },
+  {
+    "test_id": "TC-FR130-05",
+    "test_name": "Deactivate user with open leads with reassign_to succeeds atomically",
+    "category": "Workflow",
+    "linked_fr": "FR-130",
+    "priority": "Critical",
+    "preconditions": ["User 'user_a' has 3 open leads", "User 'user_b' is active and in same branch", "ADMIN JWT available"],
+    "test_steps": [
+      "1. PATCH /api/v1/admin/users/<USER_A_UUID> with ADMIN JWT",
+      "2. Body: {\"status\":\"inactive\",\"reassign_to\":\"<USER_B_UUID>\"}",
+      "3. Query DB: SELECT owner_id FROM leads WHERE previous_owner_id = <USER_A_UUID>",
+      "4. Query DB: SELECT status FROM users WHERE user_id = <USER_A_UUID>"
+    ],
+    "test_data": {"from_user":"user_a","to_user":"user_b","lead_count":3},
+    "expected_result": "HTTP 200; data.status='inactive'; all 3 leads now have owner_id=<USER_B_UUID>; audit_logs has action='reassign' AND action='user_change' for user_a",
+    "postconditions": ["INV-02: no open lead owned by inactive user","INV-04: deactivation has audit entry"]
+  },
+  {
+    "test_id": "TC-FR130-06",
+    "test_name": "Role change is audited with role_change action",
+    "category": "Workflow",
+    "linked_fr": "FR-130",
+    "priority": "High",
+    "preconditions": ["User 'user_c' has role BM", "RM role UUID known", "ADMIN JWT available"],
+    "test_steps": [
+      "1. PATCH /api/v1/admin/users/<USER_C_UUID> with ADMIN JWT",
+      "2. Body: {\"role_id\":\"<RM_ROLE_UUID>\"}",
+      "3. Query DB: SELECT action FROM audit_logs WHERE entity_id='<USER_C_UUID>' AND action='role_change'"
+    ],
+    "test_data": {"from_role":"BM","to_role":"RM"},
+    "expected_result": "HTTP 200; data.role_id=<RM_ROLE_UUID>; audit_logs row with action='role_change' AND entity_id=<USER_C_UUID> exists",
+    "postconditions": ["INV-07: role change in audit_logs"]
+  },
+  {
+    "test_id": "TC-FR130-07",
+    "test_name": "Invalid status transition inactive to locked returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-130",
+    "priority": "Medium",
+    "preconditions": ["User 'user_d' has status='inactive'", "ADMIN JWT available"],
+    "test_steps": [
+      "1. PATCH /api/v1/admin/users/<USER_D_UUID> with ADMIN JWT",
+      "2. Body: {\"status\":\"locked\"}"
+    ],
+    "test_data": {"current_status":"inactive","attempted_status":"locked"},
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[0].field='status'; user.status unchanged='inactive'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR130-08",
+    "test_name": "Replace role permissions atomically removes old and adds new",
+    "category": "Happy Path",
+    "linked_fr": "FR-130",
+    "priority": "High",
+    "preconditions": ["Role 'RM_ROLE' has 2 permissions: view_lead(O), edit_lead(O)", "ADMIN JWT available"],
+    "test_steps": [
+      "1. PATCH /api/v1/admin/roles/<RM_ROLE_UUID> with ADMIN JWT",
+      "2. Body: {\"permissions\":[{\"capability\":\"view_lead\",\"scope\":\"O\"},{\"capability\":\"edit_lead\",\"scope\":\"O\"},{\"capability\":\"upload_doc\",\"scope\":\"O\"}]}",
+      "3. Query DB: SELECT count(*) FROM role_permissions WHERE role_id='<RM_ROLE_UUID>'"
+    ],
+    "test_data": {"old_permission_count":2,"new_permission_count":3},
+    "expected_result": "HTTP 200; data.permissions.length=3; DB count=3; old 2 permissions gone and 3 new ones present; audit_logs row with action='role_change'",
+    "postconditions": ["INV-05: no duplicate (role_id, capability)"]
+  },
+  {
+    "test_id": "TC-FR130-09",
+    "test_name": "Create team with valid branch returns 201",
+    "category": "Happy Path",
+    "linked_fr": "FR-130",
+    "priority": "High",
+    "preconditions": ["Branch 'BRN_PUNE' exists and is active", "ADMIN JWT available"],
+    "test_steps": [
+      "1. POST /api/v1/admin/teams with ADMIN JWT",
+      "2. Body: {\"name\":\"Pune West RM Team\",\"branch_id\":\"<BRN_PUNE_UUID>\",\"manager_id\":null}"
+    ],
+    "test_data": {"name":"Pune West RM Team","branch_id":"<BRN_PUNE_UUID>"},
+    "expected_result": "HTTP 201; data.team_id is UUID; data.is_active=true; data.branch_id=<BRN_PUNE_UUID>",
+    "postconditions": ["INV-06: team references active branch"]
+  },
+  {
+    "test_id": "TC-FR130-10",
+    "test_name": "Duplicate username in same org returns CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-130",
+    "priority": "High",
+    "preconditions": ["User with username='rm_jaya_01' already exists", "ADMIN JWT available"],
+    "test_steps": [
+      "1. POST /api/v1/admin/users with ADMIN JWT",
+      "2. Body: {\"username\":\"rm_jaya_01\",\"email\":\"different@nbfc.com\",\"mobile\":\"9000000002\",\"role_id\":\"<RM_ROLE_UUID>\"}"
+    ],
+    "test_data": {"duplicate_username":"rm_jaya_01"},
+    "expected_result": "HTTP 409; error.code='CONFLICT'; no new user row created",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR130-DI-01",
+    "test_name": "No open lead is owned by an inactive user after reassign gate",
+    "category": "Data Integrity",
+    "linked_fr": "FR-130",
+    "priority": "Critical",
+    "preconditions": ["User deactivated with reassign flow completed"],
+    "test_steps": [
+      "1. Run invariant query on leads joined with users"
+    ],
+    "test_data": {},
+    "expected_result": "Invariant query returns 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO users(user_id,status,...) VALUES('<UID>','active',...); INSERT INTO leads(lead_id,owner_id,stage,...) VALUES('<LID>','<UID>','captured',...);",
+      "action": "PATCH /api/v1/admin/users/<UID> {status:inactive} without reassign_to",
+      "invariant_query": "SELECT l.lead_id FROM leads l JOIN users u ON u.user_id=l.owner_id WHERE u.status='inactive' AND l.deleted_at IS NULL AND l.stage NOT IN ('handed_off','rejected');",
+      "cleanup": "DELETE FROM leads WHERE lead_id='<LID>'; DELETE FROM users WHERE user_id='<UID>';"
+    }
+  },
+  {
+    "test_id": "TC-FR130-UI-01",
+    "test_name": "ADMIN can create a new user through the Users admin page",
+    "category": "UI/E2E",
+    "linked_fr": "FR-130",
+    "priority": "High",
+    "preconditions": ["ADMIN user 'admin@nbfc.com' seeded", "App running at localhost:5173"],
+    "test_steps": [
+      "1. Navigate to /admin/users",
+      "2. Click button[name='Create User']",
+      "3. Fill in username='rm_test_01', email='rm.test@nbfc.com', mobile='9123456780', full_name='Test RM'",
+      "4. Select role from dropdown: 'RM'",
+      "5. Click submit button"
+    ],
+    "test_data": {"username":"rm_test_01","email":"rm.test@nbfc.com","mobile":"9123456780","full_name":"Test RM","role":"RM"},
+    "expected_result": "Toast 'User created' visible; new user row appears in DataTable with status chip='active'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/users",
+      "locators": {"create_btn":"getByRole('button',{name:'Create User'})","username_input":"getByTestId('user-form-username')","submit_btn":"getByRole('button',{name:'Submit'})","toast":"getByRole('status')"},
+      "viewport": "1280x800",
+      "auth_state": "ADMIN session cookie",
+      "network_wait": "waitForResponse('/api/v1/admin/users')",
+      "visual_assert": "DataTable row contains 'rm_test_01'",
+      "a11y": "axe scan on /admin/users at WCAG 2.1 AA"
+    }
+  },
+  {
+    "test_id": "TC-FR130-UI-02",
+    "test_name": "Deactivate user with open leads shows reassign selector in ConfirmDialog (mobile viewport)",
+    "category": "UI/E2E",
+    "linked_fr": "FR-130",
+    "priority": "High",
+    "preconditions": ["User 'user_openleads' has 3 open leads", "ADMIN logged in"],
+    "test_steps": [
+      "1. Set viewport to 375x667",
+      "2. Navigate to /admin/users",
+      "3. Locate row for 'user_openleads', click 'Deactivate'",
+      "4. Assert ConfirmDialog shows open_lead_count=3 and Reassign-to Select",
+      "5. Confirm button should be disabled until reassignee selected"
+    ],
+    "test_data": {"target_user":"user_openleads","open_lead_count":3},
+    "expected_result": "ConfirmDialog visible; text '3 open leads' present; Select[Reassign to] rendered; Confirm button aria-disabled=true until selection made",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/users",
+      "locators": {"deactivate_btn":"getByRole('button',{name:'Deactivate'})","dialog":"getByRole('dialog')","reassign_select":"getByTestId('reassign-to-select')","confirm_btn":"getByRole('button',{name:'Confirm'})"},
+      "viewport": "375x667",
+      "auth_state": "ADMIN session",
+      "network_wait": "none (dialog is client-side)",
+      "visual_assert": "ConfirmDialog contains '3 open leads'",
+      "a11y": "dialog role present; focus trapped inside dialog"
+    }
+  },
+  {
+    "test_id": "TC-FR131-01",
+    "test_name": "ADMIN creates a rejection reason and config version row is written atomically",
+    "category": "Happy Path",
+    "linked_fr": "FR-131",
+    "priority": "Critical",
+    "preconditions": ["ADMIN JWT available", "event_outbox is empty"],
+    "test_steps": [
+      "1. POST /api/v1/admin/rejection-reasons with ADMIN JWT",
+      "2. Body: {\"primaryReason\":\"out_of_area\",\"subReason\":\"pin not serviceable\",\"requiresRemarks\":true}",
+      "3. Query DB: SELECT * FROM rejection_reasons WHERE primary_reason='out_of_area'",
+      "4. Query DB: SELECT * FROM configuration_versions WHERE config_type='rejection_reason'",
+      "5. Query DB: SELECT * FROM event_outbox WHERE event_code='CONFIG_CHANGED'"
+    ],
+    "test_data": {"primaryReason":"out_of_area","subReason":"pin not serviceable","requiresRemarks":true},
+    "expected_result": "HTTP 201; data.rejectionReasonId is UUID; data.isActive=true; data.configVersionId is UUID; DB: rejection_reasons row present; configuration_versions row with maker_id=ADMIN_ID; event_outbox row with event_code='CONFIG_CHANGED'",
+    "postconditions": ["INV-01 config_versions maker_id not null","INV-03 outbox references valid aggregate_id"]
+  },
+  {
+    "test_id": "TC-FR131-02",
+    "test_name": "Create SLA policy with valid threshold",
+    "category": "Happy Path",
+    "linked_fr": "FR-131",
+    "priority": "High",
+    "preconditions": ["ADMIN JWT available"],
+    "test_steps": [
+      "1. POST /api/v1/admin/sla-policies with ADMIN JWT",
+      "2. Body: {\"name\":\"First Contact SLA\",\"appliesTo\":\"first_contact\",\"thresholdMinutes\":60,\"escalationChain\":[]}"
+    ],
+    "test_data": {"name":"First Contact SLA","appliesTo":"first_contact","thresholdMinutes":60},
+    "expected_result": "HTTP 201; data.slaPolicyId is UUID; DB: sla_policies.threshold_minutes=60",
+    "postconditions": ["INV-07: threshold_minutes > 0"]
+  },
+  {
+    "test_id": "TC-FR131-03",
+    "test_name": "List rejection reasons returns paginated results with active filter",
+    "category": "Happy Path",
+    "linked_fr": "FR-131",
+    "priority": "High",
+    "preconditions": ["5 active and 3 inactive rejection reasons seeded", "ADMIN JWT available"],
+    "test_steps": [
+      "1. GET /api/v1/admin/rejection-reasons?filter[is_active]=false&page=1&limit=10 with ADMIN JWT"
+    ],
+    "test_data": {"filter_is_active":false,"limit":10},
+    "expected_result": "HTTP 200; data.length=3; every item has isActive=false; meta.pagination.total=3",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR131-04",
+    "test_name": "Deactivating rejection reason in use by active lead returns CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-131",
+    "priority": "Critical",
+    "preconditions": ["rejection_reason_id='<RR_UUID>' is referenced by lead with stage='qualified'", "ADMIN JWT available"],
+    "test_steps": [
+      "1. PATCH /api/v1/admin/rejection-reasons/<RR_UUID> with ADMIN JWT",
+      "2. Body: {\"isActive\":false}"
+    ],
+    "test_data": {"rejection_reason_id":"<RR_UUID>","lead_stage":"qualified"},
+    "expected_result": "HTTP 409; error.code='CONFLICT'; DB: rejection_reasons.is_active unchanged=true",
+    "postconditions": ["INV-04: no rejection_reason hard-deleted while referenced"]
+  },
+  {
+    "test_id": "TC-FR131-05",
+    "test_name": "Create scheme with validTo before validFrom returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-131",
+    "priority": "High",
+    "preconditions": ["ADMIN JWT available"],
+    "test_steps": [
+      "1. POST /api/v1/admin/schemes with ADMIN JWT",
+      "2. Body: {\"name\":\"Bad Scheme\",\"validFrom\":\"2026-12-31\",\"validTo\":\"2026-01-01\"}"
+    ],
+    "test_data": {"validFrom":"2026-12-31","validTo":"2026-01-01"},
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains {field:'validTo'}; no scheme row created in DB",
+    "postconditions": ["INV-08: no scheme with valid_to < valid_from"]
+  },
+  {
+    "test_id": "TC-FR131-06",
+    "test_name": "RM cannot list master configuration resources",
+    "category": "Permission",
+    "linked_fr": "FR-131",
+    "priority": "Critical",
+    "preconditions": ["RM JWT available"],
+    "test_steps": [
+      "1. GET /api/v1/admin/sla-policies with RM JWT"
+    ],
+    "test_data": {"caller_role":"RM"},
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR131-07",
+    "test_name": "Limit exceeding 100 on list returns VALIDATION_ERROR",
+    "category": "Boundary",
+    "linked_fr": "FR-131",
+    "priority": "Medium",
+    "preconditions": ["ADMIN JWT available"],
+    "test_steps": [
+      "1. GET /api/v1/admin/rejection-reasons?limit=200 with ADMIN JWT"
+    ],
+    "test_data": {"limit":200},
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[0].field='limit'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR131-08",
+    "test_name": "Transaction rollback on outbox emit failure leaves no partial state",
+    "category": "Data Integrity",
+    "linked_fr": "FR-131",
+    "priority": "Critical",
+    "preconditions": ["OutboxService.emit is mocked to throw after master row insert", "ADMIN JWT available"],
+    "test_steps": [
+      "1. POST /api/v1/admin/rejection-reasons with ADMIN JWT (OutboxService forced to throw)",
+      "2. Query DB: SELECT * FROM rejection_reasons WHERE primary_reason='rollback_test'",
+      "3. Query DB: SELECT * FROM configuration_versions WHERE maker_id=<ADMIN_ID> ordered by created_at DESC LIMIT 1"
+    ],
+    "test_data": {"primaryReason":"rollback_test","forced_error":"OutboxService.emit throws"},
+    "expected_result": "HTTP 500; error.code='INTERNAL_ERROR'; no rejection_reasons row with primary_reason='rollback_test'; no configuration_versions row; no event_outbox row",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR131-DI-01",
+    "test_name": "No allocation_rule priority_order is duplicated within an org",
+    "category": "Data Integrity",
+    "linked_fr": "FR-131",
+    "priority": "High",
+    "preconditions": ["Allocation rule with priority_order=1 already exists"],
+    "test_steps": [
+      "1. Attempt POST /api/v1/admin/allocation-rules with priority_order=1",
+      "2. Run invariant query"
+    ],
+    "test_data": {"priority_order":1},
+    "expected_result": "HTTP 409 on duplicate; invariant query returns 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO allocation_rules(org_id,priority_order,is_active,...) VALUES('<ORG_ID>',1,true,...);",
+      "action": "POST /api/v1/admin/allocation-rules {priorityOrder:1}",
+      "invariant_query": "SELECT org_id, priority_order, COUNT(*) FROM allocation_rules WHERE is_active=true GROUP BY org_id, priority_order HAVING COUNT(*)>1;",
+      "cleanup": "DELETE FROM allocation_rules WHERE priority_order=1 AND org_id='<ORG_ID>';"
+    }
+  },
+  {
+    "test_id": "TC-FR131-UI-01",
+    "test_name": "Admin creates business calendar and it appears in list",
+    "category": "UI/E2E",
+    "linked_fr": "FR-131",
+    "priority": "Medium",
+    "preconditions": ["ADMIN logged in", "App running"],
+    "test_steps": [
+      "1. Navigate to /admin/config (master configuration)",
+      "2. Select 'Business Calendars' resource type",
+      "3. Click 'Create'",
+      "4. Fill: code='MH_2026', name='Maharashtra 2026', timezone='Asia/Kolkata', workingHours={start:'09:00',end:'18:00',days:[1,2,3,4,5]}",
+      "5. Submit form",
+      "6. Assert new row in DataTable"
+    ],
+    "test_data": {"code":"MH_2026","name":"Maharashtra 2026","timezone":"Asia/Kolkata"},
+    "expected_result": "Toast 'Configuration created'; DataTable row shows code='MH_2026' and isActive=true",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/config",
+      "locators": {"create_btn":"getByRole('button',{name:'Create'})","code_input":"getByTestId('master-form-code')","submit_btn":"getByRole('button',{name:'Submit'})","toast":"getByRole('status')"},
+      "viewport": "1280x800",
+      "auth_state": "ADMIN session",
+      "network_wait": "waitForResponse('/api/v1/admin/business-calendars')",
+      "visual_assert": "DataTable row contains 'MH_2026'",
+      "a11y": "no axe violations at AA level"
+    }
+  },
+  {
+    "test_id": "TC-FR132-01",
+    "test_name": "Checker approves pending config version — status becomes active immediately",
+    "category": "Happy Path",
+    "linked_fr": "FR-132",
+    "priority": "Critical",
+    "preconditions": ["ConfigurationVersion '<CV_UUID>' in status='pending' with maker_id='<MAKER_UUID>'", "Checker JWT available (different user from maker)"],
+    "test_steps": [
+      "1. POST /api/v1/admin/config/<CV_UUID>/approve with Checker JWT",
+      "2. Body: {\"action\":\"approved\",\"comment\":\"Reviewed and verified\"}",
+      "3. Query DB: SELECT status, checker_id FROM configuration_versions WHERE configuration_version_id='<CV_UUID>'",
+      "4. Query DB: SELECT * FROM audit_logs WHERE entity_id='<CV_UUID>' AND action='config_change'",
+      "5. Query DB: SELECT * FROM event_outbox WHERE aggregate_id='<CV_UUID>'"
+    ],
+    "test_data": {"action":"approved","comment":"Reviewed and verified","effective_at":null},
+    "expected_result": "HTTP 200; data.status='active'; data.checker_id=<CHECKER_UUID>; audit_logs row present; event_outbox row with event_code='CONFIG_CHANGED' present",
+    "postconditions": ["INV-03: no two active versions for same config_type+config_ref","INV-01: checker_id != maker_id"]
+  },
+  {
+    "test_id": "TC-FR132-02",
+    "test_name": "Maker cannot self-approve — FORBIDDEN returned",
+    "category": "Permission",
+    "linked_fr": "FR-132",
+    "priority": "Critical",
+    "preconditions": ["ConfigurationVersion '<CV_UUID>' in status='pending' with maker_id='<MAKER_UUID>'", "Same user (maker) attempts to approve"],
+    "test_steps": [
+      "1. POST /api/v1/admin/config/<CV_UUID>/approve with Maker JWT (same user who created)",
+      "2. Body: {\"action\":\"approved\",\"comment\":\"Self-approving\"}"
+    ],
+    "test_data": {"caller_is_maker":true,"action":"approved"},
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; version remains status='pending'; no audit_logs row for this action; no event_outbox row",
+    "postconditions": ["INV-01: no checker_id=maker_id in DB"]
+  },
+  {
+    "test_id": "TC-FR132-03",
+    "test_name": "Checker rejects pending config version",
+    "category": "Happy Path",
+    "linked_fr": "FR-132",
+    "priority": "High",
+    "preconditions": ["ConfigurationVersion '<CV_UUID>' in status='pending'", "Checker JWT available"],
+    "test_steps": [
+      "1. POST /api/v1/admin/config/<CV_UUID>/approve with Checker JWT",
+      "2. Body: {\"action\":\"rejected\",\"comment\":\"Needs revision\"}"
+    ],
+    "test_data": {"action":"rejected","comment":"Needs revision"},
+    "expected_result": "HTTP 200; data.status='rejected'; audit_logs row present; event_outbox row with event_code='CONFIG_CHANGED'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR132-04",
+    "test_name": "Rollback active config version restores prior version",
+    "category": "Workflow",
+    "linked_fr": "FR-132",
+    "priority": "Critical",
+    "preconditions": ["ConfigurationVersion 'CV_CURRENT' is active with rollback_ref='CV_PRIOR_UUID'", "CV_PRIOR was previously active", "ADMIN JWT available"],
+    "test_steps": [
+      "1. POST /api/v1/admin/config/<CV_CURRENT_UUID>/rollback with ADMIN JWT",
+      "2. Body: {\"reason\":\"Bad config caused allocation failures\"}",
+      "3. Query DB: SELECT status FROM configuration_versions WHERE configuration_version_id='<CV_CURRENT_UUID>'",
+      "4. Query DB: SELECT status FROM configuration_versions WHERE configuration_version_id='<CV_PRIOR_UUID>'"
+    ],
+    "test_data": {"reason":"Bad config caused allocation failures"},
+    "expected_result": "HTTP 200; data.status='rolled_back'; data.restoredVersionId='<CV_PRIOR_UUID>'; DB: CV_CURRENT.status='rolled_back'; CV_PRIOR.status='active'; audit_logs row with detail.new_status='rolled_back'",
+    "postconditions": ["INV-04: rollback_ref row is now active","INV-03: no two active versions for same config_type+config_ref"]
+  },
+  {
+    "test_id": "TC-FR132-05",
+    "test_name": "Approve version already in active state returns CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-132",
+    "priority": "High",
+    "preconditions": ["ConfigurationVersion '<CV_UUID>' status='active'", "Checker JWT available"],
+    "test_steps": [
+      "1. POST /api/v1/admin/config/<CV_UUID>/approve with Checker JWT",
+      "2. Body: {\"action\":\"approved\"}"
+    ],
+    "test_data": {"version_status":"active","action":"approved"},
+    "expected_result": "HTTP 409; error.code='CONFLICT'; version status unchanged='active'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR132-06",
+    "test_name": "Approve with future effective_at sets status to approved not active",
+    "category": "Boundary",
+    "linked_fr": "FR-132",
+    "priority": "High",
+    "preconditions": ["ConfigurationVersion '<CV_UUID>' status='pending'", "Checker JWT available (different from maker)"],
+    "test_steps": [
+      "1. POST /api/v1/admin/config/<CV_UUID>/approve with Checker JWT",
+      "2. Body: {\"action\":\"approved\",\"effective_at\":\"2026-07-01T00:00:00+05:30\"}"
+    ],
+    "test_data": {"action":"approved","effective_at":"2026-07-01T00:00:00+05:30"},
+    "expected_result": "HTTP 200; data.status='approved' (NOT 'active' since effective_at is in future); audit and outbox rows present",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR132-07",
+    "test_name": "RM cannot access config governance endpoints",
+    "category": "Permission",
+    "linked_fr": "FR-132",
+    "priority": "Critical",
+    "preconditions": ["RM JWT available", "Any pending config version exists"],
+    "test_steps": [
+      "1. POST /api/v1/admin/config/<CV_UUID>/approve with RM JWT",
+      "2. Body: {\"action\":\"approved\"}"
+    ],
+    "test_data": {"caller_role":"RM"},
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; version status unchanged",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR132-08",
+    "test_name": "Concurrent checkers — second approval returns CONFLICT",
+    "category": "Boundary",
+    "linked_fr": "FR-132",
+    "priority": "High",
+    "preconditions": ["Pending version exists", "Two checker JWTs available"],
+    "test_steps": [
+      "1. Simultaneously POST /api/v1/admin/config/<CV_UUID>/approve from checker_1 and checker_2",
+      "2. Wait for both responses"
+    ],
+    "test_data": {"concurrent_approvals":2},
+    "expected_result": "One request returns HTTP 200 with status='active'; second returns HTTP 409; error.code='CONFLICT'; final DB state has exactly one approval (optimistic guard)",
+    "postconditions": ["INV-03: no two active versions for same config_type+config_ref"]
+  },
+  {
+    "test_id": "TC-FR132-DI-01",
+    "test_name": "After rollback, exactly one active version exists for config_type+config_ref",
+    "category": "Data Integrity",
+    "linked_fr": "FR-132",
+    "priority": "Critical",
+    "preconditions": ["Active version CV_CURRENT with rollback_ref=CV_PRIOR exists"],
+    "test_steps": [
+      "1. POST /api/v1/admin/config/<CV_CURRENT_UUID>/rollback {reason:'test rollback'}",
+      "2. Run invariant query for dual-active versions"
+    ],
+    "test_data": {},
+    "expected_result": "Invariant query returns 0 rows (no dual active versions)",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO configuration_versions(configuration_version_id,config_type,config_ref,status,rollback_ref,...) VALUES('<CV_CURR>','rejection_reason','<RR_ID>','active','<CV_PRIOR>',...); INSERT INTO configuration_versions(...) VALUES('<CV_PRIOR>','rejection_reason','<RR_ID>','rolled_back',NULL,...);",
+      "action": "POST /api/v1/admin/config/<CV_CURR>/rollback {reason:'test rollback'}",
+      "invariant_query": "SELECT config_type, config_ref, COUNT(*) AS cnt FROM configuration_versions WHERE status='active' AND config_ref IS NOT NULL GROUP BY config_type, config_ref HAVING COUNT(*)>1;",
+      "cleanup": "DELETE FROM configuration_versions WHERE configuration_version_id IN ('<CV_CURR>','<CV_PRIOR>');"
+    }
+  },
+  {
+    "test_id": "TC-FR132-UI-01",
+    "test_name": "Full maker-checker E2E: pending config version approved by checker",
+    "category": "UI/E2E",
+    "linked_fr": "FR-132",
+    "priority": "Critical",
+    "preconditions": ["Maker user 'config.maker@nbfc.com' seeded", "Checker user 'config.checker@nbfc.com' seeded with configuration capability", "Pending version exists (created by maker)"],
+    "test_steps": [
+      "1. Log in as config.checker@nbfc.com",
+      "2. Navigate to /admin/config",
+      "3. Assert pending version row with StatusChip='pending' visible",
+      "4. Click 'Review' button on the pending row",
+      "5. In the ApproveDrawer set action=Approve, add comment 'Approved after review'",
+      "6. Click Submit",
+      "7. Assert Toast 'Configuration approved'",
+      "8. Assert row StatusChip changes to 'active'"
+    ],
+    "test_data": {"maker":"config.maker@nbfc.com","checker":"config.checker@nbfc.com"},
+    "expected_result": "Toast visible; StatusChip='active' for the approved version; page reflects update without manual refresh",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/config",
+      "locators": {"review_btn":"getByRole('button',{name:'Review'})","action_select":"getByTestId('approve-action-select')","submit_btn":"getByRole('button',{name:'Submit'})","toast":"getByRole('status')","status_chip":"getByTestId('status-chip-active')"},
+      "viewport": "1280x800",
+      "auth_state": "checker session (config.checker@nbfc.com)",
+      "network_wait": "waitForResponse('/api/v1/admin/config/*/approve')",
+      "visual_assert": "StatusChip text = 'active' on approved row",
+      "a11y": "all buttons keyboard reachable; axe AA scan on page"
+    }
+  },
+  {
+    "test_id": "TC-FR132-UI-02",
+    "test_name": "Rollback workflow shows ConfirmDialog requiring reason before submission",
+    "category": "UI/E2E",
+    "linked_fr": "FR-132",
+    "priority": "High",
+    "preconditions": ["Active config version exists", "ADMIN logged in"],
+    "test_steps": [
+      "1. Navigate to /admin/config",
+      "2. Find active version row, click 'Rollback'",
+      "3. Assert RollbackConfirmDialog visible",
+      "4. Assert Confirm button is disabled (no reason entered)",
+      "5. Type reason: 'Reverting due to allocation errors'",
+      "6. Assert Confirm button becomes enabled",
+      "7. Click Confirm",
+      "8. Assert Toast 'Configuration rolled back'"
+    ],
+    "test_data": {"reason":"Reverting due to allocation errors"},
+    "expected_result": "ConfirmDialog enforces reason entry; after confirm, Toast visible; row StatusChip='rolled_back'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/config",
+      "locators": {"rollback_btn":"getByRole('button',{name:'Rollback'})","dialog":"getByRole('dialog')","reason_input":"getByTestId('rollback-reason-input')","confirm_btn":"getByRole('button',{name:'Confirm'})","toast":"getByRole('status')"},
+      "viewport": "1280x800",
+      "auth_state": "ADMIN session",
+      "network_wait": "waitForResponse('/api/v1/admin/config/*/rollback')",
+      "visual_assert": "StatusChip = 'rolled_back'",
+      "a11y": "focus trapped in dialog; reason textarea focusable via Tab"
+    }
+  },
+  {
+    "test_id": "TC-FR140-01",
+    "test_name": "IntegrationGateway returns cached result on idempotency-key replay without calling adapter",
+    "category": "Boundary",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["Redis key 'idem:gw:REPLAY_KEY_01' set to status=success with prior serialised response", "integration_logs has 1 row for REPLAY_KEY_01"],
+    "test_steps": [
+      "1. Invoke IntegrationGateway.call(LosPort, request, {idempotencyKey:'REPLAY_KEY_01'})",
+      "2. Assert adapter.call spy invocation count",
+      "3. Assert integration_logs row count"
+    ],
+    "test_data": {"idempotency_key":"REPLAY_KEY_01","redis_state":"success"},
+    "expected_result": "Returns cached response with idempotent=true; adapter.call spy invoked 0 times; integration_logs unchanged (no new row)",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR140-02",
+    "test_name": "Successful provider call updates integration_log to success with completed_at set",
+    "category": "Happy Path",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["Pending integration_log row for idempotency_key='NEW_CALL_01'", "Mock adapter returns HTTP 201"],
+    "test_steps": [
+      "1. Invoke IntegrationGateway.call(LosPort, req, {idempotencyKey:'NEW_CALL_01'})",
+      "2. Query DB: SELECT status, http_status, completed_at FROM integration_logs WHERE idempotency_key='NEW_CALL_01'"
+    ],
+    "test_data": {"idempotency_key":"NEW_CALL_01","mock_http_status":201},
+    "expected_result": "integration_logs.status='success'; http_status=201; completed_at is NOT NULL; Redis key 'idem:gw:NEW_CALL_01'='success'",
+    "postconditions": ["INV-05: success rows have completed_at not null"]
+  },
+  {
+    "test_id": "TC-FR140-03",
+    "test_name": "Provider 5xx with retry_count=0 sets log to retrying and enqueues Cloud Tasks",
+    "category": "Workflow",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["Mock adapter throws UpstreamError(503)", "retry_count=0 in integration_log"],
+    "test_steps": [
+      "1. Invoke IntegrationGateway.call(LosPort, req, {idempotencyKey:'RETRY_KEY_01'})",
+      "2. Assert integration_logs.status='retrying' and retry_count=1",
+      "3. Assert Cloud Tasks createTask spy called once with exponential-backoff delay"
+    ],
+    "test_data": {"mock_error":"UpstreamError(503)","initial_retry_count":0},
+    "expected_result": "integration_logs.status='retrying'; retry_count=1; Cloud Tasks createTask invoked once; HTTP 503 propagated to caller with error.code='UPSTREAM_UNAVAILABLE'",
+    "postconditions": ["INV-06: retrying rows have retry_count>=1","INV-04: retry_count between 0 and 3"]
+  },
+  {
+    "test_id": "TC-FR140-04",
+    "test_name": "Circuit breaker opens after threshold failures and fast-fails subsequent calls",
+    "category": "Workflow",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["Redis 'cb:los_handoff:failures' counter at CIRCUIT_BREAKER_THRESHOLD-1=4", "Mock adapter set to throw on next call"],
+    "test_steps": [
+      "1. Invoke IntegrationGateway.call(LosPort, req) — triggers circuit open",
+      "2. Assert Redis 'cb:los_handoff' = 'open'",
+      "3. Invoke IntegrationGateway.call(LosPort, req2) immediately after",
+      "4. Assert adapter.call spy on second call"
+    ],
+    "test_data": {"failures_counter_before":4,"threshold":5},
+    "expected_result": "First call: Redis sets 'cb:los_handoff'='open'; second call: throws UPSTREAM_UNAVAILABLE with error_code='CB_OPEN'; adapter.call spy for second call invoked 0 times",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR140-05",
+    "test_name": "Inbound webhook with invalid HMAC signature is rejected with FORBIDDEN",
+    "category": "Negative/Error",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["LOS_WEBHOOK_HMAC_SECRET='webhook-secret-abc' set in env", "Invalid signature computed with wrong key"],
+    "test_steps": [
+      "1. POST /api/v1/webhooks/los with body '{\"event\":\"los_decision\",\"ref\":\"LOS-001\"}'",
+      "2. Headers: x-los-signature=invalidhexsignature0000"
+    ],
+    "test_data": {"body":"{\"event\":\"los_decision\",\"ref\":\"LOS-001\"}","x_los_signature":"invalidhexsignature0000"},
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; downstream handler never invoked",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR140-06",
+    "test_name": "Inbound webhook with correct HMAC signature is accepted",
+    "category": "Happy Path",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["LOS_WEBHOOK_HMAC_SECRET='webhook-secret-abc' known", "Correct HMAC computed from body+secret"],
+    "test_steps": [
+      "1. Compute HMAC-SHA256 of body '{\"event\":\"los_decision\",\"ref\":\"LOS-002\"}' with key='webhook-secret-abc'",
+      "2. POST /api/v1/webhooks/los with correct x-los-signature header"
+    ],
+    "test_data": {"body":"{\"event\":\"los_decision\",\"ref\":\"LOS-002\"}","hmac_key":"webhook-secret-abc"},
+    "expected_result": "HTTP 200; handler processes request; no FORBIDDEN error",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR140-07",
+    "test_name": "GET /admin/integrations returns paginated logs with status filter",
+    "category": "Happy Path",
+    "linked_fr": "FR-140",
+    "priority": "High",
+    "preconditions": ["2 success and 2 failed integration_logs rows seeded", "ADMIN JWT available"],
+    "test_steps": [
+      "1. GET /api/v1/admin/integrations?filter[status]=failed with ADMIN JWT"
+    ],
+    "test_data": {"seeded_success":2,"seeded_failed":2,"filter_status":"failed"},
+    "expected_result": "HTTP 200; data.length=2; every row has status='failed'; meta.pagination.total=2; error=null",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR140-08",
+    "test_name": "POST /admin/webhooks creates subscription without exposing secret_ref",
+    "category": "Happy Path",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["ADMIN JWT available", "webhook_subscriptions is empty"],
+    "test_steps": [
+      "1. POST /api/v1/admin/webhooks with ADMIN JWT",
+      "2. Body: {\"eventCode\":\"LEAD_HANDED_OFF\",\"targetUrl\":\"https://partner.example.com/webhook\",\"secretRef\":\"projects/my-proj/secrets/wh-secret/versions/1\"}",
+      "3. Assert response keys"
+    ],
+    "test_data": {"eventCode":"LEAD_HANDED_OFF","targetUrl":"https://partner.example.com/webhook","secretRef":"projects/my-proj/secrets/wh-secret/versions/1"},
+    "expected_result": "HTTP 201; data.webhookSubscriptionId is UUID; response body does NOT contain 'secretRef' or 'secret_ref' key; DB has 1 webhook_subscriptions row",
+    "postconditions": ["INV-02: target_url starts with https://"]
+  },
+  {
+    "test_id": "TC-FR140-09",
+    "test_name": "Duplicate webhook creation with same Idempotency-Key returns original result without duplicate DB row",
+    "category": "Boundary",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["First POST /admin/webhooks with Idempotency-Key='IK-WH-001' succeeded", "Result cached in Redis"],
+    "test_steps": [
+      "1. POST /api/v1/admin/webhooks with same ADMIN JWT and Idempotency-Key: IK-WH-001",
+      "2. Same body as original request",
+      "3. Query DB: SELECT count(*) FROM webhook_subscriptions WHERE event_code='LEAD_HANDED_OFF'"
+    ],
+    "test_data": {"idempotency_key":"IK-WH-001","event_code":"LEAD_HANDED_OFF"},
+    "expected_result": "HTTP 200; data = original row; error.detail.reason='IDEMPOTENT_REPLAY'; DB count=1 (no duplicate row)",
+    "postconditions": ["INV-01: no duplicate idempotency_key in integration_logs"]
+  },
+  {
+    "test_id": "TC-FR140-10",
+    "test_name": "RM accessing integration monitor returns FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["RM JWT available"],
+    "test_steps": [
+      "1. GET /api/v1/admin/integrations with RM JWT"
+    ],
+    "test_data": {"caller_role":"RM"},
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR140-DI-01",
+    "test_name": "No webhook_subscription has a non-HTTPS target URL",
+    "category": "Data Integrity",
+    "linked_fr": "FR-140",
+    "priority": "Critical",
+    "preconditions": ["Attempt to insert webhook with http:// URL via API"],
+    "test_steps": [
+      "1. POST /api/v1/admin/webhooks with targetUrl='http://insecure.example.com/hook'",
+      "2. Run invariant query"
+    ],
+    "test_data": {"targetUrl":"http://insecure.example.com/hook"},
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; invariant query returns 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- No setup; test verifies constraint prevents insert",
+      "action": "POST /api/v1/admin/webhooks {targetUrl:'http://insecure.example.com/hook'}",
+      "invariant_query": "SELECT webhook_subscription_id FROM webhook_subscriptions WHERE target_url NOT LIKE 'https://%';",
+      "cleanup": "-- None needed"
+    }
+  },
+  {
+    "test_id": "TC-FR140-UI-01",
+    "test_name": "ADMIN views integration monitor and filters by failed status",
+    "category": "UI/E2E",
+    "linked_fr": "FR-140",
+    "priority": "High",
+    "preconditions": ["ADMIN logged in", "3 success and 2 failed integration_logs rows seeded"],
+    "test_steps": [
+      "1. Navigate to /admin/integrations",
+      "2. Assert DataTable visible with columns: Integration, Status, HTTP Status, Retry Count",
+      "3. Select 'failed' from Status filter dropdown",
+      "4. Assert only 2 rows visible with StatusChip='failed'"
+    ],
+    "test_data": {"filter_status":"failed","expected_rows":2},
+    "expected_result": "DataTable shows 2 rows; all StatusChip variants show 'failed'; no 'success' rows visible",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/integrations",
+      "locators": {"status_filter":"getByTestId('status-filter-select')","data_table":"getByRole('table')","status_chip":"getByTestId('status-chip-failed')"},
+      "viewport": "1280x800",
+      "auth_state": "ADMIN session",
+      "network_wait": "waitForResponse('/api/v1/admin/integrations?filter[status]=failed')",
+      "visual_assert": "all visible StatusChip elements have text 'failed'",
+      "a11y": "filter dropdown keyboard accessible; table has correct aria-label"
+    }
+  },
+  {
+    "test_id": "TC-FR140-UI-02",
+    "test_name": "Create webhook — inline validation error for http:// URL (mobile viewport)",
+    "category": "UI/E2E",
+    "linked_fr": "FR-140",
+    "priority": "High",
+    "preconditions": ["ADMIN logged in"],
+    "test_steps": [
+      "1. Set viewport to 375x667",
+      "2. Navigate to /admin/webhooks",
+      "3. Click 'Add Webhook'",
+      "4. Fill targetUrl='http://notSecure.example.com'",
+      "5. Fill eventCode='LEAD_HANDED_OFF', secretRef='projects/p/secrets/s/versions/1'",
+      "6. Click 'Create'"
+    ],
+    "test_data": {"targetUrl":"http://notSecure.example.com","eventCode":"LEAD_HANDED_OFF"},
+    "expected_result": "Inline error 'Must begin with https://' shown adjacent to targetUrl input; drawer remains open; no API call made (client-side validation)",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/webhooks",
+      "locators": {"add_btn":"getByRole('button',{name:'Add Webhook'})","target_url_input":"getByTestId('webhook-form-target-url')","inline_error":"getByTestId('field-error-targetUrl')","create_btn":"getByRole('button',{name:'Create'})"},
+      "viewport": "375x667",
+      "auth_state": "ADMIN session",
+      "network_wait": "none (client-side validation)",
+      "visual_assert": "error text 'Must begin with https://' visible",
+      "a11y": "error message associated with input via aria-describedby"
+    }
+  },
+  {
+    "test_id": "TC-FR141-01",
+    "test_name": "OutboxService.emit inserts pending row in same transaction as state change",
+    "category": "Happy Path",
+    "linked_fr": "FR-141",
+    "priority": "Critical",
+    "preconditions": ["Kysely UnitOfWork available", "Valid lead in stage=captured"],
+    "test_steps": [
+      "1. Call OutboxService.emit(EventCode.LEAD_STAGE_CHANGED, 'Lead', '<LEAD_UUID>', maskedPayload, tx) within active transaction",
+      "2. Commit transaction",
+      "3. Query DB: SELECT * FROM event_outbox WHERE aggregate_id='<LEAD_UUID>' AND event_code='LEAD_STAGE_CHANGED'"
+    ],
+    "test_data": {"event_code":"LEAD_STAGE_CHANGED","aggregate_type":"Lead","aggregate_id":"<LEAD_UUID>","schema_version":1},
+    "expected_result": "event_outbox row exists with status='pending'; event_code='LEAD_STAGE_CHANGED'; aggregate_type='Lead'; schema_version=1; published_at is NULL",
+    "postconditions": ["INV-01: no null event_code","INV-07: schema_version>=1"]
+  },
+  {
+    "test_id": "TC-FR141-02",
+    "test_name": "Transaction rollback removes outbox row — no partial state",
+    "category": "Data Integrity",
+    "linked_fr": "FR-141",
+    "priority": "Critical",
+    "preconditions": ["Valid lead exists", "DB error mocked after OutboxService.emit but before commit"],
+    "test_steps": [
+      "1. Begin UnitOfWork transaction",
+      "2. Call OutboxService.emit with aggregate_id='<ROLLBACK_TEST_UUID>'",
+      "3. Force DB error (duplicate stage_history_id) before commit",
+      "4. Transaction rolls back",
+      "5. Query DB: SELECT COUNT(*) FROM event_outbox WHERE aggregate_id='<ROLLBACK_TEST_UUID>'"
+    ],
+    "test_data": {"aggregate_id":"<ROLLBACK_TEST_UUID>","forced_error":"duplicate key on stage_history"},
+    "expected_result": "event_outbox count=0 for test aggregate_id; leads.stage unchanged; stage_history has no new row",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- No pre-insert; row should not exist after rollback",
+      "action": "Begin tx; emit outbox row; force error; rollback",
+      "invariant_query": "SELECT COUNT(*) FROM event_outbox WHERE aggregate_id='<ROLLBACK_TEST_UUID>';",
+      "cleanup": "-- Nothing to clean; rollback should leave no rows"
+    }
+  },
+  {
+    "test_id": "TC-FR141-03",
+    "test_name": "Publisher polls pending rows and marks them published",
+    "category": "Happy Path",
+    "linked_fr": "FR-141",
+    "priority": "Critical",
+    "preconditions": ["3 event_outbox rows with status='pending' seeded", "PubSub.topic().publishMessage mock returns ack"],
+    "test_steps": [
+      "1. Invoke OutboxPublisherService.publishPendingBatch()",
+      "2. Assert publishMessage spy call count",
+      "3. Query DB: SELECT COUNT(*) FROM event_outbox WHERE status='pending'"
+    ],
+    "test_data": {"seeded_pending":3},
+    "expected_result": "publishMessage called 3 times; all 3 rows have status='published' and published_at NOT NULL; no pending rows remain",
+    "postconditions": ["INV-04: published rows have published_at not null","INV-05: pending rows have published_at null"]
+  },
+  {
+    "test_id": "TC-FR141-04",
+    "test_name": "PubSub failure after MAX_PUBLISH_RETRIES marks outbox row as failed",
+    "category": "Negative/Error",
+    "linked_fr": "FR-141",
+    "priority": "Critical",
+    "preconditions": ["1 pending outbox row seeded", "publishMessage mock always throws", "MAX_PUBLISH_RETRIES=3"],
+    "test_steps": [
+      "1. Invoke publisher 3 times (exhausting retries)",
+      "2. Query DB: SELECT status FROM event_outbox WHERE event_id='<EV_UUID>'"
+    ],
+    "test_data": {"max_retries":3,"mock_error":"PubSubError: timeout"},
+    "expected_result": "status='failed' after 3 failed attempts; publisher does not retry beyond MAX; dead-letter counter incremented; Cloud Monitoring outbox_dead_letter_total+=1",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR141-05",
+    "test_name": "Payload PII is masked before outbox insert",
+    "category": "Negative/Error",
+    "linked_fr": "FR-141",
+    "priority": "Critical",
+    "preconditions": ["MaskingService available"],
+    "test_steps": [
+      "1. Call OutboxService.emit with payload: {mobile:'9876543210', pan:'ABCDE1234F', name:'Jaya Kumar'}",
+      "2. Query DB: SELECT payload FROM event_outbox WHERE aggregate_id='<MASK_TEST_UUID>'"
+    ],
+    "test_data": {"raw_mobile":"9876543210","raw_pan":"ABCDE1234F","raw_name":"Jaya Kumar"},
+    "expected_result": "DB payload.mobile != '9876543210'; DB payload.pan != 'ABCDE1234F'; raw values absent; masked formats present (e.g., '98xxxxxx10','ABCDE****F')",
+    "postconditions": ["INV-02: no raw mobile in payload","INV-03: no raw PAN in payload"]
+  },
+  {
+    "test_id": "TC-FR141-06",
+    "test_name": "Concurrent publisher guard — markPublished with WHERE status=pending prevents double-mark",
+    "category": "Boundary",
+    "linked_fr": "FR-141",
+    "priority": "High",
+    "preconditions": ["1 pending outbox row exists", "Two publisher instances simulated concurrently"],
+    "test_steps": [
+      "1. Both publisher instances call publishMessage for same event_id simultaneously",
+      "2. Both attempt markPublished(event_id)",
+      "3. Query: rows affected by each UPDATE"
+    ],
+    "test_data": {"concurrent_instances":2},
+    "expected_result": "Exactly one markPublished UPDATE returns 1 row affected; second returns 0 rows (WHERE status='pending' guard fails); published_at reflects first writer only",
+    "postconditions": ["INV-04: exactly one published_at per row"]
+  },
+  {
+    "test_id": "TC-FR141-07",
+    "test_name": "Publisher batch respects PUBLISHER_BATCH_SIZE LIMIT — only 100 of 200 pending rows processed per cycle",
+    "category": "Boundary",
+    "linked_fr": "FR-141",
+    "priority": "High",
+    "preconditions": ["200 event_outbox rows with status='pending' seeded", "PUBLISHER_BATCH_SIZE=100"],
+    "test_steps": [
+      "1. Invoke OutboxPublisherService.publishPendingBatch()",
+      "2. Count publishMessage spy invocations",
+      "3. Query DB: SELECT COUNT(*) FROM event_outbox WHERE status='pending'"
+    ],
+    "test_data": {"seeded_pending":200,"batch_size":100},
+    "expected_result": "publishMessage called exactly 100 times; 100 rows status='published'; 100 rows still status='pending'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR141-08",
+    "test_name": "At-least-once: crash between publish and markPublished causes re-publish on next poll",
+    "category": "Integration",
+    "linked_fr": "FR-141",
+    "priority": "High",
+    "preconditions": ["1 pending outbox row", "publishMessage succeeds but markPublished throws (simulating crash)"],
+    "test_steps": [
+      "1. First poll: publishMessage succeeds; markPublished throws; row still status='pending'",
+      "2. Second poll: publishMessage called again; markPublished succeeds",
+      "3. Query DB: SELECT status FROM event_outbox WHERE event_id='<AT_LEAST_ONCE_UUID>'"
+    ],
+    "test_data": {"crash_after_publish":true},
+    "expected_result": "publishMessage invoked twice (at-least-once); row eventually status='published'; idempotent consumer must handle duplicate delivery",
+    "postconditions": ["INV-04: published_at set after second poll succeeds"]
+  },
+  {
+    "test_id": "TC-FR141-09",
+    "test_name": "CONSENT_WITHDRAWN event emitted with correct metadata end-to-end",
+    "category": "Integration",
+    "linked_fr": "FR-141",
+    "priority": "High",
+    "preconditions": ["Lead '<LEAD_UUID>' has active consent with purpose='marketing'", "ConsentService available"],
+    "test_steps": [
+      "1. Withdraw consent via ConsentService.withdraw('<CONSENT_UUID>', reason='customer request')",
+      "2. Query DB: SELECT * FROM event_outbox WHERE aggregate_id='<CONSENT_UUID>' AND event_code='CONSENT_WITHDRAWN'"
+    ],
+    "test_data": {"consent_purpose":"marketing","reason":"customer request"},
+    "expected_result": "event_outbox row exists with event_code='CONSENT_WITHDRAWN'; aggregate_type='Consent'; schema_version=1; payload is masked; status='pending'",
+    "postconditions": ["INV-01: event_code not null","INV-07: schema_version>=1"]
+  },
+  {
+    "test_id": "TC-FR141-10",
+    "test_name": "Invalid event_code passed to emit throws INTERNAL_ERROR and inserts no row",
+    "category": "Negative/Error",
+    "linked_fr": "FR-141",
+    "priority": "High",
+    "preconditions": [],
+    "test_steps": [
+      "1. Call OutboxService.emit('INVALID_CODE', 'Lead', '<UUID>', {}, tx)",
+      "2. Query DB: SELECT COUNT(*) FROM event_outbox WHERE aggregate_id='<UUID>'"
+    ],
+    "test_data": {"event_code":"INVALID_CODE"},
+    "expected_result": "emit throws InternalException (maps to HTTP 500 INTERNAL_ERROR); no row inserted in event_outbox; error logged with correlation_id",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR141-DI-01",
+    "test_name": "Every committed lead stage transition has a corresponding event_outbox row",
+    "category": "Data Integrity",
+    "linked_fr": "FR-141",
+    "priority": "Critical",
+    "preconditions": ["LeadService.transitionStage executed for captured->assigned"],
+    "test_steps": [
+      "1. Trigger stage transition: captured -> assigned for '<LEAD_UUID>'",
+      "2. Run atomicity invariant query"
+    ],
+    "test_data": {"from_stage":"captured","to_stage":"assigned"},
+    "expected_result": "Invariant query returns 0 rows (every stage_history row has matching outbox row)",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO leads(lead_id,stage,...) VALUES('<LEAD_UUID>','captured',...);",
+      "action": "LeadService.transitionStage('<LEAD_UUID>','assigned',{...})",
+      "invariant_query": "SELECT l.lead_id FROM leads l INNER JOIN stage_history sh ON sh.lead_id=l.lead_id LEFT JOIN event_outbox eo ON eo.aggregate_id=l.lead_id AND eo.event_code='LEAD_STAGE_CHANGED' WHERE sh.occurred_at >= NOW()-INTERVAL '1 minute' AND eo.event_id IS NULL;",
+      "cleanup": "DELETE FROM event_outbox WHERE aggregate_id='<LEAD_UUID>'; DELETE FROM stage_history WHERE lead_id='<LEAD_UUID>'; DELETE FROM leads WHERE lead_id='<LEAD_UUID>';"
+    }
+  },
+  {
+    "test_id": "TC-FR141-DI-02",
+    "test_name": "No raw mobile or PAN in any event_outbox payload",
+    "category": "Data Integrity",
+    "linked_fr": "FR-141",
+    "priority": "Critical",
+    "preconditions": ["event_outbox table has rows emitted from various FRs"],
+    "test_steps": [
+      "1. Run INV-02 query for unmasked mobile",
+      "2. Run INV-03 query for unmasked PAN"
+    ],
+    "test_data": {},
+    "expected_result": "Both queries return 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Use existing event_outbox rows from prior test runs",
+      "action": "SELECT (invariant queries only — read-only)",
+      "invariant_query": "SELECT COUNT(*) FROM event_outbox WHERE payload::text ~ '\"mobile\"\\s*:\\s*\"[6-9][0-9]{9}\"'; SELECT COUNT(*) FROM event_outbox WHERE payload::text ~ '\"pan[^\"]*\"\\s*:\\s*\"[A-Z]{5}[0-9]{4}[A-Z]\"';",
+      "cleanup": "-- None"
+    }
+  }
+]

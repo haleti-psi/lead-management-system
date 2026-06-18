@@ -1,0 +1,2074 @@
+[
+  {
+    "test_id": "TC-FR050-01",
+    "test_name": "Lead list happy path — RM sees only own-scoped leads",
+    "category": "Happy Path",
+    "linked_fr": "FR-050",
+    "priority": "Critical",
+    "preconditions": [
+      "RM user rmA is authenticated with valid JWT",
+      "rmA owns 3 leads in stage captured/assigned/contacted",
+      "Another RM rmB owns 2 separate leads in same branch",
+      "API server running with test DB seeded via factories"
+    ],
+    "test_steps": [
+      "Authenticate as rmA and obtain JWT",
+      "GET /api/v1/leads with Bearer token for rmA",
+      "Assert response status 200",
+      "Assert data array length is exactly 3",
+      "Assert every item has owner_id matching rmA.user_id",
+      "Assert meta.pagination contains page:1, limit:25, total:3",
+      "Assert envelope shape: { data: [...], meta: { pagination: {...} }, error: null }"
+    ],
+    "test_data": {
+      "rmA": { "role": "RM", "user_id": "usr-rm-a-0001", "scope": "O" },
+      "rmB": { "role": "RM", "user_id": "usr-rm-b-0001", "scope": "O" },
+      "leads_rmA": ["LD-2026-000001", "LD-2026-000002", "LD-2026-000003"],
+      "leads_rmB": ["LD-2026-000004", "LD-2026-000005"]
+    },
+    "expected_result": "HTTP 200; data.length === 3; all items have owner_id === rmA.user_id; meta.pagination.total === 3; error === null",
+    "postconditions": ["No data mutation; DB read-only; no audit row written"]
+  },
+  {
+    "test_id": "TC-FR050-02",
+    "test_name": "Lead list — PII fields masked in list response",
+    "category": "Happy Path",
+    "linked_fr": "FR-050",
+    "priority": "Critical",
+    "preconditions": [
+      "RM authenticated; owns 1 lead with name='Ramesh Kumar', mobile='9812345610', PAN set, GSTIN set"
+    ],
+    "test_steps": [
+      "GET /api/v1/leads as RM owner",
+      "Assert status 200",
+      "Assert data[0].name_masked matches pattern (e.g. Ra***** K****)",
+      "Assert data[0].mobile_masked matches 98xxxxxx10 pattern",
+      "Assert raw 'name' field is absent or undefined in JSON",
+      "Assert raw 'mobile' field is absent or undefined in JSON",
+      "Assert pan_token is not present; only pan_masked exposed",
+      "Assert gstin field is absent or masked"
+    ],
+    "test_data": {
+      "lead": {
+        "lead_code": "LD-2026-000010",
+        "applicant_name": "Ramesh Kumar",
+        "mobile": "9812345610",
+        "pan": "ABCDE1234F",
+        "gstin": "27ABCDE1234F1Z5"
+      }
+    },
+    "expected_result": "name_masked present with asterisks; mobile_masked='98xxxxxx10'; no raw name/mobile/pan_token/gstin in JSON body",
+    "postconditions": ["No DB mutation"]
+  },
+  {
+    "test_id": "TC-FR050-03",
+    "test_name": "Lead list — cross-scope read returns empty, not forbidden",
+    "category": "Permission",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": [
+      "rmA and rmB each own leads in the same branch",
+      "rmA authenticated"
+    ],
+    "test_steps": [
+      "GET /api/v1/leads?filter[owner_id]=<rmB.user_id> as rmA",
+      "Assert status 200 (scope predicate silently excludes rmB's rows)",
+      "Assert data is empty array []",
+      "Assert meta.pagination.total === 0",
+      "Assert rmB's lead_codes are not present in response"
+    ],
+    "test_data": {
+      "rmA": { "user_id": "usr-rm-a-0001" },
+      "rmB": { "user_id": "usr-rm-b-0001" },
+      "rmB_lead": "LD-2026-000004"
+    },
+    "expected_result": "HTTP 200; data: []; total: 0; rmB's lead absent — scope predicate cannot be widened by filter param",
+    "postconditions": ["No data mutation; deny not audited as FORBIDDEN (200 + empty)"]
+  },
+  {
+    "test_id": "TC-FR050-04",
+    "test_name": "Lead list — role without view_lead capability gets 403",
+    "category": "Permission",
+    "linked_fr": "FR-050",
+    "priority": "Critical",
+    "preconditions": ["PARTNER user authenticated with valid JWT; PARTNER has no view_lead 'O' on /leads"],
+    "test_steps": [
+      "GET /api/v1/leads as PARTNER",
+      "Assert status 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Assert data is null",
+      "Verify deny is written to audit_logs"
+    ],
+    "test_data": {
+      "partner_user": { "role": "PARTNER", "user_id": "usr-partner-0001" }
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; data: null; audit deny row present",
+    "postconditions": ["No data returned; deny audited"]
+  },
+  {
+    "test_id": "TC-FR050-05",
+    "test_name": "Lead list — no JWT returns 401",
+    "category": "Negative/Error",
+    "linked_fr": "FR-050",
+    "priority": "Critical",
+    "preconditions": ["No Authorization header provided"],
+    "test_steps": [
+      "GET /api/v1/leads with no Authorization header",
+      "Assert status 401",
+      "Assert error.code === 'AUTH_REQUIRED'"
+    ],
+    "test_data": {},
+    "expected_result": "HTTP 401; error.code='AUTH_REQUIRED'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR050-06",
+    "test_name": "Lead list — unknown filter key returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": ["RM authenticated"],
+    "test_steps": [
+      "GET /api/v1/leads?filter[salary]=5 as RM",
+      "Assert status 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields array contains entry with field referencing filter/salary"
+    ],
+    "test_data": { "invalid_filter": "filter[salary]=5" },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields names the bad filter key",
+    "postconditions": ["No data returned; no DB query with bad key executed"]
+  },
+  {
+    "test_id": "TC-FR050-07",
+    "test_name": "Lead list — pagination clamp: limit>100 clamped to 100",
+    "category": "Boundary",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": ["HEAD user authenticated (scope A); 150 active leads in org"],
+    "test_steps": [
+      "GET /api/v1/leads?limit=500&page=1 as HEAD",
+      "Assert status 200",
+      "Assert data.length === 100 (clamped)",
+      "Assert meta.pagination.limit === 100",
+      "Assert no VALIDATION_ERROR returned (clamp is silent)"
+    ],
+    "test_data": {
+      "head_user": { "role": "HEAD", "scope": "A" },
+      "total_leads_in_org": 150,
+      "requested_limit": 500
+    },
+    "expected_result": "HTTP 200; data.length===100; meta.pagination.limit===100; not an error response",
+    "postconditions": ["No mutation; result capped server-side"]
+  },
+  {
+    "test_id": "TC-FR050-08",
+    "test_name": "Lead list — empty queue returns 200 with empty array",
+    "category": "Boundary",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": ["RM authenticated; zero leads in rejected stage for this RM"],
+    "test_steps": [
+      "GET /api/v1/leads?filter[stage]=rejected as RM",
+      "Assert status 200",
+      "Assert data === []",
+      "Assert meta.pagination.total === 0",
+      "UI: assert EmptyState component renders (no crash)"
+    ],
+    "test_data": { "filter_stage": "rejected" },
+    "expected_result": "HTTP 200; data: []; meta.pagination.total: 0; UI EmptyState shown",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR050-09",
+    "test_name": "Saved view — create happy path",
+    "category": "Happy Path",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": ["BM authenticated (view_lead=B); no saved views exist for BM"],
+    "test_steps": [
+      "POST /api/v1/saved-views with body {name:'My SLA Queue', filter_json:{sla_state:'breached'}, is_shared:false, scope:'O'}",
+      "Assert status 201",
+      "Assert data.saved_view_id is a UUID",
+      "Assert data.owner_id matches BM user_id",
+      "Assert data.name === 'My SLA Queue'",
+      "GET /api/v1/saved-views as BM; assert new view appears"
+    ],
+    "test_data": {
+      "bm_user": { "role": "BM", "user_id": "usr-bm-0001" },
+      "saved_view_payload": {
+        "name": "My SLA Queue",
+        "filter_json": { "sla_state": "breached" },
+        "is_shared": false,
+        "scope": "O"
+      }
+    },
+    "expected_result": "HTTP 201; saved_view_id set; owner_id=BM; appears in GET /saved-views list",
+    "postconditions": ["saved_views row persisted; created_by and updated_by set"]
+  },
+  {
+    "test_id": "TC-FR050-10",
+    "test_name": "Saved view — RM cannot share wider than own scope",
+    "category": "Negative/Error",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": ["RM authenticated (scope O)"],
+    "test_steps": [
+      "POST /api/v1/saved-views with {name:'Wide View', is_shared:true, scope:'A', filter_json:{}}",
+      "Assert status 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains field:'scope'"
+    ],
+    "test_data": {
+      "payload": { "name": "Wide View", "is_shared": true, "scope": "A", "filter_json": {} }
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[].field='scope'; no row inserted in saved_views",
+    "postconditions": ["No saved_view row created"]
+  },
+  {
+    "test_id": "TC-FR050-11",
+    "test_name": "Bulk action — RM denied (no bulk_action capability)",
+    "category": "Permission",
+    "linked_fr": "FR-050",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; 3 in-scope leads exist"],
+    "test_steps": [
+      "POST bulk reassign request as RM with 3 lead_ids",
+      "Assert status 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Assert no LeadService.assignOwner invocations occurred",
+      "Assert no audit_logs row with action='bulk_action' for RM's request"
+    ],
+    "test_data": {
+      "rm_user": { "role": "RM", "user_id": "usr-rm-a-0001" },
+      "lead_ids": ["lead-uuid-001", "lead-uuid-002", "lead-uuid-003"]
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no mutations; no success audit row",
+    "postconditions": ["Lead stages/owners unchanged"]
+  },
+  {
+    "test_id": "TC-FR050-12",
+    "test_name": "Bulk action — BM reassign succeeds and is audited",
+    "category": "Workflow",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": [
+      "BM authenticated (bulk_action=B)",
+      "3 in-scope (branch) leads owned by RM-A exist",
+      "Target RM-B is in the same branch"
+    ],
+    "test_steps": [
+      "POST bulk reassign as BM: {lead_ids:[...3 ids...], to_owner_id: <rmB.user_id>, reason:'Workload balance'}",
+      "Assert status 200",
+      "Assert response lists 3 succeeded entries",
+      "Assert audit_logs has exactly one bulk_action intent row with correlation_id",
+      "Assert leads.owner_id updated to rmB for all 3 leads"
+    ],
+    "test_data": {
+      "bm_user": { "role": "BM", "user_id": "usr-bm-0001" },
+      "lead_ids": ["lead-uuid-001", "lead-uuid-002", "lead-uuid-003"],
+      "to_owner_id": "usr-rm-b-0001",
+      "reason": "Workload balance"
+    },
+    "expected_result": "HTTP 200; 3 leads reassigned; exactly 1 audit_logs row with action='bulk_action'; all 3 leads now have owner_id=rmB",
+    "postconditions": ["leads.owner_id updated; audit row immutable; outbox event published"]
+  },
+  {
+    "test_id": "TC-FR050-UI-01",
+    "test_name": "UI — Lead list page loads and renders DataTable",
+    "category": "UI/E2E",
+    "linked_fr": "FR-050",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated in browser; at least 3 leads exist in scope"],
+    "test_steps": [
+      "Navigate to /leads",
+      "Wait for network request GET /api/v1/leads to complete",
+      "Assert page title or heading visible",
+      "Assert DataTable rows rendered (count >= 3)",
+      "Assert masked mobile column visible (pattern 98xxxxxx10)",
+      "Assert no raw 10-digit mobile visible anywhere in DOM"
+    ],
+    "test_data": { "leads_seeded": 3, "role": "RM" },
+    "expected_result": "DataTable rendered with leads; mobile column masked; no raw PII in DOM",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads",
+      "locators": {
+        "table": "getByRole('table')",
+        "rows": "getByRole('row')",
+        "mobile_cell": "getByTestId('masked-mobile')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads')",
+      "visual_assert": "DataTable visible; masked mobile pattern present",
+      "a11y": "table must have accessible column headers"
+    }
+  },
+  {
+    "test_id": "TC-FR050-UI-02",
+    "test_name": "UI — Empty state when no leads match filter",
+    "category": "UI/E2E",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": ["RM authenticated; zero leads in rejected stage for this RM"],
+    "test_steps": [
+      "Navigate to /leads",
+      "Open filter drawer",
+      "Select stage=rejected",
+      "Apply filter",
+      "Wait for API response",
+      "Assert EmptyState component is visible",
+      "Assert DataTable rows are not rendered",
+      "Assert no error message or crash"
+    ],
+    "test_data": { "filter_stage": "rejected", "expected_results": 0 },
+    "expected_result": "EmptyState component rendered; no DataTable rows; no JS error",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads?filter[stage]=rejected",
+      "locators": {
+        "empty_state": "getByTestId('empty-state')",
+        "filter_drawer": "getByTestId('filter-drawer')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads')",
+      "visual_assert": "EmptyState visible; table body has 0 rows",
+      "a11y": "empty state must have descriptive text readable by screen reader"
+    }
+  },
+  {
+    "test_id": "TC-FR050-UI-03",
+    "test_name": "UI — Saved view chip switches queue and resets pagination",
+    "category": "UI/E2E",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": ["BM authenticated; at least 1 SLA-breached lead in branch"],
+    "test_steps": [
+      "Navigate to /leads",
+      "Observe 'My Leads' chip is active by default",
+      "Click 'SLA Breached' saved view chip",
+      "Wait for GET /api/v1/leads?filter[sla_state]=breached to complete",
+      "Assert table refreshes with only breached leads",
+      "Assert pagination resets to page 1",
+      "Assert active chip is 'SLA Breached'"
+    ],
+    "test_data": {
+      "sla_breached_leads": 2,
+      "role": "BM"
+    },
+    "expected_result": "Table shows only SLA-breached leads; pagination page=1; SLA Breached chip highlighted",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads",
+      "locators": {
+        "chip_sla": "getByTestId('chip-sla-breached')",
+        "chip_my_leads": "getByTestId('chip-my-leads')",
+        "pagination": "getByTestId('pagination')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "BM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads')",
+      "visual_assert": "SLA Breached chip has active CSS class; page indicator shows 1",
+      "a11y": "chip buttons have aria-pressed state"
+    }
+  },
+  {
+    "test_id": "TC-FR050-UI-04",
+    "test_name": "UI — Mobile responsive layout at 375x667",
+    "category": "UI/E2E",
+    "linked_fr": "FR-050",
+    "priority": "Medium",
+    "preconditions": ["RM authenticated; at least 3 leads exist"],
+    "test_steps": [
+      "Set viewport to 375x667",
+      "Navigate to /leads",
+      "Wait for page load",
+      "Assert lead list renders without horizontal scroll overflow",
+      "Assert essential columns (name_masked, stage, lead_code) are visible",
+      "Assert filter drawer accessible via a button"
+    ],
+    "test_data": { "viewport": "375x667" },
+    "expected_result": "Lead list renders responsively; no overflow; key data visible; filter accessible",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads",
+      "locators": {
+        "lead_rows": "getByTestId('lead-row')",
+        "filter_btn": "getByRole('button', { name: /filter/i })"
+      },
+      "viewport": "375x667",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads')",
+      "visual_assert": "No horizontal scrollbar; lead data visible in card or compact row",
+      "a11y": "touch targets >= 44x44px"
+    }
+  },
+  {
+    "test_id": "TC-FR050-UI-05",
+    "test_name": "UI — BulkActionBar hidden for RM, visible for BM",
+    "category": "UI/E2E",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": ["Two browser sessions: one as RM, one as BM; leads exist"],
+    "test_steps": [
+      "As RM: navigate to /leads, select all rows via checkbox; assert BulkActionBar is NOT rendered",
+      "As BM: navigate to /leads, select all rows via checkbox; assert BulkActionBar IS rendered with reassign action"
+    ],
+    "test_data": {
+      "rm_user": { "role": "RM" },
+      "bm_user": { "role": "BM" }
+    },
+    "expected_result": "RM: BulkActionBar absent; BM: BulkActionBar present with action buttons",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads",
+      "locators": {
+        "bulk_bar": "getByTestId('bulk-action-bar')",
+        "select_all": "getByRole('checkbox', { name: /select all/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "role_dependent",
+      "network_wait": "none",
+      "visual_assert": "BulkActionBar data-testid absent in RM DOM; present in BM DOM",
+      "a11y": "action bar announces item count to screen readers"
+    }
+  },
+  {
+    "test_id": "TC-FR050-DI-01",
+    "test_name": "DI — Saved views have no orphaned owner",
+    "category": "Data Integrity",
+    "linked_fr": "FR-050",
+    "priority": "High",
+    "preconditions": ["saved_views table seeded with one valid and one potentially orphaned row"],
+    "test_steps": [
+      "Run invariant query INV-1 against the DB",
+      "Assert query returns 0 rows"
+    ],
+    "test_data": {
+      "setup_sql": "INSERT INTO saved_views (saved_view_id, org_id, owner_id, created_by, updated_by, name, filter_json, is_shared, scope) VALUES (gen_random_uuid(), :org_id, :valid_user_id, :valid_user_id, :valid_user_id, 'Test', '{}', false, 'O')",
+      "action": "SELECT sv.saved_view_id FROM saved_views sv LEFT JOIN users u ON u.user_id = sv.owner_id AND u.org_id = sv.org_id WHERE u.user_id IS NULL",
+      "invariant_query": "SELECT COUNT(*) FROM saved_views sv LEFT JOIN users u ON u.user_id = sv.owner_id AND u.org_id = sv.org_id WHERE u.user_id IS NULL",
+      "cleanup": "DELETE FROM saved_views WHERE name='Test'"
+    },
+    "expected_result": "Invariant query returns 0; no orphaned saved_views rows exist",
+    "postconditions": ["Test data cleaned up"],
+    "di_meta": {
+      "setup_sql": "INSERT valid saved_view row for an existing user",
+      "action": "Run orphan check query",
+      "invariant_query": "SELECT COUNT(*) FROM saved_views sv LEFT JOIN users u ON u.user_id=sv.owner_id AND u.org_id=sv.org_id WHERE u.user_id IS NULL -- must return 0",
+      "cleanup": "DELETE FROM saved_views WHERE name='Test'"
+    }
+  },
+  {
+    "test_id": "TC-FR051-01",
+    "test_name": "Lead 360 view — RM views own lead, all sections present",
+    "category": "Happy Path",
+    "linked_fr": "FR-051",
+    "priority": "Critical",
+    "preconditions": [
+      "RM authenticated; owns lead LD-2026-000020",
+      "Lead has: 1 stageHistory row, 1 eligibilitySnapshot (status=received), 1 consent_record (data_processing, granted), 2 open tasks, 1 internal note"
+    ],
+    "test_steps": [
+      "GET /api/v1/leads/:id as RM (owner of lead)",
+      "Assert status 200",
+      "Assert data.leadId matches the requested ID",
+      "Assert data.stage is present",
+      "Assert data.identity.mobile matches masked pattern (e.g. 98xxxxxx10)",
+      "Assert data.identity.panMasked is masked (e.g. ABCxxxx1F)",
+      "Assert data.stageHistory is an array with 1 item",
+      "Assert data.openTaskCount === 2",
+      "Assert data.consentSummary is a non-empty array",
+      "Assert meta.correlation_id is present",
+      "Assert error is null"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000020",
+      "owner": { "role": "RM", "user_id": "usr-rm-a-0001" },
+      "mobile": "9812345610",
+      "pan": "ABCDE1234F"
+    },
+    "expected_result": "HTTP 200; all sub-sections present; mobile/PAN masked; error: null; envelope valid",
+    "postconditions": ["No DB mutation; view_sensitive audit row written for lead access"]
+  },
+  {
+    "test_id": "TC-FR051-02",
+    "test_name": "Lead 360 view — 404 for non-existent lead UUID",
+    "category": "Negative/Error",
+    "linked_fr": "FR-051",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated"],
+    "test_steps": [
+      "GET /api/v1/leads/00000000-0000-0000-0000-000000000999 (non-existent UUID) as RM",
+      "Assert status 404",
+      "Assert error.code === 'NOT_FOUND'",
+      "Assert error.message === \"We couldn't find that item.\"",
+      "Assert data is null"
+    ],
+    "test_data": { "nonexistent_id": "00000000-0000-0000-0000-000000000999" },
+    "expected_result": "HTTP 404; error.code='NOT_FOUND'; data: null",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR051-03",
+    "test_name": "Lead 360 view — out-of-scope lead hides existence (404 not 403)",
+    "category": "Permission",
+    "linked_fr": "FR-051",
+    "priority": "Critical",
+    "preconditions": ["RM-A and RM-B are different RMs in the same branch; RM-B owns a lead; RM-A authenticated"],
+    "test_steps": [
+      "GET /api/v1/leads/:id (ID of RM-B's lead) as RM-A",
+      "Assert status 404 (not 403 — existence hidden)",
+      "Assert error.code === 'NOT_FOUND'"
+    ],
+    "test_data": {
+      "rmA": { "user_id": "usr-rm-a-0001" },
+      "rmB_lead": "LD-2026-000021"
+    },
+    "expected_result": "HTTP 404; error.code='NOT_FOUND'; existence of RM-B's lead not disclosed to RM-A",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR051-04",
+    "test_name": "Lead 360 view — DPO sees masked fields, no internal notes",
+    "category": "Permission",
+    "linked_fr": "FR-051",
+    "priority": "Critical",
+    "preconditions": [
+      "DPO authenticated",
+      "Lead seeded with name, mobile, DOB, PAN",
+      "1 internal note (is_internal=true) seeded for the lead"
+    ],
+    "test_steps": [
+      "GET /api/v1/leads/:id as DPO",
+      "Assert status 200",
+      "Assert data.identity.dob is absent or null",
+      "Assert data.identity.mobile matches masked pattern",
+      "Assert data.identity.panMasked is masked",
+      "Assert data.notes is empty [] (internal notes hidden from DPO without break-glass)"
+    ],
+    "test_data": {
+      "dpo_user": { "role": "DPO", "scope": "M" },
+      "lead_fields": { "dob": "1985-03-15", "mobile": "9812345610", "pan": "ABCDE1234F" },
+      "note": { "is_internal": true, "body": "Internal RM note for DPO masking test" }
+    },
+    "expected_result": "HTTP 200; dob absent/null; mobile/PAN masked; notes: []",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR051-05",
+    "test_name": "Lead 360 view — DPO access is audited in audit_logs",
+    "category": "Happy Path",
+    "linked_fr": "FR-051",
+    "priority": "High",
+    "preconditions": ["DPO authenticated; lead exists and is accessible under DPO scope M"],
+    "test_steps": [
+      "GET /api/v1/leads/:id as DPO",
+      "Assert status 200",
+      "Query audit_logs WHERE actor_id=dpoUserId AND entity_type='lead' AND entity_id=leadId AND action='view_sensitive'",
+      "Assert audit query returns >= 1 row"
+    ],
+    "test_data": {
+      "dpo_user_id": "usr-dpo-0001",
+      "lead_id": "lead-uuid-0020"
+    },
+    "expected_result": "HTTP 200; audit_logs contains view_sensitive row for DPO access to this lead",
+    "postconditions": ["Audit row is append-only and immutable"]
+  },
+  {
+    "test_id": "TC-FR051-06",
+    "test_name": "Lead 360 view — PARTNER sees only non-internal notes",
+    "category": "Permission",
+    "linked_fr": "FR-051",
+    "priority": "High",
+    "preconditions": [
+      "PARTNER-A authenticated",
+      "Lead submitted by PARTNER-A; 1 internal note (is_internal=true), 1 public note (is_internal=false) seeded"
+    ],
+    "test_steps": [
+      "GET /api/v1/leads/:id as PARTNER-A",
+      "Assert status 200",
+      "Assert data.notes.length === 1",
+      "Assert data.notes[0].body matches the non-internal note",
+      "Assert internal note body is absent from response"
+    ],
+    "test_data": {
+      "partner_a": { "role": "PARTNER", "partner_id": "partner-0001" },
+      "notes": [
+        { "is_internal": true, "body": "Internal RM note" },
+        { "is_internal": false, "body": "Customer-facing note" }
+      ]
+    },
+    "expected_result": "HTTP 200; data.notes has exactly 1 item with body='Customer-facing note'; internal note absent",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR051-07",
+    "test_name": "Lead 360 view — empty sub-sections return arrays/null, not errors",
+    "category": "Boundary",
+    "linked_fr": "FR-051",
+    "priority": "High",
+    "preconditions": ["RM authenticated; owns a lead with no stageHistory, no eligibilitySnapshot, no notes, no duplicateMatches"],
+    "test_steps": [
+      "GET /api/v1/leads/:id as RM",
+      "Assert status 200",
+      "Assert data.stageHistory === []",
+      "Assert data.eligibilitySnapshot === null",
+      "Assert data.notes === []",
+      "Assert data.duplicateMatches === []",
+      "Assert data.documentSummary.total === 0"
+    ],
+    "test_data": { "lead_has_no_sub_entities": true },
+    "expected_result": "HTTP 200; all empty sub-sections return empty arrays or null; no 500 error",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR051-08",
+    "test_name": "Lead 360 view — invalid UUID path param returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-051",
+    "priority": "High",
+    "preconditions": ["RM authenticated"],
+    "test_steps": [
+      "GET /api/v1/leads/not-a-uuid as RM",
+      "Assert status 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains entry with field:'id'"
+    ],
+    "test_data": { "invalid_id": "not-a-uuid" },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[].field='id'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR051-UI-01",
+    "test_name": "UI — Lead 360 page loads with loading skeleton then full data",
+    "category": "UI/E2E",
+    "linked_fr": "FR-051",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; lead LD-2026-000020 exists with data"],
+    "test_steps": [
+      "Navigate to /leads/:id (Lead 360 page)",
+      "Assert LoadingSkeleton is visible during initial fetch",
+      "Wait for GET /api/v1/leads/:id to resolve",
+      "Assert lead_code displayed in header",
+      "Assert stage chip present",
+      "Assert masked mobile visible, no raw mobile in DOM",
+      "Assert tab list (Overview, Documents, KYC, Timeline, Tasks) all rendered"
+    ],
+    "test_data": { "lead_code": "LD-2026-000020" },
+    "expected_result": "Skeleton shows during load; full 360 view renders; mobile masked; tabs present",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/:id",
+      "locators": {
+        "loading": "getByTestId('loading-skeleton')",
+        "stage_chip": "getByTestId('stage-chip')",
+        "mobile_field": "getByTestId('masked-mobile')",
+        "tab_list": "getByRole('tablist')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads/:id')",
+      "visual_assert": "Skeleton replaced by lead data; mobile value contains 'x' characters",
+      "a11y": "tabs must have aria-selected; heading hierarchy H1>H2"
+    }
+  },
+  {
+    "test_id": "TC-FR051-UI-02",
+    "test_name": "UI — Lead 360 tab navigation — each tab renders correct content",
+    "category": "UI/E2E",
+    "linked_fr": "FR-051",
+    "priority": "High",
+    "preconditions": ["RM authenticated; lead with documents and tasks exists"],
+    "test_steps": [
+      "Navigate to /leads/:id",
+      "Click 'Documents' tab",
+      "Assert DocumentSummaryCard is visible",
+      "Assert Overview content is not visible",
+      "Click 'Tasks' tab",
+      "Assert task list rendered",
+      "Click 'Timeline' tab",
+      "Assert stage history list rendered"
+    ],
+    "test_data": { "tabs": ["Overview", "Documents", "KYC", "Timeline", "Tasks"] },
+    "expected_result": "Each tab panel renders correct content; previous tab content hidden; no errors",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/:id",
+      "locators": {
+        "documents_tab": "getByRole('tab', { name: /documents/i })",
+        "tasks_tab": "getByRole('tab', { name: /tasks/i })",
+        "document_card": "getByTestId('document-summary-card')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads/:id')",
+      "visual_assert": "Active tab has aria-selected=true; panel content matches tab",
+      "a11y": "keyboard Tab/Enter navigates tabs; aria-controls set on each tab"
+    }
+  },
+  {
+    "test_id": "TC-FR051-UI-03",
+    "test_name": "UI — Lead 360 mobile viewport 375x667 renders correctly",
+    "category": "UI/E2E",
+    "linked_fr": "FR-051",
+    "priority": "Medium",
+    "preconditions": ["RM authenticated; lead exists"],
+    "test_steps": [
+      "Set viewport to 375x667",
+      "Navigate to /leads/:id",
+      "Assert page renders without horizontal overflow",
+      "Assert stage chip visible",
+      "Assert tab list is accessible (scroll or dropdown on mobile)",
+      "Assert masked mobile visible"
+    ],
+    "test_data": { "viewport": "375x667" },
+    "expected_result": "360 view renders responsively at 375x667; no overflow; key data and tabs accessible",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/:id",
+      "locators": {
+        "stage_chip": "getByTestId('stage-chip')",
+        "tab_control": "getByRole('tablist')"
+      },
+      "viewport": "375x667",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads/:id')",
+      "visual_assert": "No horizontal scrollbar; content stacks vertically",
+      "a11y": "touch targets >=44px"
+    }
+  },
+  {
+    "test_id": "TC-FR051-DI-01",
+    "test_name": "DI — GET /leads/:id does not mutate the leads row",
+    "category": "Data Integrity",
+    "linked_fr": "FR-051",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; lead exists with known updated_at timestamp"],
+    "test_steps": [
+      "Record leads.updated_at for the lead before the request",
+      "GET /api/v1/leads/:id as RM",
+      "Assert status 200",
+      "Query: SELECT updated_at FROM leads WHERE lead_id=:leadId",
+      "Assert updated_at === value recorded before the request (no mutation)"
+    ],
+    "test_data": { "lead_id": "lead-uuid-0020" },
+    "expected_result": "leads.updated_at unchanged after GET; read is truly read-only",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT updated_at FROM leads WHERE lead_id = :leadId",
+      "action": "GET /api/v1/leads/:leadId",
+      "invariant_query": "SELECT COUNT(*) FROM leads WHERE lead_id = :leadId AND updated_at > :timestampBeforeRequest -- must return 0",
+      "cleanup": "none"
+    }
+  },
+  {
+    "test_id": "TC-FR052-01",
+    "test_name": "Pipeline board — RM moves own lead from assigned to contacted",
+    "category": "Happy Path",
+    "linked_fr": "FR-052",
+    "priority": "Critical",
+    "preconditions": [
+      "RM authenticated; owns lead in stage 'assigned' with version=2",
+      "StageGuardService allows assigned→contacted transition"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/:id/stage with {toStage:'contacted', expectedVersion:2}",
+      "Assert status 200",
+      "Assert data.stage === 'contacted'",
+      "Assert data.version === 3",
+      "Query DB: leads.stage='contacted', leads.version=3",
+      "Query DB: stage_history has 1 new row for this transition",
+      "Query DB: event_outbox has LEAD_STAGE_CHANGED event for this lead",
+      "Query DB: audit_logs has 1 stage_transition row"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000030",
+      "from_stage": "assigned",
+      "to_stage": "contacted",
+      "expected_version": 2
+    },
+    "expected_result": "HTTP 200; stage='contacted'; version=3; all 4 writes (leads, stage_history, event_outbox, audit_logs) committed atomically",
+    "postconditions": ["All 4 rows committed in single transaction; notification queued post-commit"]
+  },
+  {
+    "test_id": "TC-FR052-02",
+    "test_name": "Pipeline board — guard failure blocks transition, DB unchanged",
+    "category": "Negative/Error",
+    "linked_fr": "FR-052",
+    "priority": "Critical",
+    "preconditions": [
+      "RM authenticated; lead in stage 'documents_pending'; zero mandatory documents uploaded",
+      "StageGuardService.evaluate() will return failed_guards=['mandatory_docs_or_waiver']"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/:id/stage with {toStage:'kyc_in_progress', expectedVersion:3}",
+      "Assert status 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.detail.reason === 'STAGE_GUARD_FAILED'",
+      "Assert error.detail.failed_guards contains 'mandatory_docs_or_waiver'",
+      "Query DB: leads.stage still 'documents_pending' (no mutation)",
+      "Query DB: no new stage_history row created",
+      "Query DB: no new event_outbox row created"
+    ],
+    "test_data": {
+      "from_stage": "documents_pending",
+      "to_stage": "kyc_in_progress",
+      "guard_name": "mandatory_docs_or_waiver"
+    },
+    "expected_result": "HTTP 400; STAGE_GUARD_FAILED with failing guard listed; DB fully unchanged (no partial writes)",
+    "postconditions": ["No stage_history, no outbox, no audit success row; transition rolled back"]
+  },
+  {
+    "test_id": "TC-FR052-03",
+    "test_name": "Pipeline board — terminal state handed_off returns 409 CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-052",
+    "priority": "Critical",
+    "preconditions": ["Lead in stage 'handed_off' (terminal); BM authenticated"],
+    "test_steps": [
+      "PATCH /api/v1/leads/:id/stage with {toStage:'qualified', expectedVersion:8}",
+      "Assert status 409",
+      "Assert error.code === 'CONFLICT'",
+      "Query DB: leads.stage still 'handed_off'",
+      "Query DB: no new stage_history row for this lead after the request"
+    ],
+    "test_data": {
+      "from_stage": "handed_off",
+      "to_stage": "qualified"
+    },
+    "expected_result": "HTTP 409; CONFLICT; handed_off is terminal — no transitions out; DB unchanged",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR052-04",
+    "test_name": "Pipeline board — optimistic lock conflict (stale expectedVersion)",
+    "category": "Boundary",
+    "linked_fr": "FR-052",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead at version=5 after first PATCH moved it from assigned to contacted",
+      "Second request uses stale expectedVersion=4 (already incremented)"
+    ],
+    "test_steps": [
+      "First PATCH: {toStage:'contacted', expectedVersion:4} — succeeds, version becomes 5",
+      "Second PATCH: {toStage:'qualified', expectedVersion:4} (stale)",
+      "Assert second request returns 409",
+      "Assert second error.code === 'CONFLICT'",
+      "Assert leads.stage still 'contacted' (first transition only)",
+      "Assert no second stage_history row exists"
+    ],
+    "test_data": {
+      "lead_id": "lead-uuid-0030",
+      "stale_version": 4
+    },
+    "expected_result": "HTTP 409; CONFLICT on second request; only first transition committed; no double-write",
+    "postconditions": ["Exactly 1 stage_history row for this transition cycle"]
+  },
+  {
+    "test_id": "TC-FR052-05",
+    "test_name": "Pipeline board — authz: RM cannot move another RM's lead",
+    "category": "Permission",
+    "linked_fr": "FR-052",
+    "priority": "Critical",
+    "preconditions": ["RM-A authenticated; lead owned by RM-B"],
+    "test_steps": [
+      "PATCH /api/v1/leads/:id/stage (RM-B's lead) as RM-A with {toStage:'contacted', expectedVersion:2}",
+      "Assert status 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Query DB: leads.stage unchanged; no stage_history row written"
+    ],
+    "test_data": {
+      "rmA": { "user_id": "usr-rm-a-0001" },
+      "rmB_lead": "lead-uuid-0031"
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; no DB writes; RM-B's lead stage unchanged",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR052-06",
+    "test_name": "Pipeline board — reason required for rejected transition",
+    "category": "Negative/Error",
+    "linked_fr": "FR-052",
+    "priority": "High",
+    "preconditions": ["RM authenticated; lead in contacted stage"],
+    "test_steps": [
+      "PATCH /api/v1/leads/:id/stage with {toStage:'rejected', expectedVersion:3} (no reason field)",
+      "Assert status 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains entry with field:'reason'"
+    ],
+    "test_data": {
+      "to_stage": "rejected",
+      "missing_field": "reason"
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; error.fields[].field='reason'",
+    "postconditions": ["No stage transition; no stage_history row"]
+  },
+  {
+    "test_id": "TC-FR052-07",
+    "test_name": "Pipeline board — skip-ahead transition blocked by guard",
+    "category": "Negative/Error",
+    "linked_fr": "FR-052",
+    "priority": "High",
+    "preconditions": ["Lead in captured stage; RM authenticated as owner"],
+    "test_steps": [
+      "PATCH /api/v1/leads/:id/stage with {toStage:'handed_off', expectedVersion:1}",
+      "Assert status 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.detail.reason === 'STAGE_GUARD_FAILED'",
+      "Assert error.detail.failed_guards is non-empty"
+    ],
+    "test_data": {
+      "from_stage": "captured",
+      "to_stage": "handed_off"
+    },
+    "expected_result": "HTTP 400; STAGE_GUARD_FAILED; captured→handed_off skip-ahead blocked",
+    "postconditions": ["No mutation; leads.stage still 'captured'"]
+  },
+  {
+    "test_id": "TC-FR052-08",
+    "test_name": "Pipeline board — board scope: RM only sees own leads in columns",
+    "category": "Permission",
+    "linked_fr": "FR-052",
+    "priority": "High",
+    "preconditions": ["RM-A owns 3 leads in assigned; RM-B owns 2 leads in assigned; RM-A authenticated"],
+    "test_steps": [
+      "GET /api/v1/leads?filter[stage]=assigned as RM-A",
+      "Assert status 200",
+      "Assert all returned items have owner_id === RM-A.user_id",
+      "Assert data.length === 3",
+      "Assert RM-B's leads are not present"
+    ],
+    "test_data": {
+      "rmA_leads_in_assigned": 3,
+      "rmB_leads_in_assigned": 2
+    },
+    "expected_result": "HTTP 200; only RM-A's 3 leads returned; RM-B's leads absent from board column",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR052-09",
+    "test_name": "Pipeline board — transaction rollback: no partial write on mid-write failure",
+    "category": "Data Integrity",
+    "linked_fr": "FR-052",
+    "priority": "Critical",
+    "preconditions": ["Mock DB to throw after leads UPDATE succeeds but before stage_history INSERT"],
+    "test_steps": [
+      "Trigger stage transition with mocked DB failure on stage_history INSERT",
+      "Assert PATCH returns 500 (or appropriate error)",
+      "Query DB: leads.stage is still the original stage (rolled back)",
+      "Query DB: no new stage_history row exists",
+      "Query DB: no new event_outbox row exists"
+    ],
+    "test_data": { "simulated_failure": "stage_history INSERT after leads UPDATE" },
+    "expected_result": "No partial state; leads.stage reverted; stage_history and event_outbox have 0 new rows; full rollback",
+    "postconditions": ["DB in consistent pre-transition state"],
+    "di_meta": {
+      "setup_sql": "Seed lead in 'assigned' stage with version=2",
+      "action": "PATCH /leads/:id/stage with forced DB failure on stage_history INSERT",
+      "invariant_query": "SELECT COUNT(*) FROM stage_history WHERE lead_id=:leadId AND created_at > :beforeTs -- must return 0",
+      "cleanup": "DELETE seeded test lead"
+    }
+  },
+  {
+    "test_id": "TC-FR052-UI-01",
+    "test_name": "UI — Pipeline board renders columns with lead cards and drag-and-drop",
+    "category": "UI/E2E",
+    "linked_fr": "FR-052",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; leads exist in multiple stages (assigned, contacted, qualified)"],
+    "test_steps": [
+      "Navigate to /pipeline",
+      "Wait for GET /api/v1/leads to resolve for each stage column",
+      "Assert columns for each stage are visible",
+      "Assert lead cards are rendered in correct columns",
+      "Drag a card from 'assigned' column to 'contacted' column",
+      "Wait for PATCH /leads/:id/stage response",
+      "Assert card appears in 'contacted' column",
+      "Assert no Toast error is shown",
+      "Assert stage chip on card reads 'contacted'"
+    ],
+    "test_data": {
+      "lead_in_assigned": "LD-2026-000030",
+      "drag_to": "contacted"
+    },
+    "expected_result": "Card moves to contacted column; no error toast; stage chip updated; PATCH returned 200",
+    "postconditions": ["leads.stage='contacted' in DB; stage_history row created"],
+    "ui_meta": {
+      "route": "/pipeline",
+      "locators": {
+        "column_assigned": "getByTestId('pipeline-column-assigned')",
+        "column_contacted": "getByTestId('pipeline-column-contacted')",
+        "lead_card": "getByTestId('lead-card-LD-2026-000030')",
+        "stage_chip": "getByTestId('stage-chip')"
+      },
+      "viewport": "1440x900",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads/:id/stage')",
+      "visual_assert": "Card present in contacted column; stage chip text equals 'contacted'",
+      "a11y": "drag handles have aria-roledescription='sortable'; columns have aria-label"
+    }
+  },
+  {
+    "test_id": "TC-FR052-UI-02",
+    "test_name": "UI — Card snaps back on guard failure after drag",
+    "category": "UI/E2E",
+    "linked_fr": "FR-052",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; lead in 'documents_pending' with no uploaded documents"],
+    "test_steps": [
+      "Navigate to /pipeline",
+      "Drag the lead card from 'documents_pending' to 'kyc_in_progress'",
+      "Wait for PATCH /leads/:id/stage response (400 STAGE_GUARD_FAILED)",
+      "Assert card snaps back to 'documents_pending' column within 500ms",
+      "Assert Toast notification is visible with guard failure message",
+      "Assert 'documents_pending' column still contains the card"
+    ],
+    "test_data": {
+      "lead_stage": "documents_pending",
+      "drag_to": "kyc_in_progress",
+      "expected_guard_failure": "mandatory_docs_or_waiver"
+    },
+    "expected_result": "Card returns to documents_pending; Toast shows guard failure; UI consistent with DB state",
+    "postconditions": ["No stage_history row; leads.stage still 'documents_pending'"],
+    "ui_meta": {
+      "route": "/pipeline",
+      "locators": {
+        "lead_card": "getByTestId('lead-card')",
+        "toast": "getByTestId('toast')",
+        "column_docs_pending": "getByTestId('pipeline-column-documents_pending')"
+      },
+      "viewport": "1440x900",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads/:id/stage')",
+      "visual_assert": "Card in documents_pending column; Toast visible with error text",
+      "a11y": "Toast announced to screen reader via aria-live region"
+    }
+  },
+  {
+    "test_id": "TC-FR052-UI-03",
+    "test_name": "UI — Empty stage column shows EmptyState component",
+    "category": "UI/E2E",
+    "linked_fr": "FR-052",
+    "priority": "Medium",
+    "preconditions": ["RM authenticated; no leads in 'eligibility_requested' stage for this RM"],
+    "test_steps": [
+      "Navigate to /pipeline",
+      "Assert the 'eligibility_requested' column is rendered",
+      "Assert EmptyState component is visible inside that column",
+      "Assert EmptyState has descriptive icon and text"
+    ],
+    "test_data": { "empty_stage": "eligibility_requested" },
+    "expected_result": "eligibility_requested column visible with EmptyState; no crash; no error state",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/pipeline",
+      "locators": {
+        "column_eligibility": "getByTestId('pipeline-column-eligibility_requested')",
+        "empty_state": "getByTestId('empty-state')"
+      },
+      "viewport": "1440x900",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads')",
+      "visual_assert": "EmptyState inside eligibility_requested column",
+      "a11y": "EmptyState has role='status' or descriptive text"
+    }
+  },
+  {
+    "test_id": "TC-FR052-UI-04",
+    "test_name": "UI — Mobile stage selector (375x812) for stage transition",
+    "category": "UI/E2E",
+    "linked_fr": "FR-052",
+    "priority": "High",
+    "preconditions": ["BM authenticated; lead in 'contacted' stage exists"],
+    "test_steps": [
+      "Set viewport to 375x812",
+      "Navigate to /pipeline",
+      "Tap 'Move Stage' button on a lead card",
+      "Assert bottom sheet appears with available target stages",
+      "Select 'qualified' from the bottom sheet",
+      "Tap Confirm",
+      "Assert bottom sheet closes",
+      "Assert lead card now appears in 'qualified' column or refreshes"
+    ],
+    "test_data": { "viewport": "375x812", "from_stage": "contacted", "to_stage": "qualified" },
+    "expected_result": "Bottom sheet opens; stage selected; card moves to qualified column on confirmation",
+    "postconditions": ["leads.stage='qualified'; stage_history row created"],
+    "ui_meta": {
+      "route": "/pipeline",
+      "locators": {
+        "move_stage_btn": "getByRole('button', { name: /move stage/i })",
+        "bottom_sheet": "getByTestId('stage-bottom-sheet')",
+        "confirm_btn": "getByRole('button', { name: /confirm/i })"
+      },
+      "viewport": "375x812",
+      "auth_state": "BM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads/:id/stage')",
+      "visual_assert": "Bottom sheet closes; card in qualified column",
+      "a11y": "Bottom sheet is a dialog with aria-modal=true"
+    }
+  },
+  {
+    "test_id": "TC-FR052-UI-05",
+    "test_name": "UI — CONFLICT toast shown when stale version detected",
+    "category": "UI/E2E",
+    "linked_fr": "FR-052",
+    "priority": "High",
+    "preconditions": ["Two browser tabs open for same RM user; same lead visible in both"],
+    "test_steps": [
+      "Tab 1: drag lead from assigned to contacted — succeeds",
+      "Tab 2: attempt same lead drag (stale expectedVersion from initial load)",
+      "Assert Tab 2 shows CONFLICT Toast: 'Refresh and retry'",
+      "Assert card in Tab 2 remains in assigned column (snap-back)"
+    ],
+    "test_data": { "concurrent_tabs": 2, "lead_id": "lead-uuid-0030" },
+    "expected_result": "Tab 2: CONFLICT toast visible; card snaps back; no silent data corruption",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/pipeline",
+      "locators": {
+        "toast": "getByRole('alert')"
+      },
+      "viewport": "1440x900",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads/:id/stage')",
+      "visual_assert": "Toast contains 'Refresh and retry'; card in original column",
+      "a11y": "Toast has role='alert' for immediate announcement"
+    }
+  },
+  {
+    "test_id": "TC-FR052-DI-01",
+    "test_name": "DI — stage_history and leads.stage always agree after transition",
+    "category": "Data Integrity",
+    "linked_fr": "FR-052",
+    "priority": "Critical",
+    "preconditions": ["Multiple stage transitions performed; DB accessible"],
+    "test_steps": [
+      "Run INV-02 query: SELECT lead_id FROM leads JOIN LATERAL (SELECT to_stage FROM stage_history WHERE lead_id=l.lead_id ORDER BY occurred_at DESC LIMIT 1) sh ON true WHERE sh.to_stage <> l.stage AND l.deleted_at IS NULL",
+      "Assert query returns 0 rows"
+    ],
+    "test_data": {
+      "setup_sql": "Seed multiple leads with multiple transitions",
+      "action": "Run invariant query after transitions",
+      "invariant_query": "SELECT l.lead_id FROM leads l JOIN LATERAL (SELECT to_stage FROM stage_history WHERE lead_id = l.lead_id ORDER BY occurred_at DESC LIMIT 1) sh ON true WHERE sh.to_stage <> l.stage AND l.deleted_at IS NULL -- must return 0",
+      "cleanup": "none"
+    },
+    "expected_result": "0 rows: stage_history.to_stage always matches leads.stage for most recent transition",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "Perform 3 stage transitions on 2 test leads",
+      "action": "Run stage consistency invariant query",
+      "invariant_query": "SELECT l.lead_id FROM leads l JOIN LATERAL (SELECT to_stage FROM stage_history WHERE lead_id=l.lead_id ORDER BY occurred_at DESC LIMIT 1) sh ON true WHERE sh.to_stage <> l.stage AND l.deleted_at IS NULL",
+      "cleanup": "DELETE test leads"
+    }
+  },
+  {
+    "test_id": "TC-FR053-01",
+    "test_name": "Dashboard — BM receives full widget set with correct counts",
+    "category": "Happy Path",
+    "linked_fr": "FR-053",
+    "priority": "Critical",
+    "preconditions": [
+      "BM authenticated (scope B)",
+      "Branch has: 5 active leads, 2 SLA-breached leads (first_contact_pending + past due), 1 hot lead, 3 open tasks, 1 failed LOS hand-off integration log"
+    ],
+    "test_steps": [
+      "GET /api/v1/dashboard as BM",
+      "Assert status 200",
+      "Assert data.widgets.kpi.active_pipeline === 5",
+      "Assert data.widgets.sla_alerts.length === 2",
+      "Assert data.widgets.hot_leads.length === 1",
+      "Assert data.widgets.my_tasks.length === 3",
+      "Assert data.widgets.handoff_failures.count === 1",
+      "Assert data.widget_errors is empty []",
+      "Assert error is null"
+    ],
+    "test_data": {
+      "bm_user": { "role": "BM", "branch_id": "branch-0001" },
+      "active_leads": 5,
+      "sla_breached_leads": 2,
+      "hot_leads": 1,
+      "open_tasks": 3,
+      "handoff_failures": 1
+    },
+    "expected_result": "HTTP 200; all KPI counts match seeded data; widget_errors empty; error null",
+    "postconditions": ["Cache populated for this BM's dashboard; no DB mutation"]
+  },
+  {
+    "test_id": "TC-FR053-02",
+    "test_name": "Dashboard — RM sees only own-scoped data (scope O isolation)",
+    "category": "Permission",
+    "linked_fr": "FR-053",
+    "priority": "Critical",
+    "preconditions": [
+      "RM-A owns 3 leads; RM-B owns 5 leads; both in same branch",
+      "RM-A authenticated"
+    ],
+    "test_steps": [
+      "GET /api/v1/dashboard as RM-A",
+      "Assert status 200",
+      "Assert data.widgets.kpi.active_pipeline === 3",
+      "Assert all lead entries in hot_leads and sla_alerts have owner_id === RM-A.user_id",
+      "Assert my_tasks contains only tasks where owner_id === RM-A.user_id"
+    ],
+    "test_data": {
+      "rmA_leads": 3,
+      "rmB_leads": 5
+    },
+    "expected_result": "kpi.active_pipeline=3; only RM-A's leads in widgets; RM-B's leads absent",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR053-03",
+    "test_name": "Dashboard — PARTNER role is forbidden",
+    "category": "Permission",
+    "linked_fr": "FR-053",
+    "priority": "Critical",
+    "preconditions": ["PARTNER authenticated"],
+    "test_steps": [
+      "GET /api/v1/dashboard as PARTNER",
+      "Assert status 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Assert data is null"
+    ],
+    "test_data": { "partner_user": { "role": "PARTNER" } },
+    "expected_result": "HTTP 403; FORBIDDEN; no widget data leaked",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR053-04",
+    "test_name": "Dashboard — ADMIN role is forbidden (no lead reports capability)",
+    "category": "Permission",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["ADMIN authenticated"],
+    "test_steps": [
+      "GET /api/v1/dashboard as ADMIN",
+      "Assert status 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Assert data is null"
+    ],
+    "test_data": { "admin_user": { "role": "ADMIN" } },
+    "expected_result": "HTTP 403; FORBIDDEN; ADMIN has no 'reports' capability for lead content",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR053-05",
+    "test_name": "Dashboard — widget degradation: one query fails, rest succeed",
+    "category": "Negative/Error",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["BM authenticated; mock dashboard.repository.getHandoffFailures to throw"],
+    "test_steps": [
+      "GET /api/v1/dashboard as BM (with mocked failure for handoff_failures query)",
+      "Assert status 200 (overall request succeeds)",
+      "Assert data.widgets.handoff_failures === null",
+      "Assert data.widget_errors contains entry {widget:'handoff_failures', error_code:'INTERNAL_ERROR'}",
+      "Assert all other widgets (kpi, sla_alerts, hot_leads, my_tasks) are populated normally"
+    ],
+    "test_data": {
+      "mocked_failure": "getHandoffFailures",
+      "all_other_widgets_seeded": true
+    },
+    "expected_result": "HTTP 200; handoff_failures=null in widgets; widget_errors lists the failure; other widgets intact",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR053-06",
+    "test_name": "Dashboard — VALIDATION_ERROR when both branch_id and team_id supplied",
+    "category": "Negative/Error",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["HEAD authenticated"],
+    "test_steps": [
+      "GET /api/v1/dashboard?branch_id=<uuid>&team_id=<uuid> as HEAD",
+      "Assert status 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains field 'branch_id' or 'team_id'",
+      "Assert error.message includes 'Provide branch_id or team_id, not both'"
+    ],
+    "test_data": {
+      "branch_id": "branch-uuid-0001",
+      "team_id": "team-uuid-0001"
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; message says provide only one of branch_id/team_id",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR053-07",
+    "test_name": "Dashboard — FORBIDDEN when BM overrides scope to another branch",
+    "category": "Permission",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["BM from Branch-A authenticated; Branch-B exists"],
+    "test_steps": [
+      "GET /api/v1/dashboard?branch_id=<Branch-B UUID> as BM-Branch-A",
+      "Assert status 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Assert no widget data returned"
+    ],
+    "test_data": {
+      "bm_branch": "branch-A-uuid",
+      "override_branch": "branch-B-uuid"
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; BM cannot override to a branch outside their own scope",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR053-08",
+    "test_name": "Dashboard — empty state for new RM with no data",
+    "category": "Boundary",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["Freshly created RM with no leads, no tasks, no attribution rows; authenticated"],
+    "test_steps": [
+      "GET /api/v1/dashboard as new RM",
+      "Assert status 200",
+      "Assert data.widgets.kpi.active_pipeline === 0",
+      "Assert data.widgets.sla_alerts === []",
+      "Assert data.widgets.hot_leads === []",
+      "Assert data.widgets.my_tasks === []",
+      "Assert data.widgets.source_summary === []",
+      "Assert data.widgets.handoff_failures.count === 0",
+      "Assert no null top-level fields (valid envelope)"
+    ],
+    "test_data": { "new_rm": true },
+    "expected_result": "HTTP 200; all KPI counts 0; all list widgets empty arrays; valid envelope",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR053-09",
+    "test_name": "Dashboard — PII masked for DPO role in widget data",
+    "category": "Permission",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["DPO authenticated; leads with real names/mobiles exist in org"],
+    "test_steps": [
+      "GET /api/v1/dashboard as DPO",
+      "Assert status 200",
+      "For each item in data.widgets.hot_leads and sla_alerts: assert name_masked contains asterisks",
+      "Assert mobile_masked matches xxxx pattern",
+      "Assert no raw mobile (10 digits) is present anywhere in the response body"
+    ],
+    "test_data": { "dpo_user": { "role": "DPO", "scope": "M" } },
+    "expected_result": "HTTP 200; all name_masked/mobile_masked fields are masked; no raw PII in response",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR053-10",
+    "test_name": "Dashboard — KPI drill-through link matches lead list filter",
+    "category": "Workflow",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["RM authenticated; 3 active leads (not handed_off/rejected); dashboard seeded"],
+    "test_steps": [
+      "GET /api/v1/dashboard as RM; record kpi.active_pipeline count",
+      "Navigate to /leads (drill-through): apply same filter excluding handed_off/rejected",
+      "Assert leads list count matches kpi.active_pipeline from dashboard",
+      "Assert no discrepancy between widget count and actual list count"
+    ],
+    "test_data": { "active_leads": 3 },
+    "expected_result": "Dashboard KPI count reconciles with /leads list count for same scope and filter",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR053-UI-01",
+    "test_name": "UI — Dashboard page renders all widget cards for BM",
+    "category": "UI/E2E",
+    "linked_fr": "FR-053",
+    "priority": "Critical",
+    "preconditions": ["BM authenticated; branch has leads, tasks, SLA alerts"],
+    "test_steps": [
+      "Navigate to /dashboard",
+      "Wait for GET /api/v1/dashboard to resolve",
+      "Assert page title or H1 contains 'Home' or 'Dashboard'",
+      "Assert all 6 widget cards are visible",
+      "Assert KPI numbers are non-zero and match seeded data",
+      "Assert no error state rendered"
+    ],
+    "test_data": { "bm_user": { "role": "BM" } },
+    "expected_result": "All 6 widget cards visible; KPI values > 0; no error; page title correct",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/dashboard",
+      "locators": {
+        "kpi_card": "getByTestId('kpi-active-pipeline')",
+        "sla_widget": "getByTestId('widget-sla-alerts')",
+        "hot_leads_widget": "getByTestId('widget-hot-leads')",
+        "tasks_widget": "getByTestId('widget-my-tasks')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "BM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/dashboard')",
+      "visual_assert": "6 widget cards visible; KPI numbers rendered",
+      "a11y": "page landmark regions: main, navigation; heading hierarchy correct"
+    }
+  },
+  {
+    "test_id": "TC-FR053-UI-02",
+    "test_name": "UI — Dashboard empty state for new RM with no data",
+    "category": "UI/E2E",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["Freshly created RM with no leads; authenticated"],
+    "test_steps": [
+      "Navigate to /dashboard",
+      "Wait for API response",
+      "Assert EmptyState with 'Capture a lead' CTA is visible",
+      "Assert KPI widget shows 0 or EmptyState"
+    ],
+    "test_data": { "new_rm": true },
+    "expected_result": "EmptyState visible with CTA; no crash; no error state",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/dashboard",
+      "locators": {
+        "empty_cta": "getByRole('link', { name: /capture a lead/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "new_RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/dashboard')",
+      "visual_assert": "EmptyState component with CTA button visible",
+      "a11y": "CTA link has descriptive accessible name"
+    }
+  },
+  {
+    "test_id": "TC-FR053-UI-03",
+    "test_name": "UI — Dashboard drill-through from hot lead navigates to Lead 360",
+    "category": "UI/E2E",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["BM authenticated; at least 1 hot lead exists in branch"],
+    "test_steps": [
+      "Navigate to /dashboard",
+      "Click a hot lead row in HotLeadsWidget",
+      "Assert URL changes to /leads/:id (Lead 360 page)",
+      "Assert lead detail page loads without error"
+    ],
+    "test_data": { "hot_lead_id": "lead-uuid-0040" },
+    "expected_result": "Navigation to /leads/:id; Lead 360 page renders; URL contains correct lead ID",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/dashboard",
+      "locators": {
+        "hot_lead_row": "getByTestId('hot-lead-row').first()"
+      },
+      "viewport": "1280x800",
+      "auth_state": "BM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads/:id')",
+      "visual_assert": "URL changes to /leads/:id; lead_code visible on destination page",
+      "a11y": "hot lead row is a link with aria-label"
+    }
+  },
+  {
+    "test_id": "TC-FR053-UI-04",
+    "test_name": "UI — Dashboard responsive at 375x667 mobile",
+    "category": "UI/E2E",
+    "linked_fr": "FR-053",
+    "priority": "Medium",
+    "preconditions": ["BM authenticated; dashboard has data"],
+    "test_steps": [
+      "Set viewport to 375x667",
+      "Navigate to /dashboard",
+      "Assert page renders without horizontal overflow",
+      "Assert KPI cards stack vertically",
+      "Assert widget cards accessible via scroll",
+      "Assert no UI element clipped outside viewport"
+    ],
+    "test_data": { "viewport": "375x667" },
+    "expected_result": "Dashboard renders responsively; cards stack; no overflow; all data accessible",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/dashboard",
+      "locators": {
+        "kpi_card": "getByTestId('kpi-active-pipeline')"
+      },
+      "viewport": "375x667",
+      "auth_state": "BM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/dashboard')",
+      "visual_assert": "Single-column layout; no horizontal scroll",
+      "a11y": "touch targets >=44px"
+    }
+  },
+  {
+    "test_id": "TC-FR053-UI-05",
+    "test_name": "UI — Dashboard keyboard navigation reaches all interactive elements",
+    "category": "UI/E2E",
+    "linked_fr": "FR-053",
+    "priority": "High",
+    "preconditions": ["BM authenticated; dashboard has data"],
+    "test_steps": [
+      "Navigate to /dashboard",
+      "Tab through all interactive elements (widget links, CTA buttons, navigation)",
+      "Assert every widget card link/button is reachable by Tab key",
+      "Assert :focus-visible is visible on each focused element",
+      "Assert no focus traps outside modals"
+    ],
+    "test_data": {},
+    "expected_result": "All interactive elements keyboard-reachable; focus ring visible; WCAG 2.1 AA compliant",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/dashboard",
+      "locators": {
+        "first_focusable": "getByRole('link').first()"
+      },
+      "viewport": "1280x800",
+      "auth_state": "BM_authenticated",
+      "network_wait": "none",
+      "visual_assert": "Focus ring visible on each focused element",
+      "a11y": "Tab order logical; :focus-visible present on all interactive elements"
+    }
+  },
+  {
+    "test_id": "TC-FR053-DI-01",
+    "test_name": "DI — Dashboard does not surface soft-deleted leads",
+    "category": "Data Integrity",
+    "linked_fr": "FR-053",
+    "priority": "Critical",
+    "preconditions": ["A lead with deleted_at set exists in the branch; BM authenticated"],
+    "test_steps": [
+      "GET /api/v1/dashboard as BM",
+      "Collect all lead_ids from hot_leads and sla_alerts widgets",
+      "Run invariant query: SELECT lead_id FROM leads WHERE deleted_at IS NOT NULL AND lead_id IN (:returned_lead_ids)",
+      "Assert query returns 0 rows"
+    ],
+    "test_data": {
+      "setup_sql": "UPDATE leads SET deleted_at=NOW() WHERE lead_id=:test_lead_id",
+      "action": "GET /api/v1/dashboard; extract lead_ids from response",
+      "invariant_query": "SELECT lead_id FROM leads WHERE deleted_at IS NOT NULL AND lead_id IN (:returned_ids) -- must return 0",
+      "cleanup": "UPDATE leads SET deleted_at=NULL WHERE lead_id=:test_lead_id"
+    },
+    "expected_result": "No deleted lead appears in any widget; invariant query returns 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "UPDATE leads SET deleted_at=NOW() WHERE lead_id=:test_lead_id",
+      "action": "GET /api/v1/dashboard",
+      "invariant_query": "SELECT lead_id FROM leads WHERE deleted_at IS NOT NULL AND lead_id IN (:returned_ids)",
+      "cleanup": "UPDATE leads SET deleted_at=NULL WHERE lead_id=:test_lead_id"
+    }
+  },
+  {
+    "test_id": "TC-FR054-01",
+    "test_name": "Global search — RM finds own lead by partial name",
+    "category": "Happy Path",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": [
+      "RM authenticated; owns 1 lead with applicant name 'Ravi Shankar'; no other RM's leads in scope"
+    ],
+    "test_steps": [
+      "GET /api/v1/search?q=Ravi as RM",
+      "Assert status 200",
+      "Assert data.leads contains 1 item matching the lead",
+      "Assert data.leads[0].mobile matches masked pattern (98xxxxxx10)",
+      "Assert data.leads[0].applicant_name_masked contains asterisks",
+      "Assert data.partners and data.tasks present (may be empty)",
+      "Assert meta.counts.leads === 1"
+    ],
+    "test_data": {
+      "rm_user": { "role": "RM", "scope": "O" },
+      "lead": { "applicant_name": "Ravi Shankar", "lead_code": "LD-2026-000050" }
+    },
+    "expected_result": "HTTP 200; data.leads contains matching lead; mobile/name masked; other entity groups present",
+    "postconditions": ["No DB mutation; search is read-only"]
+  },
+  {
+    "test_id": "TC-FR054-02",
+    "test_name": "Global search — query shorter than 2 chars returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated"],
+    "test_steps": [
+      "GET /api/v1/search?q=R as RM",
+      "Assert status 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields[0].field === 'q'"
+    ],
+    "test_data": { "q": "R", "q_length": 1 },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; fields[].field='q'; no search executed",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-03",
+    "test_name": "Global search — missing q parameter returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": ["RM authenticated"],
+    "test_steps": [
+      "GET /api/v1/search (no q param) as RM",
+      "Assert status 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields[0].field === 'q'"
+    ],
+    "test_data": { "q": null },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; q field required",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-04",
+    "test_name": "Global search — ADMIN role forbidden (no view_lead without break-glass)",
+    "category": "Permission",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": ["ADMIN authenticated; no break-glass grant active"],
+    "test_steps": [
+      "GET /api/v1/search?q=Ravi as ADMIN",
+      "Assert status 403",
+      "Assert error.code === 'FORBIDDEN'"
+    ],
+    "test_data": { "admin_user": { "role": "ADMIN" } },
+    "expected_result": "HTTP 403; FORBIDDEN; ADMIN has no standing view_lead capability",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-05",
+    "test_name": "Global search — RM cannot see another RM's lead (scope isolation)",
+    "category": "Permission",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": ["RM-A authenticated; lead LD-2026-000099 owned by RM-B"],
+    "test_steps": [
+      "GET /api/v1/search?q=LD-2026-000099 as RM-A",
+      "Assert status 200 (not 403; scope-filtered silently)",
+      "Assert data.leads === []",
+      "Assert meta.counts.leads === 0"
+    ],
+    "test_data": {
+      "rmA": { "user_id": "usr-rm-a-0001" },
+      "rmB_lead": "LD-2026-000099"
+    },
+    "expected_result": "HTTP 200; data.leads=[]; no FORBIDDEN; existence hidden via empty result",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-06",
+    "test_name": "Global search — top-N cap: max 5 leads returned per entity type",
+    "category": "Boundary",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": ["HEAD authenticated (scope A); 20 leads with name containing 'Kumar' in org"],
+    "test_steps": [
+      "GET /api/v1/search?q=Kumar as HEAD",
+      "Assert status 200",
+      "Assert data.leads.length <= 5",
+      "Assert meta.top_n === 5"
+    ],
+    "test_data": { "total_matching_leads": 20, "expected_max": 5 },
+    "expected_result": "HTTP 200; data.leads.length <= 5; top-N cap enforced server-side",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-07",
+    "test_name": "Global search — no results returns empty grouped result (200, not 404)",
+    "category": "Boundary",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": ["RM authenticated; no leads/partners/tasks match 'ZZNOTEXIST'"],
+    "test_steps": [
+      "GET /api/v1/search?q=ZZNOTEXIST as RM",
+      "Assert status 200",
+      "Assert data.leads === []",
+      "Assert data.partners === []",
+      "Assert data.tasks === []",
+      "Assert meta.counts === {leads:0, partners:0, tasks:0}"
+    ],
+    "test_data": { "q": "ZZNOTEXIST" },
+    "expected_result": "HTTP 200; all entity groups empty; counts all 0; no 404 or error",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-08",
+    "test_name": "Global search — SQL metacharacters in q do not cause SQL error",
+    "category": "Negative/Error",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated"],
+    "test_steps": [
+      "GET /api/v1/search?q=%25%27+OR+1%3D1-- (URL-encoded: %' OR 1=1--) as RM",
+      "Assert status 200 (or 400 if length/char validation rejects)",
+      "Assert no SQL error returned (no 500)",
+      "Assert data.leads contains only properly scoped results (not all leads from injection)"
+    ],
+    "test_data": { "q": "%' OR 1=1--", "injection_attempt": true },
+    "expected_result": "HTTP 200 or 400 (valid validation response); no SQL injection; no 500; parameterised query treats input as literal",
+    "postconditions": ["No data exfiltration; no DB error in logs"]
+  },
+  {
+    "test_id": "TC-FR054-09",
+    "test_name": "Global search — q exactly 2 chars is valid (boundary)",
+    "category": "Boundary",
+    "linked_fr": "FR-054",
+    "priority": "Medium",
+    "preconditions": ["RM authenticated"],
+    "test_steps": [
+      "GET /api/v1/search?q=Ra as RM",
+      "Assert status 200",
+      "Assert search executes (results may be empty or populated)"
+    ],
+    "test_data": { "q": "Ra", "q_length": 2 },
+    "expected_result": "HTTP 200; search executes; no VALIDATION_ERROR for 2-char query",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-10",
+    "test_name": "Global search — mobile always masked in results for all roles",
+    "category": "Happy Path",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; owns lead with mobile='9812345610'"],
+    "test_steps": [
+      "GET /api/v1/search?q=Ravi as RM",
+      "Assert status 200",
+      "For each item in data.leads: assert mobile field matches masked pattern (98xxxxxx10)",
+      "Assert no 10-digit raw mobile number present anywhere in response body",
+      "Assert raw 'mobile' key is absent from lead items"
+    ],
+    "test_data": { "mobile": "9812345610", "expected_masked": "98xxxxxx10" },
+    "expected_result": "All mobile fields in search results are masked; no raw 10-digit mobile in response",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-11",
+    "test_name": "Global search — PARTNER sees only own partner's submitted leads",
+    "category": "Permission",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": [
+      "PARTNER-A authenticated; submitted 2 leads",
+      "PARTNER-B submitted 3 leads with name 'Sharma'",
+      "PARTNER-A also has 1 lead with name 'Sharma'"
+    ],
+    "test_steps": [
+      "GET /api/v1/search?q=Sharma as PARTNER-A",
+      "Assert status 200",
+      "Assert data.leads.length === 1 (only PARTNER-A's lead named Sharma)",
+      "Assert all returned leads have source_attribution.partner_id === PARTNER-A.partner_id"
+    ],
+    "test_data": {
+      "partner_a": { "partner_id": "partner-0001" },
+      "partner_b": { "partner_id": "partner-0002" }
+    },
+    "expected_result": "HTTP 200; only PARTNER-A's leads returned; PARTNER-B's leads absent",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-12",
+    "test_name": "Global search — BM scope: only branch leads returned",
+    "category": "Permission",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": [
+      "BM authenticated for Branch-B",
+      "Leads named 'Mehta' exist in Branch-A, Branch-B, and Branch-C"
+    ],
+    "test_steps": [
+      "GET /api/v1/search?q=Mehta as BM-Branch-B",
+      "Assert status 200",
+      "Assert all returned leads have branch_id === Branch-B",
+      "Assert leads from Branch-A and Branch-C are absent"
+    ],
+    "test_data": {
+      "bm_branch": "branch-B-uuid",
+      "leads_in_each_branch": 2
+    },
+    "expected_result": "HTTP 200; only Branch-B leads returned; other branches absent",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR054-UI-01",
+    "test_name": "UI — cmd-k / ctrl-k opens global search palette",
+    "category": "UI/E2E",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; on any page"],
+    "test_steps": [
+      "Navigate to /leads",
+      "Press Ctrl+K (Windows/Linux) or Cmd+K (macOS)",
+      "Assert dialog with aria-label='Global search' is visible",
+      "Assert search input is focused"
+    ],
+    "test_data": { "keyboard_shortcut": "ctrl+k" },
+    "expected_result": "Search palette opens; input focused; dialog role='dialog' with aria-label='Global search'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads",
+      "locators": {
+        "search_dialog": "getByRole('dialog', { name: /global search/i })",
+        "search_input": "getByRole('textbox', { name: /search/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "none",
+      "visual_assert": "Dialog visible and focused",
+      "a11y": "dialog has aria-modal=true; focus trapped inside dialog"
+    }
+  },
+  {
+    "test_id": "TC-FR054-UI-02",
+    "test_name": "UI — Typing <2 chars does not trigger API request",
+    "category": "UI/E2E",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": ["RM authenticated; search palette open"],
+    "test_steps": [
+      "Open search palette",
+      "Type 'R' (1 character)",
+      "Assert no network request to /api/v1/search is made",
+      "Assert loading skeleton is not shown"
+    ],
+    "test_data": { "q": "R" },
+    "expected_result": "No API call fired for 1-char input; no loading state; palette shows no results hint",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/any",
+      "locators": {
+        "search_input": "getByRole('textbox', { name: /search/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "none (assert no network call)",
+      "visual_assert": "No spinner; no result rows",
+      "a11y": "input has aria-describedby hinting minimum 2 chars"
+    }
+  },
+  {
+    "test_id": "TC-FR054-UI-03",
+    "test_name": "UI — Typing >= 2 chars triggers search and shows masked results",
+    "category": "UI/E2E",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; lead named 'Ravi' exists in scope"],
+    "test_steps": [
+      "Open search palette",
+      "Type 'Ra'",
+      "Wait for GET /api/v1/search?q=Ra to complete",
+      "Assert lead group is visible in palette",
+      "Assert each result row shows masked mobile (pattern with 'x' chars)",
+      "Assert no raw mobile or name appears in DOM text"
+    ],
+    "test_data": { "q": "Ra", "lead_name": "Ravi Shankar" },
+    "expected_result": "Results appear; mobile masked; no raw PII in DOM",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/any",
+      "locators": {
+        "search_input": "getByRole('textbox', { name: /search/i })",
+        "leads_group": "getByTestId('search-group-leads')",
+        "result_item": "getByTestId('search-result-item')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/search')",
+      "visual_assert": "Lead group rendered; mobile value contains 'x' characters",
+      "a11y": "results list has role='listbox'; each item role='option'"
+    }
+  },
+  {
+    "test_id": "TC-FR054-UI-04",
+    "test_name": "UI — Clicking lead result navigates to Lead 360",
+    "category": "UI/E2E",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; lead LD-2026-000050 exists and matches 'Ra' search"],
+    "test_steps": [
+      "Open search palette",
+      "Type 'Ra'",
+      "Wait for results",
+      "Click the lead result item for LD-2026-000050",
+      "Assert URL changes to /leads/:id",
+      "Assert Lead 360 page loads"
+    ],
+    "test_data": { "lead_code": "LD-2026-000050" },
+    "expected_result": "URL navigates to /leads/:id; Lead 360 renders; search palette closes",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/any",
+      "locators": {
+        "result_item": "getByTestId('search-result-item').first()"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/leads/:id')",
+      "visual_assert": "URL contains /leads/; lead_code visible on page",
+      "a11y": "result items are links or have role='option' with activation on Enter"
+    }
+  },
+  {
+    "test_id": "TC-FR054-UI-05",
+    "test_name": "UI — Empty state shown when no results found",
+    "category": "UI/E2E",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": ["RM authenticated; no leads/partners/tasks match 'ZZNOTEXIST99'"],
+    "test_steps": [
+      "Open search palette",
+      "Type 'ZZNOTEXIST99'",
+      "Wait for GET /api/v1/search response",
+      "Assert EmptyState component is visible in palette",
+      "Assert result groups are not rendered",
+      "Assert no error state or crash"
+    ],
+    "test_data": { "q": "ZZNOTEXIST99" },
+    "expected_result": "EmptyState visible; no result groups; no error; palette remains open",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/any",
+      "locators": {
+        "empty_state": "getByTestId('search-empty-state')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/search')",
+      "visual_assert": "EmptyState visible; no lead/partner/task rows",
+      "a11y": "EmptyState has role='status' or is announced via aria-live"
+    }
+  },
+  {
+    "test_id": "TC-FR054-UI-06",
+    "test_name": "UI — Escape key closes search palette",
+    "category": "UI/E2E",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": ["RM authenticated; search palette open"],
+    "test_steps": [
+      "Open search palette",
+      "Type 'Ra'",
+      "Press Escape",
+      "Assert dialog is closed (not visible in DOM or aria-hidden=true)",
+      "Assert focus returns to the element that triggered the palette (search trigger button)"
+    ],
+    "test_data": {},
+    "expected_result": "Dialog closes on Escape; focus returns to trigger; no lingering overlay",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/any",
+      "locators": {
+        "search_dialog": "getByRole('dialog', { name: /global search/i })",
+        "trigger_btn": "getByRole('button', { name: /search/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "none",
+      "visual_assert": "Dialog not visible; focus on trigger button",
+      "a11y": "Escape closes modal per ARIA dialog pattern; focus restored to trigger"
+    }
+  },
+  {
+    "test_id": "TC-FR054-UI-07",
+    "test_name": "UI — Arrow key navigation selects results; Enter navigates",
+    "category": "UI/E2E",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": ["RM authenticated; search 'Ra' returns at least 3 results"],
+    "test_steps": [
+      "Open search palette",
+      "Type 'Ra' and wait for results",
+      "Press ArrowDown twice",
+      "Assert third result item has aria-selected=true or visual focus",
+      "Press Enter",
+      "Assert navigation fires to that result's destination URL"
+    ],
+    "test_data": { "q": "Ra", "min_results": 3 },
+    "expected_result": "ArrowDown selects 3rd item; Enter navigates; keyboard-only operation works",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/any",
+      "locators": {
+        "result_items": "getByRole('option')",
+        "third_item": "getByRole('option').nth(2)"
+      },
+      "viewport": "1280x800",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/search')",
+      "visual_assert": "Third item has focus indicator; navigation fires on Enter",
+      "a11y": "aria-activedescendant tracks current item; listbox role on results container"
+    }
+  },
+  {
+    "test_id": "TC-FR054-UI-08",
+    "test_name": "UI — Mobile search accessible via bottom nav at 390x844",
+    "category": "UI/E2E",
+    "linked_fr": "FR-054",
+    "priority": "High",
+    "preconditions": ["RM authenticated; mobile viewport"],
+    "test_steps": [
+      "Set viewport to 390x844",
+      "Navigate to /leads",
+      "Tap the Search icon in bottom navigation",
+      "Assert search palette opens",
+      "Assert search input is focused",
+      "Type 'Ra' and assert results appear above touch keyboard area"
+    ],
+    "test_data": { "viewport": "390x844" },
+    "expected_result": "Search palette opens on mobile; input focused; results visible without being blocked by keyboard",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads",
+      "locators": {
+        "search_icon_nav": "getByRole('link', { name: /search/i })",
+        "search_input": "getByRole('textbox', { name: /search/i })"
+      },
+      "viewport": "390x844",
+      "auth_state": "RM_authenticated",
+      "network_wait": "waitForResponse('/api/v1/search')",
+      "visual_assert": "Search palette visible; results not obscured by virtual keyboard",
+      "a11y": "touch targets >=44px; bottom nav search icon has aria-label"
+    }
+  },
+  {
+    "test_id": "TC-FR054-DI-01",
+    "test_name": "DI — Search endpoint never writes to any table",
+    "category": "Data Integrity",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": ["RM authenticated; audit_logs row count recorded before search"],
+    "test_steps": [
+      "Record COUNT(*) FROM audit_logs at T0",
+      "GET /api/v1/search?q=Ravi as RM",
+      "Assert status 200",
+      "Record COUNT(*) FROM audit_logs at T1",
+      "Assert T1 === T0 (search wrote no audit rows)"
+    ],
+    "test_data": { "q": "Ravi" },
+    "expected_result": "audit_logs count unchanged; search is read-only; no writes to any table",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT COUNT(*) FROM audit_logs WHERE created_at > :before_ts",
+      "action": "GET /api/v1/search?q=Ravi",
+      "invariant_query": "SELECT COUNT(*) FROM audit_logs WHERE created_at > :before_search_ts -- must return 0",
+      "cleanup": "none"
+    }
+  },
+  {
+    "test_id": "TC-FR054-DI-02",
+    "test_name": "DI — No deleted lead returned by search",
+    "category": "Data Integrity",
+    "linked_fr": "FR-054",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead 'Ravi Deleted' exists with deleted_at set (soft-deleted)",
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "GET /api/v1/search?q=Ravi as RM",
+      "Collect all lead_ids from data.leads",
+      "Run: SELECT lead_id FROM leads WHERE deleted_at IS NOT NULL AND lead_id IN (:returned_ids)",
+      "Assert query returns 0 rows"
+    ],
+    "test_data": {
+      "soft_deleted_lead": { "applicant_name": "Ravi Deleted", "deleted_at": "NOW()" }
+    },
+    "expected_result": "Deleted lead absent from search results; invariant query returns 0",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT lead with deleted_at=NOW() and applicant_name containing 'Ravi'",
+      "action": "GET /api/v1/search?q=Ravi",
+      "invariant_query": "SELECT lead_id FROM leads WHERE deleted_at IS NOT NULL AND lead_id IN (:returned_ids) -- must return 0",
+      "cleanup": "DELETE test soft-deleted lead"
+    }
+  }
+]

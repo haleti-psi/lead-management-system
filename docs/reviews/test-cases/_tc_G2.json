@@ -1,0 +1,1592 @@
+[
+  {
+    "test_id": "TC-FR020-01",
+    "test_name": "No duplicate found — unique identity keys, no match",
+    "category": "Happy Path",
+    "linked_fr": "FR-020",
+    "priority": "Critical",
+    "preconditions": [
+      "RM user 'rm_anita@branch01.lms' is authenticated with valid JWT",
+      "Lead LD-2026-000001 exists in stage 'captured', owned by rm_anita, with mobile=9876543210, no PAN, no CKYC, no GSTIN",
+      "No other lead exists with mobile=9876543210 or any matching identity key"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_001}/duplicate-check with body {} and Authorization: Bearer <rm_anita_jwt>",
+      "Assert HTTP 200",
+      "Assert response envelope: data.duplicate_status = 'none', data.matches = []",
+      "Query DB: SELECT COUNT(*) FROM duplicate_matches WHERE lead_id = '{lead_id_001}' — expect 0",
+      "Query DB: SELECT duplicate_status FROM leads WHERE lead_id = '{lead_id_001}' — expect 'none'"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-001-uuid",
+      "lead_code": "LD-2026-000001",
+      "mobile": "9876543210",
+      "pan_token": null,
+      "ckyc_id": null,
+      "gstin": null,
+      "product_code": "CV",
+      "source": "Branch"
+    },
+    "expected_result": "HTTP 200; body = {\"data\":{\"duplicate_status\":\"none\",\"matches\":[]},\"meta\":{},\"error\":null}; 0 rows in duplicate_matches for this lead",
+    "postconditions": [
+      "leads.duplicate_status remains 'none'",
+      "No duplicate_matches row created",
+      "No audit_logs row created for this check"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-02",
+    "test_name": "Same PAN + same mobile — strong block returns 409 CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-020",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-000002 exists with pan_token='ABCDE1234F_hashed', mobile='9911002200', stage='captured'",
+      "Lead LD-2026-000003 is the lead under check, also with pan_token='ABCDE1234F_hashed', mobile='9911002200'",
+      "BM user 'bm_raj@branch01.lms' owns both leads in branch-01",
+      "No override_reason provided in request body"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_003}/duplicate-check with body {\"requested_action\":\"block\"} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 409",
+      "Assert response error.code = 'CONFLICT'",
+      "Assert response error.detail.reason = 'DUPLICATE_BLOCKED'",
+      "Assert response error.detail.matches[0].confidence = 'strong'",
+      "Assert response error.detail.matches[0].matched_on contains 'pan_token' and 'mobile'",
+      "Assert response error.detail.override_allowed_by contains ['BM','SM']",
+      "Query DB: SELECT duplicate_status FROM leads WHERE lead_id = '{lead_id_003}' — expect 'none' (unchanged)"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-003-uuid",
+      "matching_lead_id": "lead-002-uuid",
+      "pan_token": "ABCDE1234F_hashed",
+      "mobile": "9911002200",
+      "requested_action": "block"
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; error.detail.reason='DUPLICATE_BLOCKED'; error.detail.matches[0].confidence='strong'; leads.duplicate_status unchanged='none'",
+    "postconditions": [
+      "leads.duplicate_status remains 'none' for lead-003",
+      "No overridden duplicate_matches row created",
+      "No audit override entry created"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-03",
+    "test_name": "BM overrides strong block with reason — success",
+    "category": "Happy Path",
+    "linked_fr": "FR-020",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-000004 and LD-2026-000005 share identical pan_token='PQRST9876K_hashed' and mobile='9922334455'",
+      "BM user 'bm_raj@branch01.lms' owns both leads in branch-01",
+      "No existing overridden duplicate_matches for this pair"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_005}/duplicate-check with body {\"requested_action\":\"override\",\"override_reason\":\"Verified same customer applying for second product CV+TW\"} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 200",
+      "Assert data.action_taken = 'overridden'",
+      "Assert data.duplicate_status = 'none' or flagged per config after override clears block",
+      "Query DB: SELECT action, action_reason, action_by FROM duplicate_matches WHERE lead_id='{lead_id_005}' — expect action='overridden', action_reason='Verified same customer applying for second product CV+TW', action_by=bm_raj_uuid",
+      "Query DB: SELECT action FROM audit_logs WHERE entity_id='{lead_id_005}' AND action='lead_override' — expect 1 row",
+      "Assert audit_logs row has detail->>'override_reason' = 'Verified same customer applying for second product CV+TW'"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-005-uuid",
+      "matching_lead_id": "lead-004-uuid",
+      "pan_token": "PQRST9876K_hashed",
+      "mobile": "9922334455",
+      "requested_action": "override",
+      "override_reason": "Verified same customer applying for second product CV+TW"
+    },
+    "expected_result": "HTTP 200; data.action_taken='overridden'; duplicate_matches.action='overridden' with action_reason and action_by populated; audit_logs row with action='lead_override' and detail.override_reason present",
+    "postconditions": [
+      "duplicate_matches row has action='overridden', action_by=bm_raj_uuid, action_reason non-empty",
+      "audit_logs contains 1 entry with action='lead_override' for this lead",
+      "event_outbox has LEAD_STAGE_CHANGED for this lead_id"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-04",
+    "test_name": "RM attempts override of strong block — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-020",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-000006 has a strong duplicate match on pan_token+mobile",
+      "RM user 'rm_anita@branch01.lms' owns the lead"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_006}/duplicate-check with body {\"requested_action\":\"override\",\"override_reason\":\"Test override\"} and Authorization: Bearer <rm_anita_jwt>",
+      "Assert HTTP 403",
+      "Assert response error.code = 'FORBIDDEN'",
+      "Query DB: SELECT COUNT(*) FROM duplicate_matches WHERE lead_id='{lead_id_006}' AND action='overridden' — expect 0",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE entity_id='{lead_id_006}' AND action='lead_override' — expect 0"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-006-uuid",
+      "requested_action": "override",
+      "override_reason": "Test override"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no duplicate_matches row with action='overridden'; no audit_logs override entry",
+    "postconditions": [
+      "No changes to duplicate_matches or audit_logs",
+      "leads.duplicate_status unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-05",
+    "test_name": "Override without override_reason — 400 VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-020",
+    "priority": "High",
+    "preconditions": [
+      "BM user 'bm_raj@branch01.lms' is authenticated",
+      "Lead LD-2026-000007 has a strong duplicate match"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_007}/duplicate-check with body {\"requested_action\":\"override\"} (no override_reason field) and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 400",
+      "Assert response error.code = 'VALIDATION_ERROR'",
+      "Assert response error.detail.fields contains 'override_reason'"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-007-uuid",
+      "requested_action": "override"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.detail.fields includes 'override_reason'",
+    "postconditions": [
+      "No duplicate_matches row created",
+      "No audit_logs entry created"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-06",
+    "test_name": "Medium confidence warn — same mobile, no PAN on either lead",
+    "category": "Happy Path",
+    "linked_fr": "FR-020",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000008 has mobile='9833001122', pan_token=null, stage='captured'",
+      "Lead LD-2026-000009 has mobile='9833001122', pan_token=null",
+      "RM 'rm_anita@branch01.lms' owns lead-008"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_008}/duplicate-check with body {} and Authorization: Bearer <rm_anita_jwt>",
+      "Assert HTTP 200",
+      "Assert data.action_taken = 'warned'",
+      "Assert data.duplicate_status = 'flagged'",
+      "Assert data.matches[0].confidence = 'medium'",
+      "Assert data.matches[0].matched_on contains 'mobile'",
+      "Assert data.matches[0].mobile is masked (pattern '9833xxxx22')",
+      "Query DB: SELECT action, status FROM duplicate_matches WHERE lead_id='{lead_id_008}' — expect action='warned', status='open'",
+      "Query DB: SELECT duplicate_status FROM leads WHERE lead_id='{lead_id_008}' — expect 'flagged'",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE entity_id='{lead_id_008}' — expect >= 1"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-008-uuid",
+      "mobile": "9833001122",
+      "pan_token": null
+    },
+    "expected_result": "HTTP 200; data.action_taken='warned'; data.duplicate_status='flagged'; data.matches[0].confidence='medium'; mobile masked in response; duplicate_matches row inserted with action='warned', status='open'",
+    "postconditions": [
+      "leads.duplicate_status='flagged' for lead-008",
+      "duplicate_matches row exists with status='open'",
+      "audit_logs entry written",
+      "event_outbox LEAD_STAGE_CHANGED emitted"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-07",
+    "test_name": "Fuzzy name + same pin + same source — weak confidence warn",
+    "category": "Boundary",
+    "linked_fr": "FR-020",
+    "priority": "Medium",
+    "preconditions": [
+      "Lead LD-2026-000010 has name='Rajesh Kumar', pin_code='400001', source='Website', mobile='9700001111'",
+      "Lead LD-2026-000011 has name='Rajesh Kumaar' (trigram-similar), pin_code='400001', source='Website', mobile='9700002222' (different)",
+      "BM 'bm_raj@branch01.lms' owns both leads"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_010}/duplicate-check with body {} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 200",
+      "Assert data.matches[0].confidence = 'weak'",
+      "Assert data.matches[0].matched_on contains 'name_fuzzy', 'pin_code', 'source'",
+      "Assert data.duplicate_status = 'flagged'",
+      "Query DB: SELECT confidence FROM duplicate_matches WHERE lead_id='{lead_id_010}' — expect 'weak'"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-010-uuid",
+      "name": "Rajesh Kumar",
+      "matching_name": "Rajesh Kumaar",
+      "pin_code": "400001",
+      "source": "Website"
+    },
+    "expected_result": "HTTP 200; data.matches[0].confidence='weak'; matched_on includes name_fuzzy, pin_code, source; data.duplicate_status='flagged'",
+    "postconditions": [
+      "duplicate_matches row created with confidence='weak', action='warned'",
+      "leads.duplicate_status='flagged'"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-08",
+    "test_name": "Multiple matches — highest confidence (strong) takes precedence over weak",
+    "category": "Boundary",
+    "linked_fr": "FR-020",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000012 has pan_token='XYZAB5678P_hashed', mobile='9600007788', name='Suresh Patel', pin_code='380001', source='Referral'",
+      "Lead LD-2026-000013 matches on pan_token+mobile (strong)",
+      "Lead LD-2026-000014 matches on fuzzy name+pin+source only (weak)",
+      "BM 'bm_raj@branch01.lms' is actor"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_012}/duplicate-check with body {} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 409 (strong block wins)",
+      "Assert response error.detail.matches[0].confidence = 'strong'",
+      "Assert response error.detail.matches[0].matched_lead_id = lead_id_013",
+      "Assert response error.detail.matches length >= 2 (both returned, ranked by confidence)"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-012-uuid",
+      "matching_strong_lead_id": "lead-013-uuid",
+      "matching_weak_lead_id": "lead-014-uuid"
+    },
+    "expected_result": "HTTP 409; action derived from strong match; matches sorted by confidence descending; first match is 'strong' against lead-013",
+    "postconditions": [
+      "leads.duplicate_status unchanged (block prevents write)",
+      "No duplicate_matches rows created (block path)"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-09",
+    "test_name": "Duplicate check on terminal stage lead — 400 VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-020",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000015 is in stage 'handed_off'",
+      "BM 'bm_raj@branch01.lms' owns the lead"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_015}/duplicate-check with body {} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.message references terminal stage or STAGE_GUARD_FAILED"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-015-uuid",
+      "lead_stage": "handed_off"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; no DB writes to duplicate_matches",
+    "postconditions": [
+      "No duplicate_matches row created",
+      "leads.duplicate_status unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-10",
+    "test_name": "BM cannot check lead in a different branch — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-020",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000016 belongs to branch-02",
+      "BM 'bm_raj@branch01.lms' belongs to branch-01"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_016}/duplicate-check with body {} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'",
+      "Query DB: SELECT COUNT(*) FROM duplicate_matches WHERE lead_id='{lead_id_016}' — expect 0"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-016-uuid",
+      "lead_branch_id": "branch-02-uuid"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no DB writes",
+    "postconditions": ["No duplicate_matches row created for this cross-branch lead"]
+  },
+  {
+    "test_id": "TC-FR020-11",
+    "test_name": "KYC role can queue a duplicate match",
+    "category": "Permission",
+    "linked_fr": "FR-020",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000017 has a medium confidence match on GSTIN+product_code='SBL'",
+      "KYC user 'kyc_priya@branch01.lms' has view+edit scope for branch-01",
+      "No existing duplicate_matches for this lead"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_017}/duplicate-check with body {\"requested_action\":\"queue\"} and Authorization: Bearer <kyc_priya_jwt>",
+      "Assert HTTP 200",
+      "Assert data.action_taken = 'queued'",
+      "Assert data.duplicate_status = 'flagged' or 'flagged'",
+      "Query DB: SELECT action, status FROM duplicate_matches WHERE lead_id='{lead_id_017}' — expect action='queued', status='open'",
+      "Query DB: SELECT duplicate_status FROM leads WHERE lead_id='{lead_id_017}' — expect 'flagged'"
+    ],
+    "test_data": {
+      "actor": { "email": "kyc_priya@branch01.lms", "role": "KYC", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-017-uuid",
+      "gstin": "27AABCU9603R1ZX",
+      "product_code": "SBL",
+      "requested_action": "queue"
+    },
+    "expected_result": "HTTP 200; data.action_taken='queued'; duplicate_matches.action='queued'; leads.duplicate_status='flagged'",
+    "postconditions": [
+      "duplicate_matches row created with action='queued', status='open'",
+      "leads.duplicate_status='flagged'"
+    ]
+  },
+  {
+    "test_id": "TC-FR020-DI-01",
+    "test_name": "Data integrity — override_reason must be populated when action=overridden",
+    "category": "Data Integrity",
+    "linked_fr": "FR-020",
+    "priority": "Critical",
+    "preconditions": [
+      "BM performs a valid override on a strong-match duplicate"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id}/duplicate-check with valid override payload including override_reason",
+      "After success, run invariant query"
+    ],
+    "test_data": {
+      "override_reason": "Verified same customer second product application",
+      "actor_role": "BM"
+    },
+    "expected_result": "Invariant query returns 0 rows",
+    "postconditions": ["All overridden duplicate_matches rows have non-null action_by and non-empty action_reason"],
+    "di_meta": {
+      "setup_sql": "INSERT INTO leads ... (seed strong-match pair); POST override via API",
+      "action": "POST /api/v1/leads/{id}/duplicate-check with requested_action=override and override_reason",
+      "invariant_query": "SELECT COUNT(*) FROM duplicate_matches WHERE action = 'overridden' AND (action_by IS NULL OR action_reason IS NULL OR action_reason = '')",
+      "cleanup": "DELETE FROM duplicate_matches WHERE lead_id IN (SELECT lead_id FROM leads WHERE lead_code LIKE 'LD-TEST-%')"
+    }
+  },
+  {
+    "test_id": "TC-FR020-DI-02",
+    "test_name": "Data integrity — no orphaned duplicate_matches after lead soft-delete",
+    "category": "Data Integrity",
+    "linked_fr": "FR-020",
+    "priority": "High",
+    "preconditions": [
+      "A duplicate_matches row exists for lead-A and lead-B"
+    ],
+    "test_steps": [
+      "Soft-delete lead-A by setting deleted_at (simulate via admin operation)",
+      "Run orphan invariant query"
+    ],
+    "test_data": {
+      "lead_id_a": "lead-A-uuid",
+      "lead_id_b": "lead-B-uuid"
+    },
+    "expected_result": "Invariant query returns 0 rows (CASCADE constraint deletes duplicate_matches on hard delete; soft-delete must not leave FK-violated rows if hard-deleted)",
+    "postconditions": ["No duplicate_matches referencing a hard-deleted lead"],
+    "di_meta": {
+      "setup_sql": "INSERT INTO leads (lead_id, ...) VALUES ('lead-A-uuid', ...); INSERT INTO duplicate_matches (lead_id, matched_lead_id, ...) VALUES ('lead-A-uuid', 'lead-B-uuid', ...)",
+      "action": "UPDATE leads SET deleted_at = now() WHERE lead_id = 'lead-A-uuid'",
+      "invariant_query": "SELECT dm.duplicate_match_id FROM duplicate_matches dm LEFT JOIN leads l ON l.lead_id = dm.lead_id AND l.deleted_at IS NULL WHERE l.lead_id IS NULL",
+      "cleanup": "DELETE FROM leads WHERE lead_id IN ('lead-A-uuid','lead-B-uuid')"
+    }
+  },
+  {
+    "test_id": "TC-FR020-UI-01",
+    "test_name": "Duplicate warning modal appears on medium match and RM cannot see Override button",
+    "category": "UI/E2E",
+    "linked_fr": "FR-020",
+    "priority": "High",
+    "preconditions": [
+      "Two leads in DB with identical mobile='9833001122', no PAN",
+      "RM 'rm_anita@branch01.lms' is logged in"
+    ],
+    "test_steps": [
+      "Navigate to /leads/new (lead capture form)",
+      "Fill form: name='Priya Sharma', mobile='9833001122', product='CV', source='Branch', dob='1990-05-15'",
+      "Submit form",
+      "Assert: DuplicateWarningModal is visible (getByRole('dialog', {name: /duplicate/i}))",
+      "Assert: confidence badge shows 'Medium' (getByTestId('confidence-badge'))",
+      "Assert: match table row 1 mobile column shows masked value matching pattern /98\\d{2}x{4}\\d{2}/",
+      "Assert: getByRole('button', {name: /override/i}) is NOT present in the DOM",
+      "Click getByRole('button', {name: /proceed with warning/i})",
+      "Assert: modal is closed (dialog not in DOM)",
+      "Assert: success toast visible; lead saved with stage='captured'"
+    ],
+    "test_data": {
+      "mobile": "9833001122",
+      "name": "Priya Sharma",
+      "product": "CV",
+      "source": "Branch",
+      "dob": "1990-05-15"
+    },
+    "expected_result": "DuplicateWarningModal rendered with Medium badge; Override button absent for RM; Proceed closes modal and saves lead",
+    "postconditions": [
+      "Lead created with duplicate_status='flagged'",
+      "duplicate_matches row with action='warned'"
+    ],
+    "ui_meta": {
+      "route": "/leads/new",
+      "locators": {
+        "modal": "getByRole('dialog', {name: /duplicate/i})",
+        "confidence_badge": "getByTestId('confidence-badge')",
+        "override_button": "getByRole('button', {name: /override/i})",
+        "proceed_button": "getByRole('button', {name: /proceed with warning/i})",
+        "mobile_cell": "getByTestId('match-mobile-masked')"
+      },
+      "viewport": ["1280x720", "375x667"],
+      "auth_state": "rm_anita@branch01.lms",
+      "network_wait": "waitForResponse('/api/v1/leads', {method: 'POST'})",
+      "visual_assert": "screenshot('duplicate-modal-medium-rm')",
+      "a11y": "axe-core scan on modal; all buttons reachable via Tab; Escape closes dialog"
+    }
+  },
+  {
+    "test_id": "TC-FR020-UI-02",
+    "test_name": "BM override flow — strong block, reason required, audit visible",
+    "category": "UI/E2E",
+    "linked_fr": "FR-020",
+    "priority": "Critical",
+    "preconditions": [
+      "Two leads in DB with identical pan_token and mobile",
+      "BM 'bm_raj@branch01.lms' is logged in"
+    ],
+    "test_steps": [
+      "Navigate to /leads/{lead_id}/duplicate-check or trigger from lead detail",
+      "Assert: DuplicateWarningModal shows 'Strong' confidence badge (red) (getByTestId('confidence-badge') text 'Strong')",
+      "Assert: getByRole('button', {name: /override/i}) is visible",
+      "Click Override button",
+      "Assert: ConfirmDialog appears (getByRole('dialog', {name: /confirm override/i}))",
+      "Click Confirm without entering override_reason",
+      "Assert: inline validation error visible: getByText(/override reason is required/i)",
+      "Fill getByTestId('override-reason-input') with 'Verified same customer, different product loan SBL'",
+      "Click Confirm",
+      "Assert: HTTP 200 returned (network intercept)",
+      "Assert: toast message getByText(/override successful/i) visible",
+      "Assert: duplicate_status chip on lead card shows 'None'",
+      "Navigate to /leads/{lead_id}/audit-trail",
+      "Assert: audit trail table contains row with action 'lead_override' (getByText(/lead_override/i) or getByTestId('audit-action'))"
+    ],
+    "test_data": {
+      "pan_token": "ABCDE1234F_hashed",
+      "mobile": "9911002200",
+      "override_reason": "Verified same customer, different product loan SBL"
+    },
+    "expected_result": "Override flow completes; confirmation dialog enforces non-empty reason; success toast appears; duplicate_status chip updates; audit trail shows lead_override",
+    "postconditions": [
+      "duplicate_matches.action='overridden' with action_reason populated",
+      "audit_logs entry with action='lead_override' persists"
+    ],
+    "ui_meta": {
+      "route": "/leads/{lead_id}",
+      "locators": {
+        "confidence_badge": "getByTestId('confidence-badge')",
+        "override_button": "getByRole('button', {name: /override/i})",
+        "confirm_dialog": "getByRole('dialog', {name: /confirm override/i})",
+        "override_reason_input": "getByTestId('override-reason-input')",
+        "confirm_button": "getByRole('button', {name: /confirm/i})",
+        "toast": "getByText(/override successful/i)",
+        "audit_action": "getByTestId('audit-action')"
+      },
+      "viewport": ["1280x720", "375x667"],
+      "auth_state": "bm_raj@branch01.lms",
+      "network_wait": "waitForResponse('/api/v1/leads/*/duplicate-check', {method: 'POST'})",
+      "visual_assert": "screenshot('bm-override-strong-duplicate')",
+      "a11y": "focus ring on Override button; Escape closes ConfirmDialog; confirm-dialog has role=alertdialog"
+    }
+  },
+  {
+    "test_id": "TC-FR021-01",
+    "test_name": "BM merges duplicate lead into master — all child records re-parented atomically",
+    "category": "Happy Path",
+    "linked_fr": "FR-021",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-000020 (master) and LD-2026-000021 (duplicate) exist in branch-01, both stage='captured', duplicate_status='flagged'",
+      "Duplicate LD-2026-000021 has 3 documents, 2 consent_records, 2 tasks",
+      "Master LD-2026-000020 has 2 documents, 1 consent_record",
+      "open duplicate_matches row exists for this pair",
+      "BM 'bm_raj@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_021}/merge with body {\"master_lead_id\":\"{lead_id_020}\",\"reason\":\"Verified same applicant, mobile updated\",\"field_precedence\":\"master\",\"expected_version\":1} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 200",
+      "Assert data.duplicate_status = 'merged'",
+      "Assert data.master_lead_id = lead_id_020",
+      "Query DB: SELECT COUNT(*) FROM documents WHERE lead_id='{lead_id_021}' — expect 0",
+      "Query DB: SELECT COUNT(*) FROM documents WHERE lead_id='{lead_id_020}' — expect 5",
+      "Query DB: SELECT COUNT(*) FROM consent_records WHERE lead_id='{lead_id_021}' — expect 0",
+      "Query DB: SELECT COUNT(*) FROM consent_records WHERE lead_id='{lead_id_020}' — expect 3",
+      "Query DB: SELECT COUNT(*) FROM tasks WHERE lead_id='{lead_id_021}' AND status NOT IN ('done','cancelled') — expect 0",
+      "Query DB: SELECT attribution_status FROM source_attributions WHERE source_attribution_id=(SELECT source_attribution_id FROM leads WHERE lead_id='{lead_id_021}') — expect 'merged_into'",
+      "Query DB: SELECT status, action FROM duplicate_matches WHERE (lead_id='{lead_id_021}' AND matched_lead_id='{lead_id_020}') OR (lead_id='{lead_id_020}' AND matched_lead_id='{lead_id_021}') — expect status='resolved', action='merged'",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE action='lead_merge' AND entity_id='{lead_id_020}' AND detail->>'duplicate_lead_id'='{lead_id_021}' — expect 1",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE event_code='LEAD_STAGE_CHANGED' AND aggregate_id='{lead_id_020}' — expect >= 1"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "duplicate_lead_id": "lead-021-uuid",
+      "master_lead_id": "lead-020-uuid",
+      "reason": "Verified same applicant, mobile updated",
+      "field_precedence": "master",
+      "expected_version": 1
+    },
+    "expected_result": "HTTP 200; duplicate lead has duplicate_status='merged', master_lead_id set; all 3 duplicate docs, 2 consents, 2 tasks re-parented to master; source_attribution.attribution_status='merged_into'; duplicate_matches resolved; audit_logs lead_merge entry; outbox event emitted",
+    "postconditions": [
+      "duplicate lead: duplicate_status='merged', master_lead_id set, 0 documents/consents/open tasks",
+      "master lead: 5 documents, 3 consents",
+      "duplicate_matches: status='resolved', action='merged'",
+      "audit_logs: 1 row with action='lead_merge'",
+      "source_attributions: attribution_status='merged_into' for duplicate's row"
+    ]
+  },
+  {
+    "test_id": "TC-FR021-02",
+    "test_name": "RM cannot merge leads — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-021",
+    "priority": "Critical",
+    "preconditions": [
+      "Leads LD-2026-000022 and LD-2026-000023 exist, duplicate_status='flagged'",
+      "RM 'rm_anita@branch01.lms' owns lead-022"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_022}/merge with body {\"master_lead_id\":\"{lead_id_023}\",\"reason\":\"Same customer\",\"field_precedence\":\"master\",\"expected_version\":1} and Authorization: Bearer <rm_anita_jwt>",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'",
+      "Query DB: SELECT duplicate_status FROM leads WHERE lead_id='{lead_id_022}' — expect 'flagged' (unchanged)",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE action='lead_merge' AND entity_id='{lead_id_022}' — expect 0"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM", "branch_id": "branch-01-uuid" },
+      "duplicate_lead_id": "lead-022-uuid",
+      "master_lead_id": "lead-023-uuid",
+      "reason": "Same customer"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no DB mutations; duplicate_status remains 'flagged'",
+    "postconditions": [
+      "No changes to leads, documents, consent_records, tasks, or audit_logs"
+    ]
+  },
+  {
+    "test_id": "TC-FR021-03",
+    "test_name": "Merge already-merged lead — 409 CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-021",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000024 already has duplicate_status='merged', master_lead_id=lead-025-uuid",
+      "BM 'bm_raj@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_024}/merge with body {\"master_lead_id\":\"{lead_id_026}\",\"reason\":\"Trying again\",\"field_precedence\":\"master\",\"expected_version\":2} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 409",
+      "Assert error.code = 'CONFLICT'",
+      "Query DB: SELECT duplicate_status, master_lead_id FROM leads WHERE lead_id='{lead_id_024}' — expect unchanged (merged, lead-025)"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "duplicate_lead_id": "lead-024-uuid",
+      "master_lead_id": "lead-026-uuid",
+      "reason": "Trying again"
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; lead remains in existing merged state with original master",
+    "postconditions": ["No change to leads or child records"]
+  },
+  {
+    "test_id": "TC-FR021-04",
+    "test_name": "Merge missing reason field — 400 VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-021",
+    "priority": "High",
+    "preconditions": [
+      "Valid BM session; two flagged leads in branch-01"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id}/merge with body {\"master_lead_id\":\"{master_id}\",\"field_precedence\":\"master\",\"expected_version\":1} (no reason field) and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.detail.fields contains 'reason'"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "body": { "master_lead_id": "lead-020-uuid", "field_precedence": "master", "expected_version": 1 }
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; fields array includes 'reason'; no DB writes",
+    "postconditions": ["No mutation in leads, documents, consent_records, audit_logs"]
+  },
+  {
+    "test_id": "TC-FR021-05",
+    "test_name": "BM unmerges within configured window — child records restored",
+    "category": "Workflow",
+    "linked_fr": "FR-021",
+    "priority": "High",
+    "preconditions": [
+      "Merge of LD-2026-000021 into LD-2026-000020 was completed < MERGE_UNMERGE_WINDOW_HOURS ago",
+      "BM 'bm_raj@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_021}/unmerge with body {\"reason\":\"Merge was incorrect, different customers\"} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 200",
+      "Assert data.duplicate_status = 'none'",
+      "Assert data.master_lead_id = null",
+      "Query DB: SELECT COUNT(*) FROM documents WHERE lead_id='{lead_id_021}' — expect 3 (originally re-parented docs restored)",
+      "Query DB: SELECT COUNT(*) FROM documents WHERE lead_id='{lead_id_020}' — expect 2 (only originals remain)",
+      "Query DB: SELECT attribution_status FROM source_attributions WHERE source_attribution_id=(SELECT source_attribution_id FROM leads WHERE lead_id='{lead_id_021}') — expect 'original'",
+      "Query DB: SELECT status FROM duplicate_matches WHERE (lead_id='{lead_id_021}' OR matched_lead_id='{lead_id_021}') — expect 'open' (re-opened)",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE action='lead_unmerge' AND entity_id='{lead_id_020}' — expect 1"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "duplicate_lead_id": "lead-021-uuid",
+      "master_lead_id": "lead-020-uuid",
+      "reason": "Merge was incorrect, different customers"
+    },
+    "expected_result": "HTTP 200; lead-021 reverts to duplicate_status='none', master_lead_id=null; re-parented documents return to lead-021; duplicate_matches re-opened; audit_logs lead_unmerge written",
+    "postconditions": [
+      "lead-021: duplicate_status='none', master_lead_id=null",
+      "Original documents back on lead-021",
+      "source_attributions.attribution_status='original' for lead-021",
+      "duplicate_matches.status='open' again",
+      "audit_logs: entry for lead_unmerge"
+    ]
+  },
+  {
+    "test_id": "TC-FR021-06",
+    "test_name": "Unmerge blocked after window expires — 403 FORBIDDEN",
+    "category": "Boundary",
+    "linked_fr": "FR-021",
+    "priority": "High",
+    "preconditions": [
+      "Merge of lead-021 into lead-020 was completed > MERGE_UNMERGE_WINDOW_HOURS ago (simulate by back-dating merged_at timestamp)",
+      "BM 'bm_raj@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_021}/unmerge with body {\"reason\":\"Late unmerge attempt\"} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'",
+      "Query DB: SELECT duplicate_status FROM leads WHERE lead_id='{lead_id_021}' — expect 'merged' (unchanged)"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "duplicate_lead_id": "lead-021-uuid",
+      "merged_at_offset_hours": 25
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; leads.duplicate_status remains 'merged'; no child records moved",
+    "postconditions": ["No DB changes; lead-021 remains in merged state"]
+  },
+  {
+    "test_id": "TC-FR021-07",
+    "test_name": "Transaction rollback — mid-merge failure leaves both leads unmodified",
+    "category": "Data Integrity",
+    "linked_fr": "FR-021",
+    "priority": "Critical",
+    "preconditions": [
+      "AuditAppender mocked to throw after documents UPDATE but before consent_records UPDATE",
+      "Two valid flagged leads in branch-01"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_021}/merge with valid BM payload",
+      "Assert HTTP 500 (or the error bubbled from the mock)",
+      "Query DB: SELECT duplicate_status FROM leads WHERE lead_id='{lead_id_021}' — expect original (not 'merged')",
+      "Query DB: SELECT COUNT(*) FROM documents WHERE lead_id='{lead_id_021}' — expect original count (3, not 0)",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE action='lead_merge' — expect 0 new rows",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE event_code='LEAD_STAGE_CHANGED' AND aggregate_id='{lead_id_020}' AND created_at > NOW()-INTERVAL '1 minute' — expect 0"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "duplicate_lead_id": "lead-021-uuid",
+      "master_lead_id": "lead-020-uuid",
+      "injected_fault": "AuditAppender.append throws after documents re-parent"
+    },
+    "expected_result": "Full transaction rollback; both leads retain pre-merge state; no partial writes to any table",
+    "postconditions": [
+      "leads: unchanged duplicate_status, unchanged master_lead_id",
+      "documents: all still on lead-021",
+      "consent_records: all still on lead-021",
+      "audit_logs: 0 new lead_merge rows",
+      "event_outbox: 0 new LEAD_STAGE_CHANGED rows from this operation"
+    ]
+  },
+  {
+    "test_id": "TC-FR021-DI-01",
+    "test_name": "Data integrity — merged lead always references a valid master",
+    "category": "Data Integrity",
+    "linked_fr": "FR-021",
+    "priority": "Critical",
+    "preconditions": [
+      "Merge operation completed successfully for lead-021 into lead-020"
+    ],
+    "test_steps": [
+      "Run invariant query after merge API call"
+    ],
+    "test_data": {
+      "duplicate_lead_id": "lead-021-uuid",
+      "master_lead_id": "lead-020-uuid"
+    },
+    "expected_result": "Invariant query returns 0 rows",
+    "postconditions": ["All merged leads reference valid, non-deleted master leads"],
+    "di_meta": {
+      "setup_sql": "Seed two leads via API; create duplicate_match; perform merge via API",
+      "action": "POST /api/v1/leads/{duplicate_id}/merge with valid BM payload",
+      "invariant_query": "SELECT lead_id FROM leads WHERE duplicate_status = 'merged' AND (master_lead_id IS NULL OR master_lead_id NOT IN (SELECT lead_id FROM leads WHERE deleted_at IS NULL))",
+      "cleanup": "DELETE FROM leads WHERE lead_code LIKE 'LD-TEST-%'"
+    }
+  },
+  {
+    "test_id": "TC-FR021-UI-01",
+    "test_name": "BM initiates merge from Lead 360 — field precedence preview and masked PAN/mobile",
+    "category": "UI/E2E",
+    "linked_fr": "FR-021",
+    "priority": "High",
+    "preconditions": [
+      "Two leads with duplicate_status='flagged' in BM's branch",
+      "BM 'bm_raj@branch01.lms' is logged in"
+    ],
+    "test_steps": [
+      "Navigate to /leads/{lead_id_021} (Lead 360 of duplicate)",
+      "Click getByRole('button', {name: /merge/i})",
+      "Assert: MergeConfirmDialog opens (getByRole('dialog', {name: /merge leads/i}))",
+      "Assert: FieldPrecedenceTable visible with radio buttons for 'master' and 'duplicate' columns",
+      "Assert: PAN/mobile values in the table are masked (getByTestId('pan-masked'), getByTestId('mobile-masked'))",
+      "Select field_precedence = 'master' radio",
+      "Fill getByTestId('merge-reason-input') with 'Same applicant, duplicate entry from telecalling'",
+      "Click getByRole('button', {name: /confirm merge/i})",
+      "Assert: success toast getByText(/leads merged successfully/i)",
+      "Assert: duplicate lead page now shows status chip 'Merged' (getByTestId('duplicate-status-chip') text 'Merged')",
+      "Navigate to /leads/{lead_id_020} (master)",
+      "Assert: document count reflects 5 total"
+    ],
+    "test_data": {
+      "duplicate_lead_id": "lead-021-uuid",
+      "master_lead_id": "lead-020-uuid",
+      "merge_reason": "Same applicant, duplicate entry from telecalling"
+    },
+    "expected_result": "MergeConfirmDialog shows masked PAN/mobile; precedence radio selection works; merge succeeds; duplicate lead shows 'Merged' chip; master shows re-parented documents",
+    "postconditions": [
+      "leads: duplicate_status='merged'",
+      "5 documents on master"
+    ],
+    "ui_meta": {
+      "route": "/leads/{lead_id_021}",
+      "locators": {
+        "merge_button": "getByRole('button', {name: /merge/i})",
+        "merge_dialog": "getByRole('dialog', {name: /merge leads/i})",
+        "pan_masked": "getByTestId('pan-masked')",
+        "mobile_masked": "getByTestId('mobile-masked')",
+        "precedence_master_radio": "getByRole('radio', {name: /master/i})",
+        "merge_reason_input": "getByTestId('merge-reason-input')",
+        "confirm_merge_button": "getByRole('button', {name: /confirm merge/i})",
+        "success_toast": "getByText(/leads merged successfully/i)",
+        "duplicate_status_chip": "getByTestId('duplicate-status-chip')"
+      },
+      "viewport": ["1280x720", "375x667"],
+      "auth_state": "bm_raj@branch01.lms",
+      "network_wait": "waitForResponse('/api/v1/leads/*/merge', {method: 'POST'})",
+      "visual_assert": "screenshot('merge-dialog-field-precedence')",
+      "a11y": "axe-core on MergeConfirmDialog; Tab order through radios and reason input; Escape closes dialog"
+    }
+  },
+  {
+    "test_id": "TC-FR021-UI-02",
+    "test_name": "RM does not see Merge button on Lead 360",
+    "category": "UI/E2E",
+    "linked_fr": "FR-021",
+    "priority": "High",
+    "preconditions": [
+      "Lead with duplicate_status='flagged' assigned to RM",
+      "RM 'rm_anita@branch01.lms' is logged in"
+    ],
+    "test_steps": [
+      "Navigate to /leads/{lead_id} (Lead 360 of flagged lead)",
+      "Assert: getByRole('button', {name: /merge/i}) is NOT present in the DOM"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM" },
+      "lead_id": "lead-022-uuid",
+      "lead_duplicate_status": "flagged"
+    },
+    "expected_result": "Merge button not rendered for RM role on Lead 360",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/{lead_id}",
+      "locators": {
+        "merge_button": "getByRole('button', {name: /merge/i})"
+      },
+      "viewport": ["1280x720", "375x667"],
+      "auth_state": "rm_anita@branch01.lms",
+      "network_wait": "waitForResponse('/api/v1/leads/*')",
+      "visual_assert": "screenshot('lead-360-rm-no-merge-button')",
+      "a11y": "axe-core baseline on Lead 360 for RM role"
+    }
+  },
+  {
+    "test_id": "TC-FR030-01",
+    "test_name": "Auto-allocation on lead create — captured to assigned, SLA timer set",
+    "category": "Happy Path",
+    "linked_fr": "FR-030",
+    "priority": "Critical",
+    "preconditions": [
+      "Active AllocationRule: method='round_robin', product_code='CAR', source='Website', priority_order=1, branch_id='branch-01-uuid', is_active=true",
+      "RM 'rm_mohan@branch01.lms' is active, capacity_limit=10, active_count=2",
+      "No other RM in the rule pool"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads with body {\"name\":\"Anil Mehta\",\"mobile\":\"9712345678\",\"product_code\":\"CAR\",\"source\":\"Website\",\"branch_id\":\"branch-01-uuid\",\"priority\":\"normal\"} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 201",
+      "Assert data.stage = 'assigned'",
+      "Assert data.owner_id = rm_mohan_uuid",
+      "Query DB: SELECT owner_id, stage, sla_first_contact_due_at FROM leads WHERE lead_id=data.lead_id — owner_id=rm_mohan_uuid, stage='assigned', sla_first_contact_due_at IS NOT NULL",
+      "Query DB: SELECT COUNT(*) FROM stage_history WHERE lead_id=data.lead_id AND from_stage='captured' AND to_stage='assigned' — expect 1",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE lead_id=data.lead_id AND action='allocate' — expect 1",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE aggregate_id=data.lead_id AND event_code='LEAD_ASSIGNED' — expect 1"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead": {
+        "name": "Anil Mehta",
+        "mobile": "9712345678",
+        "product_code": "CAR",
+        "source": "Website",
+        "branch_id": "branch-01-uuid",
+        "priority": "normal"
+      },
+      "allocation_rule": {
+        "method": "round_robin",
+        "product_code": "CAR",
+        "source": "Website",
+        "priority_order": 1
+      },
+      "rm_pool": [{ "user_id": "rm-mohan-uuid", "active_count": 2, "capacity_limit": 10 }]
+    },
+    "expected_result": "HTTP 201; lead stage='assigned'; owner_id=rm_mohan_uuid; sla_first_contact_due_at populated; stage_history row from 'captured' to 'assigned'; audit_logs entry with action='allocate'; LEAD_ASSIGNED in event_outbox",
+    "postconditions": [
+      "Lead stage='assigned', owner_id set",
+      "sla_first_contact_due_at is not null",
+      "stage_history: 1 row captured→assigned",
+      "audit_logs: 1 row action='allocate'",
+      "event_outbox: LEAD_ASSIGNED"
+    ]
+  },
+  {
+    "test_id": "TC-FR030-02",
+    "test_name": "No allocation rule matches — lead remains unassigned, alert emitted",
+    "category": "Boundary",
+    "linked_fr": "FR-030",
+    "priority": "High",
+    "preconditions": [
+      "No active AllocationRule matches product_code='TRACTOR', source='Field', branch_id='branch-01-uuid'",
+      "BM 'bm_raj@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads with body {\"name\":\"Kisan Lal\",\"mobile\":\"9611223344\",\"product_code\":\"TRACTOR\",\"source\":\"Field\",\"branch_id\":\"branch-01-uuid\",\"priority\":\"normal\"} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 201 (lead still created)",
+      "Assert data.owner_id = null",
+      "Assert data.stage = 'captured' (not moved to 'assigned' since unallocated)",
+      "Assert data.allocation_reason contains 'no_rule_match' or similar",
+      "Query DB: SELECT owner_id, stage FROM leads WHERE lead_id=data.lead_id — expect owner_id=null, stage='captured'",
+      "Check application logs for 'allocation.no_match' warning entry with lead_id"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead": {
+        "name": "Kisan Lal",
+        "mobile": "9611223344",
+        "product_code": "TRACTOR",
+        "source": "Field",
+        "branch_id": "branch-01-uuid",
+        "priority": "normal"
+      }
+    },
+    "expected_result": "HTTP 201; lead created with owner_id=null, stage='captured'; event_outbox LEAD_ASSIGNED with owner_id=null; application log warns allocation.no_match",
+    "postconditions": [
+      "lead: owner_id=null, stage='captured'",
+      "event_outbox: LEAD_ASSIGNED row with owner_id=null payload"
+    ]
+  },
+  {
+    "test_id": "TC-FR030-03",
+    "test_name": "BM manual reassign within branch — reason audited, stage set to assigned",
+    "category": "Happy Path",
+    "linked_fr": "FR-030",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-000030 in branch-01, stage='assigned', current owner=rm_mohan, version=2",
+      "RM 'rm_deepa@branch01.lms' is active in branch-01, capacity not exceeded",
+      "BM 'bm_raj@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_030}/reassign with body {\"new_owner_id\":\"rm-deepa-uuid\",\"reason\":\"RM Mohan on leave, Deepa covering\",\"expected_version\":2} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 200",
+      "Assert data.owner_id = rm-deepa-uuid",
+      "Assert data.stage = 'assigned'",
+      "Assert data.version = 3",
+      "Query DB: SELECT COUNT(*) FROM stage_history WHERE lead_id='{lead_id_030}' AND to_stage='assigned' — expect >= 1",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE lead_id='{lead_id_030}' AND action='reassign' — expect 1",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE aggregate_id='{lead_id_030}' AND event_code='LEAD_ASSIGNED' — expect >= 1"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-030-uuid",
+      "new_owner_id": "rm-deepa-uuid",
+      "reason": "RM Mohan on leave, Deepa covering",
+      "expected_version": 2
+    },
+    "expected_result": "HTTP 200; lead.owner_id=rm-deepa-uuid; version incremented; stage_history row; audit_logs action='reassign'; event_outbox LEAD_ASSIGNED",
+    "postconditions": [
+      "leads.owner_id=rm-deepa-uuid, version=3",
+      "audit_logs: 1 row with action='reassign', detail.reason present",
+      "event_outbox: LEAD_ASSIGNED"
+    ]
+  },
+  {
+    "test_id": "TC-FR030-04",
+    "test_name": "RM cannot reassign — 403 FORBIDDEN (no allocate capability)",
+    "category": "Permission",
+    "linked_fr": "FR-030",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-000031 assigned to rm_anita in branch-01",
+      "RM 'rm_anita@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_031}/reassign with body {\"new_owner_id\":\"rm-deepa-uuid\",\"reason\":\"Transfer request\",\"expected_version\":1} and Authorization: Bearer <rm_anita_jwt>",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'",
+      "Query DB: SELECT owner_id FROM leads WHERE lead_id='{lead_id_031}' — expect rm_anita_uuid (unchanged)"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-031-uuid",
+      "new_owner_id": "rm-deepa-uuid",
+      "reason": "Transfer request"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; owner_id unchanged; no audit or outbox writes",
+    "postconditions": ["leads.owner_id unchanged; no audit_logs or event_outbox writes"]
+  },
+  {
+    "test_id": "TC-FR030-05",
+    "test_name": "Reassign to RM at capacity without override — 409 CONFLICT",
+    "category": "Boundary",
+    "linked_fr": "FR-030",
+    "priority": "High",
+    "preconditions": [
+      "RM 'rm_deepa@branch01.lms' has active_count=10, capacity_limit=10 (at capacity)",
+      "BM 'bm_raj@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_032}/reassign with body {\"new_owner_id\":\"rm-deepa-uuid\",\"reason\":\"Reassign to Deepa\",\"expected_version\":1,\"override_capacity\":false} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 409",
+      "Assert error.code = 'CONFLICT'",
+      "Query DB: SELECT owner_id FROM leads WHERE lead_id='{lead_id_032}' — expect original owner (unchanged)"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-032-uuid",
+      "new_owner_id": "rm-deepa-uuid",
+      "rm_deepa_active_count": 10,
+      "rm_deepa_capacity_limit": 10,
+      "override_capacity": false
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; leads.owner_id unchanged; no allocation made",
+    "postconditions": ["leads.owner_id unchanged"]
+  },
+  {
+    "test_id": "TC-FR030-06",
+    "test_name": "BM overrides capacity limit — reassign succeeds and audit records override",
+    "category": "Happy Path",
+    "linked_fr": "FR-030",
+    "priority": "High",
+    "preconditions": [
+      "RM 'rm_deepa@branch01.lms' at capacity (active_count=10, capacity_limit=10)",
+      "BM 'bm_raj@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id_033}/reassign with body {\"new_owner_id\":\"rm-deepa-uuid\",\"reason\":\"Urgent hot lead, capacity override authorized\",\"expected_version\":1,\"override_capacity\":true} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 200",
+      "Assert data.owner_id = rm-deepa-uuid",
+      "Query DB: SELECT detail FROM audit_logs WHERE lead_id='{lead_id_033}' AND action='reassign' — expect detail->>'override_capacity' = 'true'"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-033-uuid",
+      "new_owner_id": "rm-deepa-uuid",
+      "reason": "Urgent hot lead, capacity override authorized",
+      "override_capacity": true
+    },
+    "expected_result": "HTTP 200; reassign succeeds; audit_logs detail.override_capacity=true",
+    "postconditions": [
+      "leads.owner_id=rm-deepa-uuid",
+      "audit_logs: detail.override_capacity='true'"
+    ]
+  },
+  {
+    "test_id": "TC-FR030-07",
+    "test_name": "SM cannot override capacity — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-030",
+    "priority": "High",
+    "preconditions": [
+      "RM at capacity",
+      "SM 'sm_kavita@team01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id}/reassign with body {\"new_owner_id\":\"rm-deepa-uuid\",\"reason\":\"Reassign\",\"expected_version\":1,\"override_capacity\":true} and Authorization: Bearer <sm_kavita_jwt>",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "actor": { "email": "sm_kavita@team01.lms", "role": "SM", "team_id": "team-01-uuid" },
+      "lead_id": "lead-034-uuid",
+      "override_capacity": true
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; SM is not permitted to override capacity",
+    "postconditions": ["No change to lead ownership"]
+  },
+  {
+    "test_id": "TC-FR030-08",
+    "test_name": "Reassign reason below minimum length — 400 VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-030",
+    "priority": "Medium",
+    "preconditions": [
+      "Valid BM session and lead in branch-01"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id}/reassign with body {\"new_owner_id\":\"rm-deepa-uuid\",\"reason\":\"OK\",\"expected_version\":1} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.detail.fields[0].field = 'reason'"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "reason": "OK",
+      "reason_length": 2
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; fields includes 'reason' (min 5 characters)",
+    "postconditions": ["No lead mutation; no audit entry"]
+  },
+  {
+    "test_id": "TC-FR030-09",
+    "test_name": "Allocation rule priority ordering — first matching rule wins, lower-priority rule skipped",
+    "category": "Workflow",
+    "linked_fr": "FR-030",
+    "priority": "High",
+    "preconditions": [
+      "AllocationRule A: priority_order=1, method='specialist', product_code='SBL', pool=[rm_specialist_uuid]",
+      "AllocationRule B: priority_order=2, method='round_robin', product_code='SBL', pool=[rm_mohan_uuid, rm_deepa_uuid]",
+      "Both rules active; lead product_code='SBL'"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads with body {\"name\":\"Business Lead\",\"mobile\":\"9599887766\",\"product_code\":\"SBL\",\"source\":\"DSA\",\"branch_id\":\"branch-01-uuid\"} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 201",
+      "Assert data.owner_id = rm_specialist_uuid (rule A wins)",
+      "Assert data.allocation_reason contains rule A's id or 'specialist'"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead": { "name": "Business Lead", "mobile": "9599887766", "product_code": "SBL", "source": "DSA" },
+      "rule_A": { "priority_order": 1, "method": "specialist", "product_code": "SBL" },
+      "rule_B": { "priority_order": 2, "method": "round_robin", "product_code": "SBL" }
+    },
+    "expected_result": "HTTP 201; owner_id=rm_specialist_uuid (rule A at priority 1 selected, rule B not evaluated)",
+    "postconditions": ["lead.owner_id=rm_specialist_uuid; stage='assigned'"]
+  },
+  {
+    "test_id": "TC-FR030-DI-01",
+    "test_name": "Data integrity — every assigned lead has sla_first_contact_due_at set",
+    "category": "Data Integrity",
+    "linked_fr": "FR-030",
+    "priority": "Critical",
+    "preconditions": [
+      "Multiple leads allocated via automatic and manual reassign paths"
+    ],
+    "test_steps": [
+      "Run invariant query after 5 allocation operations"
+    ],
+    "test_data": {},
+    "expected_result": "Invariant query returns 0 rows",
+    "postconditions": ["All leads in 'assigned' stage have non-null sla_first_contact_due_at"],
+    "di_meta": {
+      "setup_sql": "Seed leads and allocation rules; trigger auto-allocation via POST /api/v1/leads",
+      "action": "Multiple POST /api/v1/leads calls triggering allocation",
+      "invariant_query": "SELECT lead_id FROM leads WHERE stage = 'assigned' AND sla_first_contact_due_at IS NULL AND deleted_at IS NULL",
+      "cleanup": "DELETE FROM leads WHERE lead_code LIKE 'LD-TEST-%'"
+    }
+  },
+  {
+    "test_id": "TC-FR030-DI-02",
+    "test_name": "Data integrity — audit_logs and stage_history created in same transaction for reassign",
+    "category": "Data Integrity",
+    "linked_fr": "FR-030",
+    "priority": "High",
+    "preconditions": [
+      "BM performs a valid reassign"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/{lead_id}/reassign with valid BM payload",
+      "Run invariant query to confirm no audit_log without matching stage_history"
+    ],
+    "test_data": {
+      "actor_role": "BM"
+    },
+    "expected_result": "Invariant query returns 0 rows",
+    "postconditions": ["audit_logs reassign entry co-exists with stage_history assigned entry"],
+    "di_meta": {
+      "setup_sql": "Seed lead in 'assigned' stage with owner=rm_mohan; seed target RM rm_deepa at available capacity",
+      "action": "POST /api/v1/leads/{id}/reassign",
+      "invariant_query": "SELECT al.audit_id FROM audit_logs al LEFT JOIN stage_history sh ON sh.lead_id = al.lead_id AND sh.to_stage = 'assigned' AND sh.occurred_at BETWEEN al.created_at - INTERVAL '1 second' AND al.created_at + INTERVAL '1 second' WHERE al.action IN ('allocate', 'reassign') AND sh.stage_history_id IS NULL",
+      "cleanup": "DELETE FROM audit_logs WHERE action IN ('allocate','reassign') AND created_at > NOW() - INTERVAL '5 minutes'"
+    }
+  },
+  {
+    "test_id": "TC-FR030-UI-01",
+    "test_name": "BM reassigns lead via Reassign Drawer — success toast and owner name updated",
+    "category": "UI/E2E",
+    "linked_fr": "FR-030",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000030 assigned to rm_mohan in branch-01",
+      "BM 'bm_raj@branch01.lms' is logged in",
+      "rm_deepa is active and has available capacity"
+    ],
+    "test_steps": [
+      "Navigate to /leads/{lead_id_030} (Lead 360)",
+      "Click getByRole('button', {name: /reassign/i})",
+      "Assert: Reassign Drawer opens (getByTestId('reassign-drawer'))",
+      "Select rm_deepa from RM dropdown (getByRole('combobox', {name: /assign to/i})); getByRole('option', {name: /deepa/i})",
+      "Fill getByTestId('reassign-reason-input') with 'RM Mohan on leave, Deepa covering'",
+      "Click getByRole('button', {name: /confirm/i})",
+      "Assert: toast message getByText(/lead reassigned to deepa/i) visible",
+      "Assert: lead header shows new owner name 'Deepa' (getByTestId('lead-owner-name'))"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM" },
+      "lead_id": "lead-030-uuid",
+      "new_owner_name": "Deepa",
+      "reason": "RM Mohan on leave, Deepa covering"
+    },
+    "expected_result": "Reassign Drawer opens; RM selection works; reason accepted; success toast appears; lead header updates to show new owner",
+    "postconditions": ["leads.owner_id=rm-deepa-uuid"],
+    "ui_meta": {
+      "route": "/leads/{lead_id_030}",
+      "locators": {
+        "reassign_button": "getByRole('button', {name: /reassign/i})",
+        "reassign_drawer": "getByTestId('reassign-drawer')",
+        "rm_combobox": "getByRole('combobox', {name: /assign to/i})",
+        "rm_option": "getByRole('option', {name: /deepa/i})",
+        "reason_input": "getByTestId('reassign-reason-input')",
+        "confirm_button": "getByRole('button', {name: /confirm/i})",
+        "success_toast": "getByText(/lead reassigned to deepa/i)",
+        "owner_name": "getByTestId('lead-owner-name')"
+      },
+      "viewport": ["1280x720", "375x667"],
+      "auth_state": "bm_raj@branch01.lms",
+      "network_wait": "waitForResponse('/api/v1/leads/*/reassign', {method: 'POST'})",
+      "visual_assert": "screenshot('reassign-drawer-success')",
+      "a11y": "axe-core on Reassign Drawer; combobox keyboard navigable; reason textarea labelled"
+    }
+  },
+  {
+    "test_id": "TC-FR030-UI-02",
+    "test_name": "Reassign form blocks submission with empty reason — inline validation",
+    "category": "UI/E2E",
+    "linked_fr": "FR-030",
+    "priority": "Medium",
+    "preconditions": [
+      "BM 'bm_raj@branch01.lms' logged in; Reassign Drawer open for a lead"
+    ],
+    "test_steps": [
+      "Navigate to /leads/{lead_id} and open Reassign Drawer",
+      "Select target RM from dropdown",
+      "Leave reason field blank",
+      "Click getByRole('button', {name: /confirm/i})",
+      "Assert: getByText(/reason is required/i) visible (inline form error)",
+      "Assert: no network request fired to /api/v1/leads/*/reassign"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM" },
+      "reason": ""
+    },
+    "expected_result": "Form does not submit; inline error 'Reason is required' shown; no API call made",
+    "postconditions": ["Lead not modified"],
+    "ui_meta": {
+      "route": "/leads/{lead_id}",
+      "locators": {
+        "confirm_button": "getByRole('button', {name: /confirm/i})",
+        "validation_error": "getByText(/reason is required/i)"
+      },
+      "viewport": ["1280x720", "375x667"],
+      "auth_state": "bm_raj@branch01.lms",
+      "network_wait": null,
+      "visual_assert": "screenshot('reassign-drawer-reason-required')",
+      "a11y": "error message associated with reason textarea via aria-describedby"
+    }
+  },
+  {
+    "test_id": "TC-FR031-01",
+    "test_name": "Lead flagged as hot on create — high priority and amount above threshold",
+    "category": "Happy Path",
+    "linked_fr": "FR-031",
+    "priority": "Critical",
+    "preconditions": [
+      "ProductConfig for 'CAR' has hot_threshold=500000",
+      "No prior is_hot state on this new lead"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads with body {\"name\":\"Rajiv Singh\",\"mobile\":\"9688774455\",\"product_code\":\"CAR\",\"source\":\"Referral\",\"priority\":\"high\",\"requested_amount\":750000,\"branch_id\":\"branch-01-uuid\"} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 201",
+      "Assert data.is_hot = true",
+      "Assert data.score >= 25",
+      "Assert data.score_reasons is a non-empty array containing 'PRIORITY_HIGH'",
+      "Assert data.score_reasons contains 'AMOUNT_ABOVE_THRESHOLD'",
+      "Query DB: SELECT is_hot, score, score_reasons FROM leads WHERE lead_id=data.lead_id — is_hot=true, score>=25, score_reasons non-empty",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE aggregate_id=data.lead_id AND event_code='HOT_LEAD' — expect 1"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead": {
+        "name": "Rajiv Singh",
+        "mobile": "9688774455",
+        "product_code": "CAR",
+        "source": "Referral",
+        "priority": "high",
+        "requested_amount": 750000,
+        "branch_id": "branch-01-uuid"
+      },
+      "product_config_hot_threshold": 500000
+    },
+    "expected_result": "HTTP 201; data.is_hot=true; data.score>=25; data.score_reasons contains 'PRIORITY_HIGH' and 'AMOUNT_ABOVE_THRESHOLD'; event_outbox HOT_LEAD emitted",
+    "postconditions": [
+      "leads.is_hot=true, score>=25, score_reasons non-empty JSONB array",
+      "event_outbox: 1 HOT_LEAD event with aggregate_id=lead_id"
+    ]
+  },
+  {
+    "test_id": "TC-FR031-02",
+    "test_name": "Lead cools — hot cleared when no rule fires after PATCH update",
+    "category": "Workflow",
+    "linked_fr": "FR-031",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-000040 exists with is_hot=true, score=35, score_reasons=['PRIORITY_HIGH','AMOUNT_ABOVE_THRESHOLD'], priority='high', requested_amount=750000",
+      "RM 'rm_anita@branch01.lms' owns the lead"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/{lead_id_040} with body {\"priority\":\"normal\",\"requested_amount\":200000} and Authorization: Bearer <rm_anita_jwt>",
+      "Assert HTTP 200",
+      "Assert data.is_hot = false",
+      "Assert data.score_reasons contains 'COOLED'",
+      "Query DB: SELECT is_hot, score_reasons FROM leads WHERE lead_id='{lead_id_040}' — is_hot=false, score_reasons contains 'COOLED'",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE aggregate_id='{lead_id_040}' AND event_code='HOT_LEAD' AND created_at > NOW()-INTERVAL '1 minute' — expect 0 (cool-down does NOT emit HOT_LEAD)"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-040-uuid",
+      "patch_body": { "priority": "normal", "requested_amount": 200000 },
+      "pre_state": { "is_hot": true, "priority": "high", "requested_amount": 750000 }
+    },
+    "expected_result": "HTTP 200; data.is_hot=false; score_reasons contains 'COOLED'; no HOT_LEAD outbox event emitted for cool-down transition",
+    "postconditions": [
+      "leads.is_hot=false",
+      "score_reasons contains 'COOLED'",
+      "No new HOT_LEAD event_outbox row"
+    ]
+  },
+  {
+    "test_id": "TC-FR031-03",
+    "test_name": "HOT_LEAD outbox emitted only on false→true transition, not on repeated hot evaluation",
+    "category": "Boundary",
+    "linked_fr": "FR-031",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000041 is already is_hot=true, score=40",
+      "RM 'rm_anita@branch01.lms' owns the lead"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/{lead_id_041} with body {\"priority\":\"high\",\"requested_amount\":900000} (still hot) and Authorization: Bearer <rm_anita_jwt>",
+      "Assert HTTP 200",
+      "Assert data.is_hot = true",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE aggregate_id='{lead_id_041}' AND event_code='HOT_LEAD' AND created_at > NOW()-INTERVAL '1 minute' — expect 0 (already hot, no new event)"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM", "branch_id": "branch-01-uuid" },
+      "lead_id": "lead-041-uuid",
+      "pre_state": { "is_hot": true },
+      "patch_body": { "priority": "high", "requested_amount": 900000 }
+    },
+    "expected_result": "HTTP 200; data.is_hot=true; no new HOT_LEAD event in event_outbox (idempotent, already hot)",
+    "postconditions": ["event_outbox: no new HOT_LEAD rows from this update"]
+  },
+  {
+    "test_id": "TC-FR031-04",
+    "test_name": "Scoring error does not block lead create — lead saved with is_hot=false",
+    "category": "Negative/Error",
+    "linked_fr": "FR-031",
+    "priority": "High",
+    "preconditions": [
+      "ScoringService.evaluate is mocked to throw a runtime error",
+      "BM 'bm_raj@branch01.lms' is authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads with valid payload {\"name\":\"Test Lead\",\"mobile\":\"9577665544\",\"product_code\":\"HRM\",\"source\":\"Website\",\"priority\":\"high\",\"requested_amount\":600000,\"branch_id\":\"branch-01-uuid\"} and Authorization: Bearer <bm_raj_jwt>",
+      "Assert HTTP 201 (lead still created despite scoring error)",
+      "Assert data.is_hot = false",
+      "Assert data.score = null or absent",
+      "Query DB: SELECT is_hot, score FROM leads WHERE lead_id=data.lead_id — is_hot=false, score=null",
+      "Check application logs for scoring error at ERROR level (not in response body)"
+    ],
+    "test_data": {
+      "actor": { "email": "bm_raj@branch01.lms", "role": "BM", "branch_id": "branch-01-uuid" },
+      "lead": { "name": "Test Lead", "mobile": "9577665544", "product_code": "HRM", "source": "Website", "priority": "high", "requested_amount": 600000 },
+      "injected_fault": "ScoringService.evaluate throws Error('DB unavailable')"
+    },
+    "expected_result": "HTTP 201; lead saved with is_hot=false, score=null; no 500 error returned; error logged at ERROR level in application logs",
+    "postconditions": [
+      "leads.is_hot=false, score=null",
+      "Lead exists and is actionable"
+    ]
+  },
+  {
+    "test_id": "TC-FR031-05",
+    "test_name": "Score clamped to 100 when all hot rules fire simultaneously",
+    "category": "Boundary",
+    "linked_fr": "FR-031",
+    "priority": "Medium",
+    "preconditions": [
+      "Lead configured to trigger all 8 hot rules simultaneously: priority=high, amount>threshold, returning_customer=true, partner_verified=true, docs_uploaded=true, los_indicative_positive=true, callback_task_exists=true"
+    ],
+    "test_steps": [
+      "Call ScoringService.computeScore(ctx) with all-signals-active lead context (unit test)",
+      "Assert returned score = 100 (clamped, not > 100)",
+      "Assert score_reasons is non-empty"
+    ],
+    "test_data": {
+      "priority": "high",
+      "requested_amount": 2000000,
+      "is_returning_customer": true,
+      "partner_verified": true,
+      "docs_uploaded": true,
+      "los_indicative_positive": true,
+      "callback_task_exists": true,
+      "product_config_hot_threshold": 500000
+    },
+    "expected_result": "Returned score = exactly 100; score_reasons is non-empty array; no error thrown",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR031-06",
+    "test_name": "PARTNER role does not see is_hot, score, or score_reasons in lead response",
+    "category": "Permission",
+    "linked_fr": "FR-031",
+    "priority": "High",
+    "preconditions": [
+      "PARTNER 'dsapartner@dsa01.lms' has submitted Lead LD-2026-000042 which is is_hot=true",
+      "PARTNER JWT is valid"
+    ],
+    "test_steps": [
+      "GET /api/v1/leads/{lead_id_042} with Authorization: Bearer <partner_jwt>",
+      "Assert HTTP 200",
+      "Assert data object does NOT contain 'is_hot' field",
+      "Assert data object does NOT contain 'score' field",
+      "Assert data object does NOT contain 'score_reasons' field"
+    ],
+    "test_data": {
+      "actor": { "email": "dsapartner@dsa01.lms", "role": "PARTNER" },
+      "lead_id": "lead-042-uuid",
+      "lead_is_hot": true,
+      "lead_score": 72
+    },
+    "expected_result": "HTTP 200; response data object excludes is_hot, score, score_reasons fields entirely",
+    "postconditions": ["No scoring data exposed to PARTNER role"]
+  },
+  {
+    "test_id": "TC-FR031-07",
+    "test_name": "Product config missing hot_threshold — default threshold applied, no error",
+    "category": "Boundary",
+    "linked_fr": "FR-031",
+    "priority": "Medium",
+    "preconditions": [
+      "ProductConfig for 'CE' has no hot_threshold key in field_schema",
+      "Lead with product_code='CE', requested_amount=600000 (above any reasonable default)"
+    ],
+    "test_steps": [
+      "Call ScoringService.evaluateHotRules(ctx) with CE lead context (unit test)",
+      "Assert isHot = true",
+      "Assert hotReasons contains 'AMOUNT_ABOVE_DEFAULT_THRESHOLD'",
+      "Assert no exception thrown"
+    ],
+    "test_data": {
+      "product_code": "CE",
+      "requested_amount": 600000,
+      "product_config_hot_threshold": null
+    },
+    "expected_result": "isHot=true; hotReasons contains 'AMOUNT_ABOVE_DEFAULT_THRESHOLD'; no error thrown; system default threshold used",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR031-DI-01",
+    "test_name": "Data integrity — is_hot=true leads must always have non-empty score_reasons",
+    "category": "Data Integrity",
+    "linked_fr": "FR-031",
+    "priority": "Critical",
+    "preconditions": [
+      "Multiple leads created via API with hot rules triggered"
+    ],
+    "test_steps": [
+      "Run invariant query after 5 hot-lead creation operations"
+    ],
+    "test_data": {},
+    "expected_result": "Invariant query returns 0 rows",
+    "postconditions": ["All is_hot=true leads have non-null, non-empty score_reasons JSONB array"],
+    "di_meta": {
+      "setup_sql": "Seed ProductConfig for CAR with hot_threshold=500000; create leads with priority=high and requested_amount=750000",
+      "action": "POST /api/v1/leads with priority=high and amount>threshold (multiple runs)",
+      "invariant_query": "SELECT lead_id FROM leads WHERE is_hot = true AND (score_reasons IS NULL OR score_reasons = '[]'::jsonb) AND deleted_at IS NULL",
+      "cleanup": "DELETE FROM leads WHERE lead_code LIKE 'LD-TEST-%'"
+    }
+  },
+  {
+    "test_id": "TC-FR031-DI-02",
+    "test_name": "Data integrity — score must be between 0 and 100 inclusive",
+    "category": "Data Integrity",
+    "linked_fr": "FR-031",
+    "priority": "High",
+    "preconditions": [
+      "Multiple leads with various scoring rule combinations"
+    ],
+    "test_steps": [
+      "Run invariant query after scoring operations"
+    ],
+    "test_data": {},
+    "expected_result": "Invariant query returns 0 rows",
+    "postconditions": ["No lead has a score outside [0, 100]"],
+    "di_meta": {
+      "setup_sql": "Create leads triggering all combinations of hot rules",
+      "action": "ScoringService.evaluate called on each lead",
+      "invariant_query": "SELECT lead_id FROM leads WHERE score IS NOT NULL AND (score < 0 OR score > 100) AND deleted_at IS NULL",
+      "cleanup": "DELETE FROM leads WHERE lead_code LIKE 'LD-TEST-%'"
+    }
+  },
+  {
+    "test_id": "TC-FR031-UI-01",
+    "test_name": "Hot badge visible on Lead 360 after hot-triggering create",
+    "category": "UI/E2E",
+    "linked_fr": "FR-031",
+    "priority": "High",
+    "preconditions": [
+      "ProductConfig for CAR has hot_threshold=500000",
+      "RM 'rm_anita@branch01.lms' is logged in"
+    ],
+    "test_steps": [
+      "Navigate to /leads/new",
+      "Fill capture form: name='Rajiv Singh', mobile='9688774455', product='CAR', source='Referral', priority='High', requested_amount='750000'",
+      "Submit form",
+      "Navigate to /leads/{new_lead_id} (Lead 360)",
+      "Assert: getByTestId('lead-hot-badge') is visible",
+      "Assert: getByTestId('lead-hot-badge') has text matching /hot/i",
+      "Assert: getByTestId('lead-hot-badge') has aria-label 'Hot lead'"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM" },
+      "lead": { "name": "Rajiv Singh", "mobile": "9688774455", "product": "CAR", "priority": "High", "requested_amount": 750000 }
+    },
+    "expected_result": "Hot badge visible in lead header on Lead 360; aria-label='Hot lead' present; badge text matches i18n key for 'Hot'",
+    "postconditions": ["lead.is_hot=true"],
+    "ui_meta": {
+      "route": "/leads/{new_lead_id}",
+      "locators": {
+        "hot_badge": "getByTestId('lead-hot-badge')"
+      },
+      "viewport": ["1280x720", "375x667"],
+      "auth_state": "rm_anita@branch01.lms",
+      "network_wait": "waitForResponse('/api/v1/leads/*', {method: 'GET'})",
+      "visual_assert": "screenshot('lead-360-hot-badge-visible')",
+      "a11y": "hot badge has aria-label='Hot lead'; color contrast meets WCAG AA (red on white >= 4.5:1)"
+    }
+  },
+  {
+    "test_id": "TC-FR031-UI-02",
+    "test_name": "Score chip shows factor breakdown on hover — disclaimer text present",
+    "category": "UI/E2E",
+    "linked_fr": "FR-031",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000041 has is_hot=true, score=72, score_reasons=['PRIORITY_HIGH','PARTNER_VERIFIED']",
+      "RM 'rm_anita@branch01.lms' owns the lead"
+    ],
+    "test_steps": [
+      "Navigate to /leads/{lead_id_041} (Lead 360)",
+      "Assert: getByTestId('lead-score-chip') shows text '72 / 100'",
+      "Hover or focus getByTestId('lead-score-chip')",
+      "Assert: HoverCard is visible (getByRole('tooltip') or getByTestId('score-hovercard'))",
+      "Assert: Factor list contains at least 2 items: one matching /priority/i and one matching /partner/i",
+      "Assert: getByText(/used for prioritisation only.*not a credit decision/i) is visible in HoverCard"
+    ],
+    "test_data": {
+      "actor": { "email": "rm_anita@branch01.lms", "role": "RM" },
+      "lead_id": "lead-041-uuid",
+      "score": 72,
+      "score_reasons": ["PRIORITY_HIGH", "PARTNER_VERIFIED"]
+    },
+    "expected_result": "Score chip shows '72 / 100'; HoverCard opens on focus/hover showing factor list with PRIORITY_HIGH and PARTNER_VERIFIED reasons; disclaimer text present",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/{lead_id_041}",
+      "locators": {
+        "score_chip": "getByTestId('lead-score-chip')",
+        "score_hovercard": "getByTestId('score-hovercard')",
+        "disclaimer": "getByText(/used for prioritisation only.*not a credit decision/i)"
+      },
+      "viewport": ["1280x720", "375x667"],
+      "auth_state": "rm_anita@branch01.lms",
+      "network_wait": "waitForResponse('/api/v1/leads/*', {method: 'GET'})",
+      "visual_assert": "screenshot('score-chip-hovercard-open')",
+      "a11y": "score chip has role=button or is focusable; HoverCard dismisses on Escape; factor list items have readable contrast"
+    }
+  },
+  {
+    "test_id": "TC-FR031-UI-03",
+    "test_name": "Hot badge absent and score chip hidden for PARTNER role",
+    "category": "UI/E2E",
+    "linked_fr": "FR-031",
+    "priority": "High",
+    "preconditions": [
+      "PARTNER 'dsapartner@dsa01.lms' submitted lead that is is_hot=true",
+      "PARTNER JWT is valid"
+    ],
+    "test_steps": [
+      "Navigate to /api/v1/c/{token}/status or partner-facing lead view as PARTNER user",
+      "Assert: getByTestId('lead-hot-badge') is NOT present in the DOM",
+      "Assert: getByTestId('lead-score-chip') is NOT present in the DOM"
+    ],
+    "test_data": {
+      "actor": { "email": "dsapartner@dsa01.lms", "role": "PARTNER" },
+      "lead_is_hot": true,
+      "lead_score": 72
+    },
+    "expected_result": "No hot badge rendered; no score chip rendered; PARTNER view does not expose scoring data",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/partner/leads/{lead_id}",
+      "locators": {
+        "hot_badge": "getByTestId('lead-hot-badge')",
+        "score_chip": "getByTestId('lead-score-chip')"
+      },
+      "viewport": ["1280x720", "375x667"],
+      "auth_state": "dsapartner@dsa01.lms",
+      "network_wait": "waitForResponse('/api/v1/leads/*', {method: 'GET'})",
+      "visual_assert": "screenshot('partner-lead-view-no-hot-no-score')",
+      "a11y": "axe-core baseline on partner lead view"
+    }
+  }
+]

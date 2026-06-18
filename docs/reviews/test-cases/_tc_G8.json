@@ -1,0 +1,1403 @@
+[
+  {
+    "test_id": "TC-FR110-01",
+    "test_name": "RM grants consent for lead_contact purpose — happy path",
+    "category": "Happy Path",
+    "linked_fr": "FR-110",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-00042 exists in org ORG-001 with owner_id = RM-USER-001",
+      "No prior consent_records row for (lead_id, purpose='lead_contact')",
+      "RM-USER-001 has role RM with consent_ledger capability scope O"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001; obtain JWT",
+      "POST /api/v1/leads/LD-2026-00042/consents with body { \"purpose\": \"lead_contact\", \"state\": \"granted\", \"notice_version\": \"v1.0\", \"consent_text_version\": \"v1.0\", \"channel\": \"web\", \"language\": \"en\" }",
+      "Assert HTTP 201 and response envelope",
+      "Query SELECT * FROM consent_records WHERE lead_id='LD-2026-00042' AND purpose='lead_contact'",
+      "Query SELECT consent_status FROM leads WHERE lead_id='LD-2026-00042'",
+      "Query SELECT * FROM audit_logs WHERE detail->>'entity_id' = '<consent_id>' AND action='CONSENT_CAPTURED'"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "org_id": "ORG-001",
+      "actor_user_id": "RM-USER-001",
+      "payload": {
+        "purpose": "lead_contact",
+        "state": "granted",
+        "notice_version": "v1.0",
+        "consent_text_version": "v1.0",
+        "channel": "web",
+        "language": "en"
+      }
+    },
+    "expected_result": "HTTP 201; response data.consent_id is a non-null UUID; consent_records row has state='granted', actor='rm', superseded_by=NULL; leads.consent_status re-derived (at minimum 'partial'); audit_logs row exists with action='CONSENT_CAPTURED', entity='consent_records', no PII in detail; error=null",
+    "postconditions": [
+      "consent_records count for (LD-2026-00042, lead_contact) = 1",
+      "leads.consent_status IN ('partial','captured') — never 'pending' after a granted row",
+      "event_outbox has NO CONSENT_WITHDRAWN event (granted state does not emit withdrawal)"
+    ]
+  },
+  {
+    "test_id": "TC-FR110-02",
+    "test_name": "RM withdraws lead_contact consent — new append row, outbox event emitted",
+    "category": "Workflow",
+    "linked_fr": "FR-110",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-00042 exists in org ORG-001 owned by RM-USER-001",
+      "consent_records row exists: purpose='lead_contact', state='granted', created_at=now()-1h, superseded_by=NULL",
+      "RM-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001",
+      "POST /api/v1/leads/LD-2026-00042/consents with body { \"purpose\": \"lead_contact\", \"state\": \"withdrawn\", \"notice_version\": \"v1.0\", \"consent_text_version\": \"v1.0\" }",
+      "Assert HTTP 201",
+      "Query SELECT state, superseded_by FROM consent_records WHERE lead_id='LD-2026-00042' AND purpose='lead_contact' ORDER BY created_at ASC",
+      "Query SELECT * FROM event_outbox WHERE event_code='CONSENT_WITHDRAWN' AND payload->>'lead_id'='LD-2026-00042'",
+      "Query SELECT consent_status FROM leads WHERE lead_id='LD-2026-00042'"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "prior_granted_consent_id": "CSN-GRANTED-001",
+      "payload": {
+        "purpose": "lead_contact",
+        "state": "withdrawn",
+        "notice_version": "v1.0",
+        "consent_text_version": "v1.0"
+      }
+    },
+    "expected_result": "HTTP 201; two consent_records rows for (LD-2026-00042, lead_contact) — first remains state='granted' (not mutated), second has state='withdrawn'; event_outbox row with event_code='CONSENT_WITHDRAWN', payload.purpose='lead_contact', payload.lead_id='LD-2026-00042', no raw PII in payload; leads.consent_status='withdrawn'",
+    "postconditions": [
+      "Original granted row is unchanged (append-only invariant INV-01)",
+      "SELECT COUNT(*) FROM consent_records WHERE lead_id='LD-2026-00042' AND purpose='lead_contact' = 2",
+      "INV-05: withdrawn row has a prior granted row for same (lead_id, purpose)"
+    ]
+  },
+  {
+    "test_id": "TC-FR110-03",
+    "test_name": "Second grant for same purpose supersedes prior granted row",
+    "category": "Workflow",
+    "linked_fr": "FR-110",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-00042 exists; consent_records row CSN-001 exists: purpose='kyc', state='granted', superseded_by=NULL"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001",
+      "POST /api/v1/leads/LD-2026-00042/consents with { \"purpose\": \"kyc\", \"state\": \"granted\", \"notice_version\": \"v1.1\", \"consent_text_version\": \"v1.1\" }",
+      "Assert HTTP 201; capture new consent_id CSN-002",
+      "Query SELECT superseded_by FROM consent_records WHERE consent_id='CSN-001'",
+      "Query SELECT superseded_by FROM consent_records WHERE consent_id='CSN-002'"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "prior_consent_id": "CSN-001",
+      "payload": { "purpose": "kyc", "state": "granted", "notice_version": "v1.1", "consent_text_version": "v1.1" }
+    },
+    "expected_result": "HTTP 201; CSN-001.superseded_by = CSN-002; CSN-002.superseded_by = NULL; INV-03 and INV-04 pass (superseded_by references same lead and same purpose)",
+    "postconditions": [
+      "INV-03: no superseded_by cross-lead",
+      "INV-04: superseded_by across same purpose only"
+    ]
+  },
+  {
+    "test_id": "TC-FR110-04",
+    "test_name": "Attempt to withdraw consent never granted — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-110",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-00042 exists; NO consent_records row for purpose='los_handoff'"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001",
+      "POST /api/v1/leads/LD-2026-00042/consents with { \"purpose\": \"los_handoff\", \"state\": \"withdrawn\", \"notice_version\": \"v1.0\", \"consent_text_version\": \"v1.0\" }",
+      "Assert HTTP 400",
+      "Assert error.code='VALIDATION_ERROR' and error.message contains 'Cannot withdraw consent that was never granted'",
+      "Verify no consent_records row inserted for (LD-2026-00042, los_handoff)"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "payload": { "purpose": "los_handoff", "state": "withdrawn", "notice_version": "v1.0", "consent_text_version": "v1.0" }
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.message contains 'Cannot withdraw consent that was never granted'; no new row in consent_records; leads.consent_status unchanged",
+    "postconditions": [
+      "consent_records count for (LD-2026-00042, los_handoff) remains 0"
+    ]
+  },
+  {
+    "test_id": "TC-FR110-05",
+    "test_name": "Attempt direct UPDATE on consent_records — blocked by append-only enforcement",
+    "category": "Data Integrity",
+    "linked_fr": "FR-110",
+    "priority": "Critical",
+    "preconditions": [
+      "consent_records row CSN-001 exists with state='granted'"
+    ],
+    "test_steps": [
+      "Attempt UPDATE consent_records SET state='withdrawn' WHERE consent_id='CSN-001' using application DB role",
+      "Assert DB operation is rejected (REVOKE enforced at DB layer)",
+      "Query SELECT state FROM consent_records WHERE consent_id='CSN-001'"
+    ],
+    "test_data": {
+      "target_consent_id": "CSN-001",
+      "attempted_sql": "UPDATE consent_records SET state='withdrawn' WHERE consent_id='CSN-001'"
+    },
+    "expected_result": "DB operation fails; state remains 'granted'; consent_records row is not mutated",
+    "postconditions": [
+      "INV-01: no consent_records row has updated_at != created_at (for system-managed states)"
+    ],
+    "di_meta": {
+      "setup_sql": "INSERT INTO consent_records (consent_id, lead_id, org_id, purpose, state, notice_version, consent_text_version, actor, created_at) VALUES ('CSN-DI-001', 'LD-2026-00042', 'ORG-001', 'lead_contact', 'granted', 'v1.0', 'v1.0', 'rm', NOW())",
+      "action": "UPDATE consent_records SET state='withdrawn' WHERE consent_id='CSN-DI-001'",
+      "invariant_query": "SELECT consent_id FROM consent_records WHERE consent_id='CSN-DI-001' AND state='withdrawn'",
+      "cleanup": "DELETE FROM consent_records WHERE consent_id='CSN-DI-001'"
+    }
+  },
+  {
+    "test_id": "TC-FR110-06",
+    "test_name": "Consent withdrawal of los_handoff purpose blocks hand-off stage guard",
+    "category": "Integration",
+    "linked_fr": "FR-110",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-00042 is in stage 'ready_for_handoff' with all guards previously passing",
+      "consent_records has granted row for purpose='los_handoff'",
+      "RM-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/LD-2026-00042/consents with { \"purpose\": \"los_handoff\", \"state\": \"withdrawn\", \"notice_version\": \"v1.0\", \"consent_text_version\": \"v1.0\" }",
+      "Assert HTTP 201 for withdrawal record",
+      "POST /api/v1/leads/LD-2026-00042/stage-transition with { \"to\": \"handed_off\" }",
+      "Assert HTTP 409 with error detail referencing consent guard failure"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "withdrawal_payload": { "purpose": "los_handoff", "state": "withdrawn", "notice_version": "v1.0", "consent_text_version": "v1.0" },
+      "transition_payload": { "to": "handed_off" }
+    },
+    "expected_result": "Withdrawal returns 201; subsequent hand-off attempt returns 409 CONFLICT with detail.reason='STAGE_GUARD_FAILED' referencing los_handoff consent withdrawn; lead stage remains 'ready_for_handoff'",
+    "postconditions": [
+      "leads.lead_stage = 'ready_for_handoff' (unchanged)",
+      "leads.consent_status = 'withdrawn'"
+    ]
+  },
+  {
+    "test_id": "TC-FR110-07",
+    "test_name": "GET /leads/{id}/consents — ip_device masked for RM, unmasked for DPO",
+    "category": "Permission",
+    "linked_fr": "FR-110",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-00042 exists with one consent_records row having ip_device = '{\"ip\":\"192.168.1.1\",\"ua\":\"Mozilla/5.0\"}'",
+      "RM-USER-001 has role RM; DPO-USER-001 has role DPO"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001; GET /api/v1/leads/LD-2026-00042/consents",
+      "Assert HTTP 200; assert data[0].ip_device = null",
+      "Authenticate as DPO-USER-001; GET /api/v1/leads/LD-2026-00042/consents",
+      "Assert HTTP 200; assert data[0].ip_device contains 'ip' and 'ua' fields"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "rm_user_id": "RM-USER-001",
+      "dpo_user_id": "DPO-USER-001",
+      "consent_ip_device": "{\"ip\":\"192.168.1.1\",\"ua\":\"Mozilla/5.0\"}"
+    },
+    "expected_result": "RM response: data[0].ip_device = null; DPO response: data[0].ip_device = {\"ip\":\"192.168.1.1\",\"ua\":\"Mozilla/5.0\"}",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR110-08",
+    "test_name": "Customer grants consent via tokenised micro-site link",
+    "category": "Happy Path",
+    "linked_fr": "FR-110",
+    "priority": "High",
+    "preconditions": [
+      "customer_links row exists with token='TKN-CUST-001', status='active', expires_at=NOW()+2h, bound to lead LD-2026-00042",
+      "OTP step-up already completed for this token session"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/TKN-CUST-001/consent with { \"purpose\": \"lead_contact\", \"state\": \"granted\", \"notice_version\": \"v1.0\", \"consent_text_version\": \"v1.0\" }",
+      "Assert HTTP 201",
+      "Query SELECT actor, channel, ip_device FROM consent_records WHERE lead_id='LD-2026-00042' ORDER BY created_at DESC LIMIT 1",
+      "RM calls GET /api/v1/leads/LD-2026-00042/consents; assert new row visible"
+    ],
+    "test_data": {
+      "token": "TKN-CUST-001",
+      "lead_id": "LD-2026-00042",
+      "payload": { "purpose": "lead_contact", "state": "granted", "notice_version": "v1.0", "consent_text_version": "v1.0" },
+      "client_ip": "203.0.113.42"
+    },
+    "expected_result": "HTTP 201; consent_records row actor='customer', channel derived from customer_links.channel, ip_device populated from request headers; leads.consent_status re-derived; row appears in RM's Lead 360 consent history",
+    "postconditions": [
+      "consent_records row is append-only; actor='customer' is persisted correctly"
+    ]
+  },
+  {
+    "test_id": "TC-FR110-09",
+    "test_name": "Consent history pagination — 30 records, default page returns 25",
+    "category": "Boundary",
+    "linked_fr": "FR-110",
+    "priority": "Medium",
+    "preconditions": [
+      "Lead LD-2026-00042 has exactly 30 consent_records rows (mixed purposes, states) all inserted 2s apart"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001",
+      "GET /api/v1/leads/LD-2026-00042/consents (no pagination params)",
+      "Assert HTTP 200; assert data.length = 25; meta.pagination.total = 30; meta.pagination.page = 1",
+      "GET /api/v1/leads/LD-2026-00042/consents?page=2",
+      "Assert data.length = 5; meta.pagination.total = 30"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "total_records": 30
+    },
+    "expected_result": "Page 1: 25 records ordered by created_at ASC; page 2: remaining 5 records; meta.pagination reflects server-side pagination; no data leak from other leads",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR110-UI-01",
+    "test_name": "RM records granted consent from Lead 360 — UI updates StatusChip",
+    "category": "UI/E2E",
+    "linked_fr": "FR-110",
+    "priority": "High",
+    "preconditions": [
+      "RM-USER-001 is authenticated in browser session",
+      "Lead LD-2026-00042 has no prior consent_records"
+    ],
+    "test_steps": [
+      "Navigate to /leads/LD-2026-00042",
+      "Scroll to 'Consent Status' card",
+      "Click 'Record Consent' button",
+      "In drawer: select purpose='lead_contact', state='granted', fill notice_version='v1.0', consent_text_version='v1.0'",
+      "Click 'Record'",
+      "Assert Toast message",
+      "Assert Consent history DataTable shows new row",
+      "Assert StatusChip colour on card"
+    ],
+    "test_data": {
+      "rm_username": "rm_user_001@nbfc.com",
+      "lead_id": "LD-2026-00042",
+      "form_values": { "purpose": "lead_contact", "state": "granted", "notice_version": "v1.0", "consent_text_version": "v1.0" }
+    },
+    "expected_result": "Toast 'Consent recorded' appears; new row with state='granted' and green StatusChip appears in consent history DataTable; Lead 360 consent_status chip updates from 'pending' to at least 'partial'",
+    "postconditions": [
+      "Consent history row persists on page refresh"
+    ],
+    "ui_meta": {
+      "route": "/leads/LD-2026-00042",
+      "locators": {
+        "record_consent_button": "getByRole('button', { name: 'Record Consent' })",
+        "purpose_select": "getByTestId('consent-purpose-select')",
+        "state_select": "getByTestId('consent-state-select')",
+        "notice_version_input": "getByTestId('consent-notice-version')",
+        "text_version_input": "getByTestId('consent-text-version')",
+        "submit_button": "getByRole('button', { name: 'Record' })",
+        "toast": "getByRole('status')",
+        "history_table": "getByTestId('consent-history-table')",
+        "status_chip": "getByTestId('consent-status-chip')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "rm_authenticated",
+      "network_wait": "waitForResponse('**/leads/*/consents')",
+      "visual_assert": "StatusChip background-color matches granted green (#16a34a region)",
+      "a11y": "axe scan on drawer; Toast has role='status'; all form fields have labels"
+    }
+  },
+  {
+    "test_id": "TC-FR110-DI-01",
+    "test_name": "consent_records has no orphaned superseded_by foreign key",
+    "category": "Data Integrity",
+    "linked_fr": "FR-110",
+    "priority": "Critical",
+    "preconditions": [
+      "At least 2 consent_records rows for same (lead_id, purpose) where second supersedes first"
+    ],
+    "test_steps": [
+      "Run INV-03 query: SELECT cr1.consent_id FROM consent_records cr1 INNER JOIN consent_records cr2 ON cr2.consent_id=cr1.superseded_by WHERE cr1.lead_id<>cr2.lead_id OR cr1.org_id<>cr2.org_id",
+      "Run INV-04 query: SELECT cr1.consent_id FROM consent_records cr1 INNER JOIN consent_records cr2 ON cr2.consent_id=cr1.superseded_by WHERE cr1.purpose<>cr2.purpose"
+    ],
+    "test_data": {
+      "setup_description": "Seed two consent_records: CSN-A (purpose='kyc', state='granted') then CSN-B (purpose='kyc', state='granted', superseded_by=CSN-A's id would be reversed — CSN-A.superseded_by=CSN-B)"
+    },
+    "expected_result": "Both invariant queries return 0 rows; superseded_by is always within same lead, org, and same purpose",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO consent_records VALUES ('CSN-DI-A','LD-2026-00042','ORG-001','kyc','granted','v1.0','v1.0',NULL,'rm',NULL,NULL,NULL,NOW()); INSERT INTO consent_records VALUES ('CSN-DI-B','LD-2026-00042','ORG-001','kyc','granted','v1.1','v1.1','CSN-DI-A','rm',NULL,NULL,NULL,NOW())",
+      "action": "Run INV-03 and INV-04 invariant queries",
+      "invariant_query": "SELECT cr1.consent_id FROM consent_records cr1 INNER JOIN consent_records cr2 ON cr2.consent_id=cr1.superseded_by WHERE cr1.lead_id<>cr2.lead_id OR cr1.org_id<>cr2.org_id OR cr1.purpose<>cr2.purpose",
+      "cleanup": "DELETE FROM consent_records WHERE consent_id IN ('CSN-DI-A','CSN-DI-B')"
+    }
+  },
+  {
+    "test_id": "TC-FR111-01",
+    "test_name": "DPO retrieves data sharing log for a lead — happy path",
+    "category": "Happy Path",
+    "linked_fr": "FR-111",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-00042 exists with 3 data_sharing_logs rows (purpose='los_handoff', recipient='LOS-PROVIDER-01', status='shared')",
+      "All 3 rows have consent_id referencing a granted consent_records row",
+      "DPO-USER-001 has role DPO with consent_ledger scope A"
+    ],
+    "test_steps": [
+      "Authenticate as DPO-USER-001",
+      "GET /api/v1/leads/LD-2026-00042/sharing-logs",
+      "Assert HTTP 200",
+      "Assert data.length = 3; meta.pagination.total = 3",
+      "Assert each row has recipient, purpose, data_category, shared_at fields populated",
+      "Assert error = null"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "dpo_user_id": "DPO-USER-001",
+      "seeded_rows": 3
+    },
+    "expected_result": "HTTP 200; data array has 3 items; each item contains non-null recipient, purpose, data_category, shared_at; meta.pagination.total=3; no PII names/mobile in response fields",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR111-02",
+    "test_name": "RM cannot access sharing log — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-111",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-00042 exists with sharing-log rows",
+      "RM-USER-001 has role RM (no consent_ledger scope A; only scope O)"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001",
+      "GET /api/v1/leads/LD-2026-00042/sharing-logs",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "rm_user_id": "RM-USER-001"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no sharing-log data exposed to RM",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR111-03",
+    "test_name": "Data sharing blocked when consent is withdrawn — FORBIDDEN with CONSENT_MISSING",
+    "category": "Negative/Error",
+    "linked_fr": "FR-111",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-2026-00042: consent_records most recent row for purpose='los_handoff', data_category='financial' has state='withdrawn'",
+      "DataSharingService.logShare is called (e.g. via LOS handoff flow)"
+    ],
+    "test_steps": [
+      "Trigger DataSharingService.logShare for leadId='LD-2026-00042', purpose='los_handoff', dataCategory='financial'",
+      "Assert ForbiddenException thrown with code='FORBIDDEN', detail.reason='CONSENT_MISSING'",
+      "Verify no data_sharing_logs row inserted for this lead+purpose combination"
+    ],
+    "test_data": {
+      "lead_id": "LD-2026-00042",
+      "purpose": "los_handoff",
+      "data_category": "financial",
+      "consent_state": "withdrawn"
+    },
+    "expected_result": "ForbiddenException with code='FORBIDDEN' and detail.reason='CONSENT_MISSING'; no data_sharing_logs INSERT executed; audit not written for failed share",
+    "postconditions": [
+      "INV-2: no data_sharing_logs row exists with a non-granted consent_id"
+    ]
+  },
+  {
+    "test_id": "TC-FR111-04",
+    "test_name": "No raw Aadhaar column exists in lead_identities or kyc_verifications — schema invariant",
+    "category": "Data Integrity",
+    "linked_fr": "FR-111",
+    "priority": "Critical",
+    "preconditions": [
+      "Application database is migrated to current schema version"
+    ],
+    "test_steps": [
+      "Query information_schema: SELECT column_name FROM information_schema.columns WHERE table_name='lead_identities' AND column_name IN ('aadhaar_number','raw_aadhaar','aadhaar_raw','biometric_data','biometric_template')",
+      "Assert 0 rows returned",
+      "Query information_schema: SELECT column_name FROM information_schema.columns WHERE table_name='kyc_verifications' AND column_name IN ('aadhaar_number','raw_aadhaar','aadhaar_raw','biometric_data','biometric_template')",
+      "Assert 0 rows returned"
+    ],
+    "test_data": {
+      "checked_tables": ["lead_identities", "kyc_verifications"],
+      "forbidden_columns": ["aadhaar_number", "raw_aadhaar", "aadhaar_raw", "biometric_data", "biometric_template"]
+    },
+    "expected_result": "Both queries return 0 rows; the schema contains no raw Aadhaar or biometric storage columns in these tables",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- No setup needed; runs against live schema",
+      "action": "SELECT column_name FROM information_schema.columns WHERE table_name IN ('lead_identities','kyc_verifications') AND column_name IN ('aadhaar_number','raw_aadhaar','aadhaar_raw','biometric_data','biometric_template')",
+      "invariant_query": "SELECT column_name FROM information_schema.columns WHERE table_name IN ('lead_identities','kyc_verifications') AND column_name IN ('aadhaar_number','raw_aadhaar','aadhaar_raw','biometric_data','biometric_template')",
+      "cleanup": "-- None"
+    }
+  },
+  {
+    "test_id": "TC-FR111-05",
+    "test_name": "DataMinimisationService blocks persistence of disallowed field (aadhaar_number)",
+    "category": "Negative/Error",
+    "linked_fr": "FR-111",
+    "priority": "Critical",
+    "preconditions": [
+      "field_schema.allowedFields does not include 'aadhaar_number'",
+      "DataMinimisationService instance available"
+    ],
+    "test_steps": [
+      "Call DataMinimisationService.assertAllowed({ aadhaar_number: '1234-5678-9012', name: 'Rajesh Kumar' })",
+      "Assert BadRequestException thrown with code='VALIDATION_ERROR'",
+      "Assert error.fields[].field contains 'aadhaar_number'"
+    ],
+    "test_data": {
+      "disallowed_fields": { "aadhaar_number": "1234-5678-9012" },
+      "allowed_fields": { "name": "Rajesh Kumar" }
+    },
+    "expected_result": "BadRequestException with code='VALIDATION_ERROR'; error.fields lists 'aadhaar_number'; allowed field 'name' is not listed in error.fields",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR111-DI-01",
+    "test_name": "data_sharing_logs has no orphaned lead_id foreign key",
+    "category": "Data Integrity",
+    "linked_fr": "FR-111",
+    "priority": "High",
+    "preconditions": [
+      "data_sharing_logs table has rows"
+    ],
+    "test_steps": [
+      "Run INV-1: SELECT dsl.data_sharing_log_id FROM data_sharing_logs dsl LEFT JOIN leads l ON dsl.lead_id=l.lead_id WHERE l.lead_id IS NULL LIMIT 1"
+    ],
+    "test_data": {},
+    "expected_result": "Query returns 0 rows; all data_sharing_logs rows reference a valid lead",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Use existing data_sharing_logs rows",
+      "action": "SELECT dsl.data_sharing_log_id FROM data_sharing_logs dsl LEFT JOIN leads l ON dsl.lead_id=l.lead_id WHERE l.lead_id IS NULL LIMIT 1",
+      "invariant_query": "SELECT dsl.data_sharing_log_id FROM data_sharing_logs dsl LEFT JOIN leads l ON dsl.lead_id=l.lead_id WHERE l.lead_id IS NULL LIMIT 1",
+      "cleanup": "-- None"
+    }
+  },
+  {
+    "test_id": "TC-FR112-01",
+    "test_name": "DPO creates erasure request for customer — happy path with outbox event",
+    "category": "Happy Path",
+    "linked_fr": "FR-112",
+    "priority": "Critical",
+    "preconditions": [
+      "customer_profiles row exists with customer_profile_id='CPR-001' in ORG-001",
+      "DPO-USER-001 JWT available; no active legal_hold in retention_policies"
+    ],
+    "test_steps": [
+      "Authenticate as DPO-USER-001",
+      "POST /api/v1/data-rights with headers Idempotency-Key: IDM-DR-001 and body { \"customer_profile_id\": \"CPR-001\", \"request_type\": \"erasure\" }",
+      "Assert HTTP 201",
+      "Assert data.status = 'open'; data.due_at is a future timestamp",
+      "Query data_rights_requests for new row",
+      "Query event_outbox WHERE event_code='DATA_RIGHT_REQUEST' AND aggregate_id=<new_id>"
+    ],
+    "test_data": {
+      "dpo_user_id": "DPO-USER-001",
+      "customer_profile_id": "CPR-001",
+      "idempotency_key": "IDM-DR-001",
+      "payload": { "customer_profile_id": "CPR-001", "request_type": "erasure" }
+    },
+    "expected_result": "HTTP 201; data.data_rights_request_id is UUID; data.status='open'; data.request_type='erasure'; data.due_at > NOW(); event_outbox row with event_code='DATA_RIGHT_REQUEST', aggregate_type='DataRightsRequest', status='pending'; audit_logs row with entity_type='DataRightsRequest', no PII logged",
+    "postconditions": [
+      "data_rights_requests.status = 'open'",
+      "INV-01: customer_profile_id references valid customer_profiles row"
+    ]
+  },
+  {
+    "test_id": "TC-FR112-02",
+    "test_name": "Erasure blocked when active legal hold exists — CONFLICT with LEGAL_HOLD",
+    "category": "Negative/Error",
+    "linked_fr": "FR-112",
+    "priority": "Critical",
+    "preconditions": [
+      "data_rights_requests row DRR-001 exists with request_type='erasure', status='in_review'",
+      "retention_policies row exists with legal_hold=true, is_active=true for ORG-001"
+    ],
+    "test_steps": [
+      "Authenticate as DPO-USER-001",
+      "PATCH /api/v1/data-rights/DRR-001 with { \"status\": \"fulfilled\", \"disposition\": \"Customer requested erasure\" }",
+      "Assert HTTP 409",
+      "Assert error.code = 'CONFLICT'",
+      "Assert error.detail.reason = 'LEGAL_HOLD'",
+      "Query data_rights_requests WHERE data_rights_request_id='DRR-001'; assert status still 'in_review'"
+    ],
+    "test_data": {
+      "request_id": "DRR-001",
+      "request_type": "erasure",
+      "current_status": "in_review",
+      "legal_hold_policy": { "legal_hold": true, "is_active": true }
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; error.detail.reason='LEGAL_HOLD'; data_rights_requests row status remains 'in_review' (not updated to 'fulfilled'); no DATA_RIGHT_ERASURE_APPROVED event emitted",
+    "postconditions": [
+      "INV-05 (FR-115): no lead anonymised while legal hold active"
+    ]
+  },
+  {
+    "test_id": "TC-FR112-03",
+    "test_name": "Full data-rights workflow: open → in_review → fulfilled (non-erasure)",
+    "category": "Workflow",
+    "linked_fr": "FR-112",
+    "priority": "High",
+    "preconditions": [
+      "data_rights_requests row DRR-002 exists with request_type='access', status='open'",
+      "DPO-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/data-rights/DRR-002 with { \"status\": \"in_review\", \"owner_id\": \"DPO-USER-001\" } → assert 200, data.status='in_review'",
+      "PATCH /api/v1/data-rights/DRR-002 with { \"status\": \"fulfilled\", \"disposition\": \"Access copy provided via secure email\" } → assert 200, data.status='fulfilled'",
+      "Query audit_logs for DRR-002: expect 2 rows (create + each update)",
+      "Query event_outbox for DATA_RIGHT_REQUEST_UPDATED events"
+    ],
+    "test_data": {
+      "request_id": "DRR-002",
+      "request_type": "access",
+      "transitions": [
+        { "status": "in_review", "owner_id": "DPO-USER-001" },
+        { "status": "fulfilled", "disposition": "Access copy provided via secure email" }
+      ]
+    },
+    "expected_result": "Both PATCHes return 200; final status='fulfilled'; audit_logs has entries for both transitions; data.disposition='Access copy provided via secure email'; INV-02: fulfilled row has non-null disposition",
+    "postconditions": [
+      "INV-02: SELECT data_rights_request_id FROM data_rights_requests WHERE status IN ('fulfilled','rejected_retained') AND (disposition IS NULL OR disposition='') returns 0 rows"
+    ]
+  },
+  {
+    "test_id": "TC-FR112-04",
+    "test_name": "Erasure approved (no legal hold) — FR-115 triggered via outbox",
+    "category": "Workflow",
+    "linked_fr": "FR-112",
+    "priority": "Critical",
+    "preconditions": [
+      "data_rights_requests row DRR-003 with request_type='erasure', status='in_review'",
+      "No retention_policies row with legal_hold=true and is_active=true",
+      "DPO-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/data-rights/DRR-003 with { \"status\": \"fulfilled\", \"disposition\": \"Customer erasure verified; no outstanding regulatory hold\" }",
+      "Assert HTTP 200; data.status = 'fulfilled'",
+      "Query event_outbox WHERE aggregate_id='DRR-003' AND event_code='DATA_RIGHT_REQUEST'",
+      "Assert outbox row status='pending' (signals FR-115 RetentionEngine)"
+    ],
+    "test_data": {
+      "request_id": "DRR-003",
+      "request_type": "erasure",
+      "payload": { "status": "fulfilled", "disposition": "Customer erasure verified; no outstanding regulatory hold" }
+    },
+    "expected_result": "HTTP 200; status='fulfilled'; event_outbox row with event_code='DATA_RIGHT_REQUEST', aggregate_type='DataRightsRequest', aggregate_id='DRR-003', status='pending' emitted in same transaction (signals erasure to FR-115)",
+    "postconditions": [
+      "INV-04 (FR-112): fulfilled erasure request has DATA_RIGHT_REQUEST outbox entry"
+    ]
+  },
+  {
+    "test_id": "TC-FR112-05",
+    "test_name": "Invalid state transition: fulfilled → open returns CONFLICT",
+    "category": "Boundary",
+    "linked_fr": "FR-112",
+    "priority": "High",
+    "preconditions": [
+      "data_rights_requests row DRR-004 with status='fulfilled'"
+    ],
+    "test_steps": [
+      "Authenticate as DPO-USER-001",
+      "PATCH /api/v1/data-rights/DRR-004 with { \"status\": \"open\" }",
+      "Assert HTTP 409; error.code='CONFLICT'",
+      "Query data_rights_requests WHERE data_rights_request_id='DRR-004'; status still 'fulfilled'"
+    ],
+    "test_data": {
+      "request_id": "DRR-004",
+      "current_status": "fulfilled",
+      "attempted_transition": "open"
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; no state change; fulfilled is a terminal state",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR112-06",
+    "test_name": "Non-DPO role cannot create or process data rights request — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-112",
+    "priority": "Critical",
+    "preconditions": [
+      "RM-USER-001 with role RM JWT available"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001",
+      "POST /api/v1/data-rights with { \"customer_profile_id\": \"CPR-001\", \"request_type\": \"erasure\" }",
+      "Assert HTTP 403; error.code='FORBIDDEN'",
+      "PATCH /api/v1/data-rights/DRR-001 with { \"status\": \"in_review\" }",
+      "Assert HTTP 403; error.code='FORBIDDEN'"
+    ],
+    "test_data": {
+      "rm_user_id": "RM-USER-001",
+      "payload": { "customer_profile_id": "CPR-001", "request_type": "erasure" }
+    },
+    "expected_result": "Both calls return HTTP 403 with error.code='FORBIDDEN'; no DB writes for either request",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR112-UI-01",
+    "test_name": "DPO processes erasure request — legal hold alert shown in drawer",
+    "category": "UI/E2E",
+    "linked_fr": "FR-112",
+    "priority": "High",
+    "preconditions": [
+      "DPO-USER-001 authenticated in browser",
+      "data_rights_requests row with request_type='erasure', status='in_review' exists",
+      "API returns 409 CONFLICT with reason='LEGAL_HOLD' when fulfilled attempted"
+    ],
+    "test_steps": [
+      "Navigate to /compliance/data-rights",
+      "Click on erasure request row to open drawer",
+      "Set status select to 'fulfilled'; click Confirm",
+      "Assert LegalHoldAlert component is rendered",
+      "Assert 'fulfilled' option is disabled; only 'rejected_retained' is selectable",
+      "Select 'rejected_retained'; enter disposition; submit",
+      "Assert status updates to 'rejected_retained' in DataTable"
+    ],
+    "test_data": {
+      "dpo_username": "dpo@nbfc.com",
+      "request_id": "DRR-LEGAL-HOLD-001",
+      "request_type": "erasure"
+    },
+    "expected_result": "LegalHoldAlert renders with informational message; 'fulfilled' select option is disabled; after submitting rejected_retained, DataTable StatusChip shows 'rejected_retained'; Toast success shown",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/compliance/data-rights",
+      "locators": {
+        "request_row": "getByTestId('drr-row-DRR-LEGAL-HOLD-001')",
+        "status_select": "getByTestId('drr-status-select')",
+        "legal_hold_alert": "getByTestId('legal-hold-alert')",
+        "disposition_textarea": "getByTestId('drr-disposition-textarea')",
+        "confirm_button": "getByRole('button', { name: 'Confirm' })",
+        "toast": "getByRole('status')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "dpo_authenticated",
+      "network_wait": "waitForResponse('**/data-rights/**')",
+      "visual_assert": "LegalHoldAlert has amber border styling",
+      "a11y": "LegalHoldAlert has role='alert'; status select has aria-disabled=true for fulfilled option"
+    }
+  },
+  {
+    "test_id": "TC-FR112-DI-01",
+    "test_name": "No fulfilled/rejected_retained request missing disposition",
+    "category": "Data Integrity",
+    "linked_fr": "FR-112",
+    "priority": "Critical",
+    "preconditions": [
+      "data_rights_requests table has rows in fulfilled and rejected_retained states"
+    ],
+    "test_steps": [
+      "Run INV-02: SELECT data_rights_request_id FROM data_rights_requests WHERE status IN ('fulfilled','rejected_retained') AND (disposition IS NULL OR disposition='')"
+    ],
+    "test_data": {},
+    "expected_result": "Query returns 0 rows; every terminal request has a non-empty disposition recorded",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Use existing rows from FR-112 test runs",
+      "action": "SELECT data_rights_request_id FROM data_rights_requests WHERE status IN ('fulfilled','rejected_retained') AND (disposition IS NULL OR disposition='')",
+      "invariant_query": "SELECT data_rights_request_id FROM data_rights_requests WHERE status IN ('fulfilled','rejected_retained') AND (disposition IS NULL OR disposition='')",
+      "cleanup": "-- None"
+    }
+  },
+  {
+    "test_id": "TC-FR113-01",
+    "test_name": "DPO creates active DLA registry entry with all mandatory disclosure fields",
+    "category": "Happy Path",
+    "linked_fr": "FR-113",
+    "priority": "High",
+    "preconditions": [
+      "DPO-USER-001 has role DPO with configuration scope B",
+      "No existing dla_registry row with name='FastCash DLA' in ORG-001"
+    ],
+    "test_steps": [
+      "Authenticate as DPO-USER-001",
+      "POST /api/v1/compliance/dla with { \"name\": \"FastCash DLA\", \"type\": \"dla\", \"status\": \"active\", \"owner\": \"Priya Mehta\", \"url\": \"https://fastcash.example.com\", \"grievance_officer\": { \"name\": \"Ravi Kumar\", \"email\": \"ravi@fastcash.example.com\" }, \"storage_location\": \"GCS asia-south1\", \"enabled_products\": [\"personal_loan\"], \"data_collected\": [\"identity\", \"financial\"] }",
+      "Assert HTTP 201; response data.status='active'; data.dla_registry_id non-null",
+      "Query SELECT * FROM dla_registry WHERE name='FastCash DLA'",
+      "Query SELECT * FROM audit_logs WHERE entity_type='dla_registry' AND action='config_change'"
+    ],
+    "test_data": {
+      "dpo_user_id": "DPO-USER-001",
+      "payload": {
+        "name": "FastCash DLA",
+        "type": "dla",
+        "status": "active",
+        "owner": "Priya Mehta",
+        "url": "https://fastcash.example.com",
+        "grievance_officer": { "name": "Ravi Kumar", "email": "ravi@fastcash.example.com" },
+        "storage_location": "GCS asia-south1",
+        "enabled_products": ["personal_loan"],
+        "data_collected": ["identity", "financial"]
+      }
+    },
+    "expected_result": "HTTP 201; dla_registry row inserted with status='active', all disclosure fields populated; audit_logs row with action='config_change', entity_type='dla_registry'; error=null",
+    "postconditions": [
+      "INV-01: no active row is missing mandatory disclosure fields",
+      "INV-06: audit_log count for dla_registry config_change >= 1"
+    ]
+  },
+  {
+    "test_id": "TC-FR113-02",
+    "test_name": "Activate draft DLA entry missing mandatory field — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-113",
+    "priority": "High",
+    "preconditions": [
+      "dla_registry row DLA-001 exists with status='draft', url=NULL",
+      "DPO-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/compliance/dla with { \"dla_registry_id\": \"DLA-001\", \"status\": \"active\" }",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.fields contains { field: 'url' }",
+      "Verify dla_registry row still has status='draft'"
+    ],
+    "test_data": {
+      "dla_id": "DLA-001",
+      "current_status": "draft",
+      "missing_field": "url",
+      "payload": { "dla_registry_id": "DLA-001", "status": "active" }
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[].field='url'; dla_registry row status remains 'draft'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR113-03",
+    "test_name": "Inactive DLA entry does not appear in customer-facing disclosure",
+    "category": "Integration",
+    "linked_fr": "FR-113",
+    "priority": "High",
+    "preconditions": [
+      "dla_registry has two rows: DLA-ACTIVE (status='active') and DLA-RETIRED (status='retired')",
+      "Customer-facing disclosure endpoint exists at GET /api/v1/c/{token}/disclosure"
+    ],
+    "test_steps": [
+      "GET /api/v1/c/{token}/disclosure (active customer link token)",
+      "Assert response data array contains DLA-ACTIVE entry",
+      "Assert response data array does NOT contain DLA-RETIRED entry"
+    ],
+    "test_data": {
+      "active_dla_id": "DLA-ACTIVE",
+      "retired_dla_id": "DLA-RETIRED",
+      "customer_token": "TKN-CUST-001"
+    },
+    "expected_result": "Customer-facing disclosure shows only active DLA entries; retired entries are not exposed; response is scoped to org_id of the customer link",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR113-04",
+    "test_name": "Invalid state transition: retired → active returns CONFLICT",
+    "category": "Boundary",
+    "linked_fr": "FR-113",
+    "priority": "High",
+    "preconditions": [
+      "dla_registry row DLA-RET exists with status='retired'"
+    ],
+    "test_steps": [
+      "Authenticate as DPO-USER-001",
+      "PATCH /api/v1/compliance/dla with { \"dla_registry_id\": \"DLA-RET\", \"status\": \"active\" }",
+      "Assert HTTP 409; error.code='CONFLICT'",
+      "Verify dla_registry status is still 'retired'"
+    ],
+    "test_data": {
+      "dla_id": "DLA-RET",
+      "current_status": "retired",
+      "attempted_transition": "active"
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; dla_registry.status remains 'retired'; no audit entry for a failed transition",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR113-05",
+    "test_name": "RM cannot create or modify DLA registry entries — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-113",
+    "priority": "High",
+    "preconditions": [
+      "RM-USER-001 with role RM JWT available"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001",
+      "POST /api/v1/compliance/dla with valid payload",
+      "Assert HTTP 403; error.code='FORBIDDEN'"
+    ],
+    "test_data": {
+      "rm_user_id": "RM-USER-001",
+      "payload": { "name": "Test DLA", "type": "lsp", "status": "draft" }
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no dla_registry row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR113-DI-01",
+    "test_name": "No active DLA registry row is missing mandatory disclosure fields",
+    "category": "Data Integrity",
+    "linked_fr": "FR-113",
+    "priority": "Critical",
+    "preconditions": [
+      "dla_registry table has active entries"
+    ],
+    "test_steps": [
+      "Run INV-01: SELECT dla_registry_id, name FROM dla_registry WHERE status='active' AND (owner IS NULL OR trim(owner)='' OR url IS NULL OR trim(url)='' OR grievance_officer IS NULL OR storage_location IS NULL OR trim(storage_location)='')"
+    ],
+    "test_data": {},
+    "expected_result": "Query returns 0 rows; all active DLA entries have all mandatory disclosure fields populated",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Use existing active dla_registry rows",
+      "action": "SELECT dla_registry_id, name FROM dla_registry WHERE status='active' AND (owner IS NULL OR trim(owner)='' OR url IS NULL OR trim(url)='' OR grievance_officer IS NULL OR storage_location IS NULL OR trim(storage_location)='')",
+      "invariant_query": "SELECT dla_registry_id, name FROM dla_registry WHERE status='active' AND (owner IS NULL OR trim(owner)='' OR url IS NULL OR trim(url)='' OR grievance_officer IS NULL OR storage_location IS NULL OR trim(storage_location)='')",
+      "cleanup": "-- None"
+    }
+  },
+  {
+    "test_id": "TC-FR113-UI-01",
+    "test_name": "DPO full DLA registry workflow: create draft → activate → retire in Compliance Console",
+    "category": "UI/E2E",
+    "linked_fr": "FR-113",
+    "priority": "High",
+    "preconditions": [
+      "DPO-USER-001 authenticated in browser",
+      "No existing DLA entry named 'PrimeLend LSP'"
+    ],
+    "test_steps": [
+      "Navigate to /compliance/dla",
+      "Click '+ Add Entry'",
+      "Fill form: name='PrimeLend LSP', type='lsp', status='draft'; submit",
+      "Assert new row with StatusChip 'Draft' (muted colour) in DataTable",
+      "Click row to open drawer; fill all disclosure fields; change status to 'Active'; save",
+      "Assert StatusChip changes to 'Active' (green)",
+      "Click 'Retire'; ConfirmDialog appears; click Confirm",
+      "Assert StatusChip changes to 'Retired' (muted)"
+    ],
+    "test_data": {
+      "dpo_username": "dpo@nbfc.com",
+      "entry": { "name": "PrimeLend LSP", "type": "lsp" }
+    },
+    "expected_result": "Each status transition reflected in StatusChip immediately after save; ConfirmDialog shown before retire; Toast confirms each action; row persists across page refresh with correct status",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/compliance/dla",
+      "locators": {
+        "add_button": "getByRole('button', { name: '+ Add Entry' })",
+        "name_input": "getByTestId('dla-name-input')",
+        "type_select": "getByTestId('dla-type-select')",
+        "status_chip": "getByTestId('dla-status-chip')",
+        "retire_button": "getByRole('button', { name: 'Retire' })",
+        "confirm_dialog": "getByRole('dialog')",
+        "toast": "getByRole('status')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "dpo_authenticated",
+      "network_wait": "waitForResponse('**/compliance/dla**')",
+      "visual_assert": "StatusChip colour sequence: muted gray (draft) → green (active) → muted gray (retired)",
+      "a11y": "ConfirmDialog has role='dialog' with aria-labelledby; all form fields have associated labels"
+    }
+  },
+  {
+    "test_id": "TC-FR114-01",
+    "test_name": "RM creates grievance — happy path with SLA due_at and outbox event",
+    "category": "Happy Path",
+    "linked_fr": "FR-114",
+    "priority": "Critical",
+    "preconditions": [
+      "RM-USER-001 has role RM with consent_ledger capability",
+      "sla_policies row exists for target='grievance' with threshold_minutes=2880",
+      "Lead LD-2026-00042 exists and belongs to ORG-001"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-001",
+      "POST /api/v1/grievances with headers Idempotency-Key: GRV-IDM-001 and body { \"lead_id\": \"LD-2026-00042\", \"source\": \"rm\", \"category\": \"product_complaint\", \"description\": \"Customer received incorrect loan offer details in the brochure\" }",
+      "Assert HTTP 201",
+      "Assert data.status='open'; data.grievance_no matches pattern GRV-{YYYY}-{seq}; data.sla_due_at > NOW()",
+      "Query event_outbox WHERE event_code='GRIEVANCE_CREATED' AND aggregate_id=<grievance_id>",
+      "Query audit_logs WHERE entity_type='grievance' AND entity_id=<grievance_id>"
+    ],
+    "test_data": {
+      "rm_user_id": "RM-USER-001",
+      "lead_id": "LD-2026-00042",
+      "idempotency_key": "GRV-IDM-001",
+      "payload": {
+        "lead_id": "LD-2026-00042",
+        "source": "rm",
+        "category": "product_complaint",
+        "description": "Customer received incorrect loan offer details in the brochure"
+      }
+    },
+    "expected_result": "HTTP 201; data.grievance_no matches /^GRV-2026-\\d+$/; data.status='open'; data.sla_due_at is approximately NOW()+48h business hours; event_outbox row event_code='GRIEVANCE_CREATED', status='pending'; audit_logs row written with entity_type='grievance'; INV-1: grievance_no is unique within org",
+    "postconditions": [
+      "INV-6: GRIEVANCE_CREATED event_outbox entry exists for this grievance_id"
+    ]
+  },
+  {
+    "test_id": "TC-FR114-02",
+    "test_name": "Full grievance lifecycle: open → in_progress → resolved → closed",
+    "category": "Workflow",
+    "linked_fr": "FR-114",
+    "priority": "Critical",
+    "preconditions": [
+      "Grievance GRV-001 exists with status='open'",
+      "DPO-USER-001 has DPO role with consent_ledger scope A",
+      "GCS storage reference available for closure proof"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/grievances/GRV-001 with { \"status\": \"in_progress\", \"owner_id\": \"DPO-USER-001\" } → assert 200, status='in_progress'",
+      "PATCH /api/v1/grievances/GRV-001 with { \"status\": \"resolved\", \"response\": \"Issue investigated and corrected; revised brochure sent to customer\" } → assert 200, status='resolved'",
+      "PATCH /api/v1/grievances/GRV-001 with { \"status\": \"closed\", \"closure_proof_ref\": \"gcs://org-001-docs/grievance-proof-GRV-001.pdf\" } → assert 200, status='closed'",
+      "Query SELECT owner_id, response, closure_proof_ref FROM grievances WHERE grievance_id='GRV-001'",
+      "Run INV-2 and INV-3 invariant queries"
+    ],
+    "test_data": {
+      "grievance_id": "GRV-001",
+      "transitions": [
+        { "status": "in_progress", "owner_id": "DPO-USER-001" },
+        { "status": "resolved", "response": "Issue investigated and corrected; revised brochure sent to customer" },
+        { "status": "closed", "closure_proof_ref": "gcs://org-001-docs/grievance-proof-GRV-001.pdf" }
+      ]
+    },
+    "expected_result": "All three PATCHes return 200; final grievances row has status='closed', owner_id set, response non-empty, closure_proof_ref='gcs://org-001-docs/grievance-proof-GRV-001.pdf'; INV-2: no closed grievance has null closure_proof_ref; INV-3: no resolved/closed grievance has null response",
+    "postconditions": [
+      "INV-2: SELECT grievance_id FROM grievances WHERE status='closed' AND (closure_proof_ref IS NULL OR closure_proof_ref='') = 0 rows",
+      "INV-5: owner_id set for all in_progress+ states"
+    ]
+  },
+  {
+    "test_id": "TC-FR114-03",
+    "test_name": "Close grievance without closureProofRef — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-114",
+    "priority": "High",
+    "preconditions": [
+      "Grievance GRV-002 exists with status='resolved'"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/grievances/GRV-002 with { \"status\": \"closed\" } (no closure_proof_ref)",
+      "Assert HTTP 400",
+      "Assert error.code='VALIDATION_ERROR'; error.fields[0].field='closureProofRef'",
+      "Verify grievance status remains 'resolved'"
+    ],
+    "test_data": {
+      "grievance_id": "GRV-002",
+      "current_status": "resolved",
+      "payload": { "status": "closed" }
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains closureProofRef; grievance status unchanged at 'resolved'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR114-04",
+    "test_name": "SLA breach triggers escalation — escalation sweep promotes overdue grievances",
+    "category": "Boundary",
+    "linked_fr": "FR-114",
+    "priority": "High",
+    "preconditions": [
+      "Grievances GRV-010 (status='open'), GRV-011 (status='in_progress'), GRV-012 (status='resolved') all have sla_due_at = NOW()-1h",
+      "Grievance GRV-013 (status='closed') has sla_due_at = NOW()-1h"
+    ],
+    "test_steps": [
+      "Trigger GrievanceEscalationJob (POST /api/v1/internal/jobs/grievance-escalation with Cloud Tasks OIDC token)",
+      "Query SELECT grievance_id, status FROM grievances WHERE grievance_id IN ('GRV-010','GRV-011','GRV-012','GRV-013')"
+    ],
+    "test_data": {
+      "overdue_open": "GRV-010",
+      "overdue_in_progress": "GRV-011",
+      "overdue_resolved": "GRV-012",
+      "terminal_closed": "GRV-013"
+    },
+    "expected_result": "GRV-010 and GRV-011 updated to status='escalated'; GRV-012 (resolved) NOT touched — only open/in_progress escalated; GRV-013 (closed, terminal) NOT touched; 2 audit_logs entries appended; escalation notifications dispatched post-commit",
+    "postconditions": [
+      "INV-4: no audit_log row for a grievance has updated_at != created_at"
+    ]
+  },
+  {
+    "test_id": "TC-FR114-05",
+    "test_name": "Non-owner RM cannot PATCH another RM's grievance — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-114",
+    "priority": "High",
+    "preconditions": [
+      "Grievance GRV-005 exists with owner_id='RM-USER-001'",
+      "RM-USER-002 is a different RM in the same org"
+    ],
+    "test_steps": [
+      "Authenticate as RM-USER-002",
+      "PATCH /api/v1/grievances/GRV-005 with { \"status\": \"in_progress\" }",
+      "Assert HTTP 403; error.code='FORBIDDEN'",
+      "Verify GRV-005 status unchanged"
+    ],
+    "test_data": {
+      "grievance_id": "GRV-005",
+      "owner_rm": "RM-USER-001",
+      "unauthorized_rm": "RM-USER-002"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; GRV-005.status unchanged; DPO (scope A) can still PATCH this grievance",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR114-06",
+    "test_name": "Idempotency replay of grievance creation returns original without duplicate",
+    "category": "Boundary",
+    "linked_fr": "FR-114",
+    "priority": "High",
+    "preconditions": [
+      "First POST with Idempotency-Key='GRV-IDM-DUP-001' already created grievance GRV-ORIG-001"
+    ],
+    "test_steps": [
+      "POST /api/v1/grievances again with same Idempotency-Key='GRV-IDM-DUP-001' and same body",
+      "Assert HTTP 200 (not 201)",
+      "Assert data.grievance_id = 'GRV-ORIG-001' (original)",
+      "Query SELECT COUNT(*) FROM grievances WHERE idempotency_key='GRV-IDM-DUP-001'; assert count=1",
+      "Assert error.detail.reason='IDEMPOTENT_REPLAY'"
+    ],
+    "test_data": {
+      "idempotency_key": "GRV-IDM-DUP-001",
+      "original_grievance_id": "GRV-ORIG-001"
+    },
+    "expected_result": "HTTP 200; data.grievance_id = original GRV-ORIG-001; grievances count for this idempotency_key = 1; no second row created; IDEMPOTENT_REPLAY indicated",
+    "postconditions": [
+      "INV-1: grievance_no uniqueness maintained (no duplicate from replay)"
+    ]
+  },
+  {
+    "test_id": "TC-FR114-DI-01",
+    "test_name": "No grievance in closed status with blank closure_proof_ref",
+    "category": "Data Integrity",
+    "linked_fr": "FR-114",
+    "priority": "Critical",
+    "preconditions": [
+      "grievances table has at least one row in 'closed' status from the workflow test"
+    ],
+    "test_steps": [
+      "Run INV-2: SELECT grievance_id FROM grievances WHERE status='closed' AND (closure_proof_ref IS NULL OR closure_proof_ref='')",
+      "Run INV-3: SELECT grievance_id FROM grievances WHERE status IN ('resolved','closed') AND (response IS NULL OR response='')",
+      "Run INV-5: SELECT grievance_id FROM grievances WHERE status IN ('in_progress','escalated','resolved','closed') AND owner_id IS NULL"
+    ],
+    "test_data": {},
+    "expected_result": "All three invariant queries return 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Use rows from grievance lifecycle tests",
+      "action": "Run INV-2, INV-3, INV-5 queries",
+      "invariant_query": "SELECT grievance_id FROM grievances WHERE status='closed' AND (closure_proof_ref IS NULL OR closure_proof_ref='') UNION ALL SELECT grievance_id FROM grievances WHERE status IN ('resolved','closed') AND (response IS NULL OR response='') UNION ALL SELECT grievance_id FROM grievances WHERE status IN ('in_progress','escalated','resolved','closed') AND owner_id IS NULL",
+      "cleanup": "-- None"
+    }
+  },
+  {
+    "test_id": "TC-FR114-UI-01",
+    "test_name": "EscalationBanner visible on overdue grievance in Compliance Console list",
+    "category": "UI/E2E",
+    "linked_fr": "FR-114",
+    "priority": "High",
+    "preconditions": [
+      "DPO-USER-001 authenticated in browser",
+      "Grievance GRV-ESC-001 has sla_due_at = 1 hour ago, status='open'"
+    ],
+    "test_steps": [
+      "Navigate to /compliance/grievances",
+      "Locate row for GRV-ESC-001",
+      "Assert EscalationBanner renders on or near that row",
+      "Assert sla_due_at displayed in IST format dd-MM-yyyy HH:mm with amber styling"
+    ],
+    "test_data": {
+      "grievance_id": "GRV-ESC-001",
+      "sla_due_at": "2026-06-17T05:30:00Z",
+      "current_status": "open"
+    },
+    "expected_result": "EscalationBanner component visible on overdue row; sla_due_at shown in IST ('17-06-2026 11:00'); banner has amber/warning colour styling",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/compliance/grievances",
+      "locators": {
+        "grievance_row": "getByTestId('grievance-row-GRV-ESC-001')",
+        "escalation_banner": "getByTestId('escalation-banner')",
+        "sla_due_at_cell": "getByTestId('sla-due-at-GRV-ESC-001')"
+      },
+      "viewport": "375x667",
+      "auth_state": "dpo_authenticated",
+      "network_wait": "waitForResponse('**/grievances**')",
+      "visual_assert": "EscalationBanner background-color is amber (#f59e0b region); sla_due_at text matches dd-MM-yyyy HH:mm IST",
+      "a11y": "EscalationBanner has role='alert'; row has sufficient colour contrast ratio >= 4.5:1"
+    }
+  },
+  {
+    "test_id": "TC-FR115-01",
+    "test_name": "RetentionEngine dry-run counts eligible leads correctly, respects legal hold exclusion",
+    "category": "Happy Path",
+    "linked_fr": "FR-115",
+    "priority": "Critical",
+    "preconditions": [
+      "5 leads exist with lead_identities.updated_at > 365 days ago and lead_stage='rejected' (eligible for identity/anonymise policy)",
+      "1 lead within the 365-day window (ineligible)",
+      "retention_policies row: data_category='identity', action='anonymise', retain_days=365, is_active=true, legal_hold=false",
+      "DPO-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "Authenticate as DPO-USER-001",
+      "POST /api/v1/admin/retention/run with { \"mode\": \"dry_run\" }",
+      "Assert HTTP 202; data.mode='dry_run'",
+      "Assert data.preview.eligible_leads = 5",
+      "Assert data.preview.blocked_by_legal_hold = 0",
+      "Verify no lead_identities rows were mutated (SELECT name FROM lead_identities WHERE name='ANONYMISED' = 0 rows)"
+    ],
+    "test_data": {
+      "dpo_user_id": "DPO-USER-001",
+      "eligible_lead_count": 5,
+      "ineligible_lead_count": 1,
+      "policy": { "data_category": "identity", "action": "anonymise", "retain_days": 365, "legal_hold": false }
+    },
+    "expected_result": "HTTP 202; data.mode='dry_run'; data.preview.eligible_leads=5; data.preview.blocked_by_legal_hold=0; zero DB writes performed (dry-run invariant)",
+    "postconditions": [
+      "SELECT COUNT(*) FROM lead_identities WHERE name='ANONYMISED' = 0 (no writes in dry-run)"
+    ]
+  },
+  {
+    "test_id": "TC-FR115-02",
+    "test_name": "ADMIN triggers apply-run — eligible lead PII anonymised, audit logged, consent_records untouched",
+    "category": "Integration",
+    "linked_fr": "FR-115",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-ELIGIBLE-001 has lead_identities with name='John Doe', mobile='9876543210', pan_token='PAN123', dob='1985-05-15', aadhaar_ref_token='AADH-REF-001'",
+      "LD-ELIGIBLE-001 lead_stage='rejected', outcome_at > 365 days ago",
+      "retention_policies: data_category='identity', action='anonymise', retain_days=365, is_active=true, legal_hold=false",
+      "No open data_rights_requests or grievances for LD-ELIGIBLE-001",
+      "2 consent_records rows for LD-ELIGIBLE-001",
+      "ADMIN-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "Authenticate as ADMIN-USER-001",
+      "POST /api/v1/admin/retention/run with { \"mode\": \"apply\" }",
+      "Assert HTTP 202; data.run_id is UUID; data.status='queued'",
+      "Wait for RetentionEngine job completion",
+      "Query SELECT name, mobile, pan_token, dob, aadhaar_ref_token FROM lead_identities WHERE lead_id='LD-ELIGIBLE-001'",
+      "Query SELECT COUNT(*) FROM consent_records WHERE lead_id='LD-ELIGIBLE-001'",
+      "Query SELECT * FROM audit_logs WHERE lead_id='LD-ELIGIBLE-001' AND detail->>'action_taken' IN ('anonymise','purge')"
+    ],
+    "test_data": {
+      "admin_user_id": "ADMIN-USER-001",
+      "eligible_lead_id": "LD-ELIGIBLE-001",
+      "prior_pii": { "name": "John Doe", "mobile": "9876543210", "pan_token": "PAN123", "dob": "1985-05-15", "aadhaar_ref_token": "AADH-REF-001" }
+    },
+    "expected_result": "lead_identities row: name='ANONYMISED', mobile='0000000000', email=NULL, pan_token=NULL, dob=NULL, aadhaar_ref_token=NULL; consent_records count remains 2 (untouched, append-only); audit_logs has new row with detail.action_taken='anonymise' and lead_id='LD-ELIGIBLE-001'",
+    "postconditions": [
+      "INV-01: no consent_records row modified",
+      "INV-04: if name='ANONYMISED' then pan_token IS NULL (no partial anonymisation)",
+      "INV-08: anonymised lead has corresponding audit_log entry"
+    ]
+  },
+  {
+    "test_id": "TC-FR115-03",
+    "test_name": "Apply-run skips lead with active legal hold — lead PII unchanged",
+    "category": "Negative/Error",
+    "linked_fr": "FR-115",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-HOLD-001 is past retention cutoff and would otherwise be eligible",
+      "retention_policies row with legal_hold=true, is_active=true for data_category='identity'",
+      "ADMIN-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/retention/run with { \"mode\": \"apply\" }",
+      "Wait for job completion",
+      "Query SELECT name FROM lead_identities WHERE lead_id='LD-HOLD-001'",
+      "Assert name != 'ANONYMISED'",
+      "Run INV-05: SELECT l.lead_id FROM leads l JOIN lead_identities li ON li.lead_identity_id=l.lead_identity_id WHERE li.name='ANONYMISED' AND EXISTS (SELECT 1 FROM retention_policies rp WHERE rp.legal_hold=true AND rp.is_active=true)"
+    ],
+    "test_data": {
+      "legal_hold_lead_id": "LD-HOLD-001",
+      "legal_hold_policy": { "legal_hold": true, "is_active": true, "data_category": "identity" }
+    },
+    "expected_result": "lead_identities.name for LD-HOLD-001 remains unchanged (not 'ANONYMISED'); INV-05 returns 0 rows",
+    "postconditions": [
+      "INV-05 returns 0 rows"
+    ]
+  },
+  {
+    "test_id": "TC-FR115-04",
+    "test_name": "Apply-run skips lead with open DataRightsRequest or open Grievance",
+    "category": "Negative/Error",
+    "linked_fr": "FR-115",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-OPEN-DRR exists past retention cutoff; data_rights_requests row with lead_id='LD-OPEN-DRR', status='open'",
+      "Lead LD-OPEN-GRV exists past retention cutoff; grievances row with lead_id='LD-OPEN-GRV', status='in_progress'",
+      "Lead LD-ELIGIBLE-002 exists past retention cutoff; no open DRR or grievance"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/retention/run with { \"mode\": \"apply\" }",
+      "Wait for job completion",
+      "Query lead_identities for LD-OPEN-DRR: assert name != 'ANONYMISED'",
+      "Query lead_identities for LD-OPEN-GRV: assert name != 'ANONYMISED'",
+      "Query lead_identities for LD-ELIGIBLE-002: assert name = 'ANONYMISED'",
+      "Run INV-06 and INV-07"
+    ],
+    "test_data": {
+      "blocked_by_drr_lead": "LD-OPEN-DRR",
+      "blocked_by_grievance_lead": "LD-OPEN-GRV",
+      "eligible_sibling_lead": "LD-ELIGIBLE-002"
+    },
+    "expected_result": "LD-OPEN-DRR and LD-OPEN-GRV PII fields not anonymised; LD-ELIGIBLE-002 is anonymised; audit log has 1 entry (for LD-ELIGIBLE-002 only); INV-06 and INV-07 return 0 rows",
+    "postconditions": [
+      "INV-06: SELECT l.lead_id FROM leads l JOIN lead_identities li ON li.lead_identity_id=l.lead_identity_id WHERE li.name='ANONYMISED' AND EXISTS (SELECT 1 FROM data_rights_requests drr WHERE drr.lead_id=l.lead_id AND drr.status IN ('open','in_review')) = 0 rows",
+      "INV-07: same check for open grievances = 0 rows"
+    ]
+  },
+  {
+    "test_id": "TC-FR115-05",
+    "test_name": "DPO can trigger dry-run but not apply-run — FORBIDDEN on apply",
+    "category": "Permission",
+    "linked_fr": "FR-115",
+    "priority": "High",
+    "preconditions": [
+      "DPO-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "Authenticate as DPO-USER-001",
+      "POST /api/v1/admin/retention/run with { \"mode\": \"dry_run\" }",
+      "Assert HTTP 202 (DPO can dry-run)",
+      "POST /api/v1/admin/retention/run with { \"mode\": \"apply\" }",
+      "Assert HTTP 403; error.code='FORBIDDEN'"
+    ],
+    "test_data": {
+      "dpo_user_id": "DPO-USER-001"
+    },
+    "expected_result": "Dry-run returns 202; apply returns 403 FORBIDDEN; no retention job queued for apply attempt by DPO",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR115-06",
+    "test_name": "ADMIN cannot create retention policy for consent data category — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-115",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN-USER-001 JWT available"
+    ],
+    "test_steps": [
+      "Authenticate as ADMIN-USER-001",
+      "POST /api/v1/admin/retention-policies with { \"data_category\": \"consent\", \"retain_days\": 0, \"action\": \"purge\" }",
+      "Assert HTTP 400; error.code='VALIDATION_ERROR'",
+      "Assert error.message references consent exemption",
+      "Assert error.fields[].field = 'data_category'"
+    ],
+    "test_data": {
+      "admin_user_id": "ADMIN-USER-001",
+      "payload": { "data_category": "consent", "retain_days": 0, "action": "purge" }
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains data_category; error.message references consent records exemption from purge; no retention_policies row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR115-07",
+    "test_name": "Mid-batch DB failure rolls back only the failing lead's transaction; other leads committed",
+    "category": "Boundary",
+    "linked_fr": "FR-115",
+    "priority": "High",
+    "preconditions": [
+      "5 leads eligible for anonymisation",
+      "DB mock forces a constraint failure on the 3rd lead's batch write"
+    ],
+    "test_steps": [
+      "Trigger apply-run with mocked DB failure on 3rd lead",
+      "Assert leads 1 and 2 have name='ANONYMISED' in lead_identities (committed)",
+      "Assert lead 3 has original name (rolled back; no partial state)",
+      "Assert leads 4 and 5 have name='ANONYMISED' (committed)",
+      "Assert error logged for lead 3 with correlation_id",
+      "Run INV-04 for all processed leads: no partial anonymisation"
+    ],
+    "test_data": {
+      "batch_size": 5,
+      "failure_index": 3,
+      "expected_anonymised": [1, 2, 4, 5],
+      "expected_rolled_back": [3]
+    },
+    "expected_result": "Leads at index 1, 2, 4, 5 fully anonymised; lead 3 is in original state; structured error logged with lead_id and correlation_id; INV-04 returns 0 rows across all leads",
+    "postconditions": [
+      "INV-04: no partial anonymisation state exists for any of the 5 leads"
+    ]
+  },
+  {
+    "test_id": "TC-FR115-08",
+    "test_name": "Retention engine never modifies audit_logs or consent_records rows",
+    "category": "Data Integrity",
+    "linked_fr": "FR-115",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead LD-ELIGIBLE-003 eligible for kyc_doc/purge retention action",
+      "LD-ELIGIBLE-003 has 3 audit_logs rows and 2 consent_records rows pre-existing"
+    ],
+    "test_steps": [
+      "Record COUNT(*) FROM audit_logs WHERE lead_id='LD-ELIGIBLE-003' = 3",
+      "Record COUNT(*) FROM consent_records WHERE lead_id='LD-ELIGIBLE-003' = 2",
+      "Trigger apply-run",
+      "After run: COUNT(*) FROM audit_logs WHERE lead_id='LD-ELIGIBLE-003' >= 4 (3 pre-existing + new retention audit row)",
+      "Assert: SELECT audit_id FROM audit_logs WHERE lead_id='LD-ELIGIBLE-003' AND updated_at != created_at = 0 rows",
+      "Assert: COUNT(*) FROM consent_records WHERE lead_id='LD-ELIGIBLE-003' = 2 (unchanged)"
+    ],
+    "test_data": {
+      "eligible_lead_id": "LD-ELIGIBLE-003",
+      "pre_existing_audit_count": 3,
+      "pre_existing_consent_count": 2
+    },
+    "expected_result": "audit_logs count >= 4 after run (new retention entry added, pre-existing NOT modified); consent_records count remains exactly 2 (append-only, untouched by retention); INV-01 and INV-02 pass",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Seed lead with pre-existing audit and consent rows; record counts before run",
+      "action": "Trigger apply-run via POST /api/v1/admin/retention/run {mode:'apply'}; then SELECT audit_id FROM audit_logs WHERE lead_id='LD-ELIGIBLE-003' AND updated_at!=created_at",
+      "invariant_query": "SELECT audit_id FROM audit_logs WHERE lead_id='LD-ELIGIBLE-003' AND updated_at!=created_at UNION ALL SELECT consent_id FROM consent_records WHERE lead_id='LD-ELIGIBLE-003' AND updated_at>created_at",
+      "cleanup": "DELETE FROM lead_identities WHERE lead_id='LD-ELIGIBLE-003'; DELETE FROM audit_logs WHERE lead_id='LD-ELIGIBLE-003'"
+    }
+  },
+  {
+    "test_id": "TC-FR115-UI-01",
+    "test_name": "DPO triggers dry-run from Retention Admin page and sees preview panel",
+    "category": "UI/E2E",
+    "linked_fr": "FR-115",
+    "priority": "High",
+    "preconditions": [
+      "DPO-USER-001 authenticated in browser",
+      "retention_policies seeded with at least one active policy",
+      "At least 3 leads eligible for dry-run"
+    ],
+    "test_steps": [
+      "Navigate to /compliance/retention",
+      "Assert DataTable shows policy rows",
+      "Click 'Trigger Run' button",
+      "Select mode='dry_run' in modal",
+      "Click Submit",
+      "Assert DryRunPreviewPanel appears with eligible_leads, blocked_by_legal_hold, blocked_by_open_request counts",
+      "Assert no error Toast shown; data is not modified"
+    ],
+    "test_data": {
+      "dpo_username": "dpo@nbfc.com",
+      "expected_eligible_count": 3
+    },
+    "expected_result": "DryRunPreviewPanel renders with numeric counts; no data mutation; all counts are non-negative integers; no console errors; RM accessing same route receives 403",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/compliance/retention",
+      "locators": {
+        "trigger_run_button": "getByRole('button', { name: 'Trigger Run' })",
+        "mode_select": "getByTestId('retention-run-mode-select')",
+        "submit_button": "getByRole('button', { name: 'Submit' })",
+        "dry_run_preview_panel": "getByTestId('dry-run-preview-panel')",
+        "eligible_leads_count": "getByTestId('preview-eligible-leads')",
+        "blocked_legal_hold_count": "getByTestId('preview-blocked-legal-hold')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "dpo_authenticated",
+      "network_wait": "waitForResponse('**/admin/retention/run')",
+      "visual_assert": "DryRunPreviewPanel is visible and contains numeric values; Apply button is absent or disabled for DPO role",
+      "a11y": "Modal has role='dialog' with aria-labelledby; preview counts have descriptive aria-labels; TabIndex order is logical"
+    }
+  }
+]

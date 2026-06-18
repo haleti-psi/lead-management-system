@@ -1,0 +1,1734 @@
+[
+  {
+    "test_id": "TC-FR060-01",
+    "test_name": "Happy path — RM creates customer link for own lead",
+    "category": "Happy Path",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "RM user authenticated with valid JWT",
+      "Lead owned by this RM exists with lead_id = '11111111-1111-1111-1111-111111111111'",
+      "No existing active customer_links row for this lead"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/11111111-1111-1111-1111-111111111111/customer-link",
+      "Headers: Authorization: Bearer <rm_jwt>",
+      "Body: { \"purpose\": [\"upload\", \"consent\"], \"channel\": \"whatsapp\", \"expires_in_days\": 7 }"
+    ],
+    "test_data": {
+      "lead_id": "11111111-1111-1111-1111-111111111111",
+      "purpose": ["upload", "consent"],
+      "channel": "whatsapp",
+      "expires_in_days": 7
+    },
+    "expected_result": "HTTP 201; response envelope { data: { customer_link_id: <UUID>, status: 'active', expires_at: <ISO8601 7 days from now> }, meta: {}, error: null }; raw token absent from response body; customer_links row with status='active' and token_hash set (non-null, non-empty); audit_logs row with action='link_create' and lead_id='11111111-1111-1111-1111-111111111111'; event_outbox row with event_code='DOC_REQUEST'",
+    "postconditions": [
+      "Exactly one active customer_links row for this lead",
+      "audit_logs has one link_create entry",
+      "event_outbox has one DOC_REQUEST entry"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-02",
+    "test_name": "Resend — second create revokes first link and issues new token",
+    "category": "Workflow",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "Active customer_links row already exists for lead with customer_link_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'",
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/11111111-1111-1111-1111-111111111111/customer-link with same body as TC-FR060-01",
+      "Query customer_links WHERE lead_id = '11111111-1111-1111-1111-111111111111'"
+    ],
+    "test_data": {
+      "first_link_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "purpose": ["upload"],
+      "channel": "sms",
+      "expires_in_days": 7
+    },
+    "expected_result": "HTTP 201; old link customer_link_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' has status='revoked' and revoked_by=<rm_user_id>; new link has status='active'; SELECT COUNT(*) FROM customer_links WHERE lead_id='11111111-1111-1111-1111-111111111111' AND status='active' returns 1 (no duplicates)",
+    "postconditions": [
+      "Only one active link per lead",
+      "Revoked link has revoked_by set to acting RM user_id"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-03",
+    "test_name": "FORBIDDEN — RM cannot create link for lead they do not own",
+    "category": "Permission",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead '22222222-2222-2222-2222-222222222222' owned by rmA",
+      "rmB authenticated (different RM, same branch)"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/22222222-2222-2222-2222-222222222222/customer-link",
+      "Headers: Authorization: Bearer <rmB_jwt>",
+      "Body: { \"purpose\": [\"upload\"], \"channel\": \"email\", \"expires_in_days\": 7 }"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222222",
+      "actor_role": "RM",
+      "actor_scope": "O (own leads only)"
+    },
+    "expected_result": "HTTP 403; { data: null, meta: {}, error: { code: 'FORBIDDEN', message: '...', retryable: false } }; no customer_links row inserted",
+    "postconditions": [
+      "No new customer_links row for this lead"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-04",
+    "test_name": "Expired token — GET /c/{token} returns NOT_FOUND and marks link expired",
+    "category": "Workflow",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "customer_links row exists with expires_at = NOW() - INTERVAL '1 second', status='active'",
+      "Raw token = 'expiredtoken12345678901234567890ab'"
+    ],
+    "test_steps": [
+      "GET /api/v1/c/expiredtoken12345678901234567890ab"
+    ],
+    "test_data": {
+      "raw_token": "expiredtoken12345678901234567890ab",
+      "expires_at": "NOW() - 1 second"
+    },
+    "expected_result": "HTTP 404; { error: { code: 'NOT_FOUND' } }; customer_links.status updated to 'expired' in DB; SELECT status FROM customer_links WHERE token_hash = sha256('expiredtoken12345678901234567890ab') returns 'expired'",
+    "postconditions": [
+      "Link status is 'expired' in DB",
+      "No sensitive lead data returned"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-05",
+    "test_name": "OTP rate limit — 11th attempt returns RATE_LIMITED",
+    "category": "Boundary",
+    "linked_fr": "FR-060",
+    "priority": "High",
+    "preconditions": [
+      "Valid active link with raw token = 'validtoken9876543210abcdefabcdef'",
+      "Redis OTP key set with value '654321'",
+      "10 wrong OTP attempts already recorded in Redis rate-limit counter"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/validtoken9876543210abcdefabcdef/otp",
+      "Body: { \"otp\": \"000000\" }",
+      "This is the 11th attempt"
+    ],
+    "test_data": {
+      "raw_token": "validtoken9876543210abcdefabcdef",
+      "otp": "000000",
+      "attempt_number": 11,
+      "window_minutes": 10,
+      "correct_otp": "654321"
+    },
+    "expected_result": "HTTP 429; { error: { code: 'RATE_LIMITED', retryable: true } }; Retry-After header present with value > 0; Redis rate-limit key still set",
+    "postconditions": [
+      "Retry-After header present",
+      "OTP session not created in Redis"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-06",
+    "test_name": "OTP happy path — correct OTP sets session in Redis",
+    "category": "Happy Path",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "Valid active link with raw token = 'validtoken9876543210abcdefabcdef'",
+      "Redis OTP key 'otp:clsession:<link_id>' = '654321'",
+      "No prior OTP attempts"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/validtoken9876543210abcdefabcdef/otp",
+      "Body: { \"otp\": \"654321\" }"
+    ],
+    "test_data": {
+      "raw_token": "validtoken9876543210abcdefabcdef",
+      "otp": "654321"
+    },
+    "expected_result": "HTTP 200; { data: { otp_verified: true }, error: null }; Redis key 'clsession:<customer_link_id>' exists with TTL > 0; Redis OTP key deleted; customer_links.otp_verified_at IS NOT NULL in DB",
+    "postconditions": [
+      "Redis clsession key set",
+      "OTP key removed from Redis",
+      "otp_verified_at timestamp set in DB"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-07",
+    "test_name": "Upload without OTP step-up — AUTH_REQUIRED",
+    "category": "Negative/Error",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "Active link with raw token = 'validtoken9876543210abcdefabcdef'",
+      "No Redis clsession key (OTP not verified)"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/validtoken9876543210abcdefabcdef/documents",
+      "Content-Type: multipart/form-data",
+      "Field doc_type='pan', applicant_scope='applicant'",
+      "File: pan.pdf (200 KB, application/pdf)"
+    ],
+    "test_data": {
+      "raw_token": "validtoken9876543210abcdefabcdef",
+      "doc_type": "pan",
+      "file_name": "pan.pdf",
+      "file_size_kb": 200,
+      "file_mime": "application/pdf"
+    },
+    "expected_result": "HTTP 401; { error: { code: 'AUTH_REQUIRED' } }; no documents row inserted; no GCS write",
+    "postconditions": [
+      "No new document row in DB",
+      "GCS staging bucket unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-08",
+    "test_name": "File exceeds 10 MB limit — PAYLOAD_TOO_LARGE",
+    "category": "Boundary",
+    "linked_fr": "FR-060",
+    "priority": "High",
+    "preconditions": [
+      "Active OTP-verified link with raw token = 'validtoken9876543210abcdefabcdef'",
+      "Redis clsession key present"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/validtoken9876543210abcdefabcdef/documents",
+      "Body: { \"doc_type\": \"pan\", \"applicant_scope\": \"applicant\", \"file_name\": \"large.pdf\", \"file_type\": \"application/pdf\", \"file_size_kb\": 10241 }"
+    ],
+    "test_data": {
+      "raw_token": "validtoken9876543210abcdefabcdef",
+      "doc_type": "pan",
+      "file_name": "large.pdf",
+      "file_size_kb": 10241,
+      "max_upload_mb": 10
+    },
+    "expected_result": "HTTP 413; { error: { code: 'PAYLOAD_TOO_LARGE', retryable: false } }; no documents row inserted; no GCS signed URL returned",
+    "postconditions": [
+      "No document row created in DB"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-09",
+    "test_name": "Infected file — virus scan rejects document post-upload",
+    "category": "Negative/Error",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "Document row exists with document_id='dddddddd-dddd-dddd-dddd-dddddddddddd', status='uploaded', virus_scan_status='pending', storage_ref='gs://staging/pan-v1.pdf'"
+    ],
+    "test_steps": [
+      "Internal scan callback: POST /api/v1/internal/documents/dddddddd-dddd-dddd-dddd-dddddddddddd/scan-result",
+      "Body: { \"status\": \"infected\" }",
+      "Headers: HMAC signature present"
+    ],
+    "test_data": {
+      "document_id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+      "scan_result": "infected",
+      "storage_ref_before": "gs://staging/pan-v1.pdf"
+    },
+    "expected_result": "documents.virus_scan_status='infected'; documents.deleted_at IS NOT NULL; documents.storage_ref IS NULL; GCS deleteObject called once; audit_logs row written; event_outbox row with infected payload; document NOT accessible via any read endpoint",
+    "postconditions": [
+      "SELECT document_id FROM documents WHERE virus_scan_status='infected' AND deleted_at IS NULL returns 0 rows",
+      "SELECT document_id FROM documents WHERE virus_scan_status='infected' AND storage_ref IS NOT NULL returns 0 rows"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-10",
+    "test_name": "Masking — GET /c/{token} response hides internal fields",
+    "category": "Negative/Error",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "Active link with raw token = 'validtoken9876543210abcdefabcdef'",
+      "Lead has owner_id='owneruuid', los_application_id='LOS-9999', score=78, lead_code='LD-2026-00042'"
+    ],
+    "test_steps": [
+      "GET /api/v1/c/validtoken9876543210abcdefabcdef"
+    ],
+    "test_data": {
+      "raw_token": "validtoken9876543210abcdefabcdef",
+      "lead_has_owner_id": "owneruuid",
+      "lead_has_los_application_id": "LOS-9999",
+      "lead_has_score": 78,
+      "lead_has_lead_code": "LD-2026-00042"
+    },
+    "expected_result": "HTTP 200; response body JSON stringified does NOT contain any of: 'owner_id', 'lead_code', 'score', 'los_application_id', 'score_reasons'; data.lead_display contains only product_display_name and status_label fields",
+    "postconditions": [
+      "No internal fields leaked in response"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-11",
+    "test_name": "Disallowed MIME type — executable upload rejected",
+    "category": "Negative/Error",
+    "linked_fr": "FR-060",
+    "priority": "High",
+    "preconditions": [
+      "Active OTP-verified link",
+      "Redis clsession key present"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/validtoken9876543210abcdefabcdef/documents",
+      "Body: { \"doc_type\": \"pan\", \"applicant_scope\": \"applicant\", \"file_name\": \"malware.exe\", \"file_type\": \"application/x-msdownload\", \"file_size_kb\": 500 }"
+    ],
+    "test_data": {
+      "file_name": "malware.exe",
+      "file_type": "application/x-msdownload",
+      "file_size_kb": 500
+    },
+    "expected_result": "HTTP 415; { error: { code: 'UNSUPPORTED_MEDIA', retryable: false } }; no GCS write; no documents row inserted",
+    "postconditions": [
+      "No document row in DB for this upload attempt"
+    ]
+  },
+  {
+    "test_id": "TC-FR060-UI-01",
+    "test_name": "E2E — Customer upload full flow via customer link",
+    "category": "UI/E2E",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "Staff has created a customer link for lead (fixture token 'uitesttoken0000000000000000000001')",
+      "OTP mock returns '123456' for this token"
+    ],
+    "test_steps": [
+      "Navigate browser to /c/uitesttoken0000000000000000000001",
+      "Assert OTP screen shown",
+      "Enter OTP '123456' and click Submit",
+      "Assert upload tab visible and OTP screen gone",
+      "Select doc_type PAN from dropdown",
+      "Attach file 'pan_sample.pdf' (180 KB, application/pdf) via file input",
+      "Click Upload button",
+      "Wait for scan status badge to appear"
+    ],
+    "test_data": {
+      "raw_token": "uitesttoken0000000000000000000001",
+      "otp": "123456",
+      "file": "pan_sample.pdf",
+      "file_size_kb": 180,
+      "file_mime": "application/pdf"
+    },
+    "expected_result": "OTP gate clears; upload progress bar appears; ScanStatusBadge shows 'Pending'; after mock scan resolves clean, status chip shows 'Under Review'; no RM name, score, owner_id, lead_code visible anywhere on page",
+    "postconditions": [
+      "Document row with status='uploaded' (then 'under_review') in DB",
+      "No internal fields visible in DOM"
+    ],
+    "ui_meta": {
+      "route": "/c/uitesttoken0000000000000000000001",
+      "locators": {
+        "otp_input": "getByRole('textbox', { name: /otp/i })",
+        "otp_submit": "getByRole('button', { name: /verify/i })",
+        "doc_type_select": "getByRole('combobox', { name: /document type/i })",
+        "file_input": "getByTestId('file-dropzone-input')",
+        "upload_button": "getByRole('button', { name: /upload/i })",
+        "scan_badge": "getByTestId('scan-status-badge')"
+      },
+      "viewport": "375x667",
+      "auth_state": "none (public token route, no JWT)",
+      "network_wait": "waitForResponse('**/documents')",
+      "visual_assert": "ScanStatusBadge text 'Pending' then 'Under Review'",
+      "a11y": "axe scan on OTP screen; all form fields have labels; no keyboard traps"
+    }
+  },
+  {
+    "test_id": "TC-FR060-UI-02",
+    "test_name": "E2E — Expired link shows re-request page with no data",
+    "category": "UI/E2E",
+    "linked_fr": "FR-060",
+    "priority": "High",
+    "preconditions": [
+      "customer_links row with status='expired', expires_at=past, token_hash=sha256('expireduitoken0000000000000000001')"
+    ],
+    "test_steps": [
+      "Navigate browser to /c/expireduitoken0000000000000000001"
+    ],
+    "test_data": {
+      "raw_token": "expireduitoken0000000000000000001"
+    },
+    "expected_result": "ExpiredLinkPage rendered; 'Contact your RM' message visible; no upload tab, no consent tab, no status tab rendered; no lead data visible in DOM",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/c/expireduitoken0000000000000000001",
+      "locators": {
+        "expired_page": "getByTestId('expired-link-page')",
+        "contact_message": "getByText(/contact your rm/i)"
+      },
+      "viewport": "375x667",
+      "auth_state": "none",
+      "network_wait": "waitForResponse('**/c/expireduitoken*')",
+      "visual_assert": "ExpiredLinkPage heading visible; no upload/consent controls",
+      "a11y": "page has single h1; focus on message"
+    }
+  },
+  {
+    "test_id": "TC-FR060-DI-01",
+    "test_name": "Data Integrity — No two active customer_links for same lead",
+    "category": "Data Integrity",
+    "linked_fr": "FR-060",
+    "priority": "Critical",
+    "preconditions": [
+      "At least one customer_links row exists with status='active'"
+    ],
+    "test_steps": [
+      "Execute invariant query after every link create operation"
+    ],
+    "test_data": {
+      "invariant_sql": "SELECT lead_id, COUNT(*) FROM customer_links WHERE status = 'active' GROUP BY lead_id HAVING COUNT(*) > 1"
+    },
+    "expected_result": "Query returns 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO customer_links (customer_link_id, org_id, lead_id, token_hash, purpose, channel, status, expires_at, created_by) VALUES ('aaaa0001-0000-0000-0000-000000000001', <org_id>, <lead_id>, sha256('token1'), ARRAY['upload'], 'sms', 'active', NOW()+INTERVAL '7 days', <user_id>)",
+      "action": "POST /api/v1/leads/{id}/customer-link (second call for same lead)",
+      "invariant_query": "SELECT lead_id, COUNT(*) FROM customer_links WHERE status = 'active' GROUP BY lead_id HAVING COUNT(*) > 1",
+      "cleanup": "DELETE FROM customer_links WHERE lead_id = <test_lead_id>"
+    }
+  },
+  {
+    "test_id": "TC-FR061-01",
+    "test_name": "Happy path — customer raises grievance via active token",
+    "category": "Happy Path",
+    "linked_fr": "FR-061",
+    "priority": "Critical",
+    "preconditions": [
+      "customer_links row: status='active', otp_verified_at=NOW(), expires_at=NOW()+7days, lead_id='33333333-3333-3333-3333-333333333333'",
+      "Raw token = 'grievancetoken00000000000000000001'",
+      "sla_policies row: applies_to='grievance', threshold_minutes=4320, is_active=true",
+      "System user and org seeded"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/grievancetoken00000000000000000001/grievance",
+      "Body: { \"category\": \"service_delay\", \"description\": \"Application pending for 15 days with no update from RM.\" }"
+    ],
+    "test_data": {
+      "raw_token": "grievancetoken00000000000000000001",
+      "category": "service_delay",
+      "description": "Application pending for 15 days with no update from RM.",
+      "expected_sla_minutes": 4320
+    },
+    "expected_result": "HTTP 201; data.grievanceNo matches /^GRV-\\d{4}-\\d{5}$/; data.status='open'; data.sla_due_at is valid ISO 8601; data.error=null; SELECT COUNT(*) FROM grievances WHERE grievance_no=<returned_no> returns 1; SELECT source FROM grievances WHERE grievance_no=<returned_no> returns 'customer_link'; event_outbox row with event_code='GRIEVANCE_CREATED'",
+    "postconditions": [
+      "grievances row with status='open', source='customer_link', category='service_delay'",
+      "event_outbox has GRIEVANCE_CREATED entry",
+      "sla_due_at set to approximately NOW() + 4320 minutes"
+    ]
+  },
+  {
+    "test_id": "TC-FR061-02",
+    "test_name": "Grievance with invalid category — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-061",
+    "priority": "High",
+    "preconditions": [
+      "Active OTP-verified token = 'grievancetoken00000000000000000001'"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/grievancetoken00000000000000000001/grievance",
+      "Body: { \"category\": \"wrong_category_xyz\", \"description\": \"Test complaint.\" }"
+    ],
+    "test_data": {
+      "category": "wrong_category_xyz",
+      "description": "Test complaint."
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains entry with field='category'; no grievances row inserted",
+    "postconditions": [
+      "SELECT COUNT(*) FROM grievances WHERE lead_id='33333333-3333-3333-3333-333333333333' AND created_at > NOW()-INTERVAL '1 minute' returns 0"
+    ]
+  },
+  {
+    "test_id": "TC-FR061-03",
+    "test_name": "Description exceeds 2000 characters — VALIDATION_ERROR",
+    "category": "Boundary",
+    "linked_fr": "FR-061",
+    "priority": "High",
+    "preconditions": [
+      "Active OTP-verified token = 'grievancetoken00000000000000000001'"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/grievancetoken00000000000000000001/grievance",
+      "Body: { \"category\": \"service_delay\", \"description\": \"<string of 2001 chars>\" }"
+    ],
+    "test_data": {
+      "category": "service_delay",
+      "description_length": 2001,
+      "description": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident sunt in culpa qui officia deserunt mollit anim id est laborum. Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur excepteur sint occaecat cupidatat non proident sunt in culpa qui officia deserunt mollit anim id est laborum lorem ipsum dolor sit amet consectetur adipiscing elit lorem ipsum dolor sit amet consectetur adipiscing elit lorem ipsum dolor sit amet consectetur adipiscing elit lorem ipsum dolor sit amet consectetur."
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains { field: 'description' }; no grievances row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR061-04",
+    "test_name": "OTP not verified — grievance submission rejected",
+    "category": "Negative/Error",
+    "linked_fr": "FR-061",
+    "priority": "Critical",
+    "preconditions": [
+      "customer_links row: status='active', otp_verified_at=NULL, expires_at=NOW()+7days",
+      "Raw token = 'grievancenootp000000000000000000001'"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/grievancenootp000000000000000000001/grievance",
+      "Body: { \"category\": \"service_delay\", \"description\": \"Valid complaint.\" }"
+    ],
+    "test_data": {
+      "raw_token": "grievancenootp000000000000000000001",
+      "otp_verified_at": null
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; no grievances row inserted",
+    "postconditions": [
+      "SELECT COUNT(*) FROM grievances WHERE lead_id = <lead_id> AND source='customer_link' AND created_at > NOW()-INTERVAL '1 minute' returns 0"
+    ]
+  },
+  {
+    "test_id": "TC-FR061-05",
+    "test_name": "Token not found — NOT_FOUND",
+    "category": "Negative/Error",
+    "linked_fr": "FR-061",
+    "priority": "High",
+    "preconditions": [
+      "No customer_links row for token 'nonexistentgrievancetoken00000001'"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/nonexistentgrievancetoken00000001/grievance",
+      "Body: { \"category\": \"other\", \"description\": \"Test.\" }"
+    ],
+    "test_data": {
+      "raw_token": "nonexistentgrievancetoken00000001"
+    },
+    "expected_result": "HTTP 404; error.code='NOT_FOUND'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR061-06",
+    "test_name": "Transaction rollback — outbox INSERT failure rolls back grievance",
+    "category": "Data Integrity",
+    "linked_fr": "FR-061",
+    "priority": "Critical",
+    "preconditions": [
+      "Active OTP-verified token = 'grievancetoken00000000000000000001'",
+      "OutboxService.emit mock configured to throw after grievances INSERT"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/grievancetoken00000000000000000001/grievance",
+      "Body: { \"category\": \"service_delay\", \"description\": \"Valid complaint.\" }",
+      "OutboxService.emit throws DB error mid-transaction",
+      "Query grievances table"
+    ],
+    "test_data": {
+      "injected_error": "OutboxService.emit throws Error('DB inject')"
+    },
+    "expected_result": "HTTP 500; error.code='INTERNAL_ERROR'; no stack trace in response; SELECT COUNT(*) FROM grievances WHERE lead_id = <lead_id> returns 0 (rollback verified); SELECT COUNT(*) FROM event_outbox WHERE event_code='GRIEVANCE_CREATED' AND aggregate_id = <expected_id> returns 0",
+    "postconditions": [
+      "No partial state in grievances table",
+      "No partial state in event_outbox"
+    ]
+  },
+  {
+    "test_id": "TC-FR061-UI-01",
+    "test_name": "E2E — Customer submits grievance and sees grievance number",
+    "category": "UI/E2E",
+    "linked_fr": "FR-061",
+    "priority": "High",
+    "preconditions": [
+      "Active OTP-verified fixture token 'uitesttoken0000000000000000000002'"
+    ],
+    "test_steps": [
+      "Navigate to /c/uitesttoken0000000000000000000002",
+      "Complete OTP verification with '123456'",
+      "Click Grievance tab",
+      "Verify GrievanceOfficerInfoBlock is visible",
+      "Select category 'service_delay' from dropdown",
+      "Fill description 'My application has been pending for 15 days.'",
+      "Click Submit",
+      "Wait for success banner"
+    ],
+    "test_data": {
+      "raw_token": "uitesttoken0000000000000000000002",
+      "otp": "123456",
+      "category": "service_delay",
+      "description": "My application has been pending for 15 days."
+    },
+    "expected_result": "Success Toast or banner containing 'GRV-' reference number visible; sla_due_at displayed in IST format (dd-MM-yyyy HH:mm); no internal fields visible; form fields cleared or success state shown",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/c/uitesttoken0000000000000000000002",
+      "locators": {
+        "grievance_tab": "getByRole('tab', { name: /grievance/i })",
+        "category_select": "getByRole('combobox', { name: /category/i })",
+        "description_textarea": "getByRole('textbox', { name: /description/i })",
+        "submit_button": "getByRole('button', { name: /submit/i })",
+        "success_banner": "getByTestId('grievance-success-banner')"
+      },
+      "viewport": "375x667",
+      "auth_state": "otp_verified (token scoped)",
+      "network_wait": "waitForResponse('**/grievance')",
+      "visual_assert": "Banner contains GRV- number and IST-formatted sla_due_at",
+      "a11y": "category select has label; description textarea has label; submit button accessible by keyboard"
+    }
+  },
+  {
+    "test_id": "TC-FR061-DI-01",
+    "test_name": "Data Integrity — No orphaned grievances with invalid lead FK",
+    "category": "Data Integrity",
+    "linked_fr": "FR-061",
+    "priority": "High",
+    "preconditions": [
+      "Test grievances have been created in test run"
+    ],
+    "test_steps": [
+      "Execute invariant query against grievances table"
+    ],
+    "test_data": {
+      "invariant_sql": "SELECT COUNT(*) FROM grievances g LEFT JOIN leads l ON l.lead_id = g.lead_id WHERE g.lead_id IS NOT NULL AND l.lead_id IS NULL"
+    },
+    "expected_result": "Query returns 0",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Run after TC-FR061-01 creates a grievance row",
+      "action": "Query grievances for orphaned FK references",
+      "invariant_query": "SELECT COUNT(*) FROM grievances g LEFT JOIN leads l ON l.lead_id = g.lead_id WHERE g.lead_id IS NOT NULL AND l.lead_id IS NULL",
+      "cleanup": "DELETE FROM grievances WHERE grievance_id IN (SELECT grievance_id FROM grievances WHERE created_at > NOW()-INTERVAL '1 hour' AND source='customer_link')"
+    }
+  },
+  {
+    "test_id": "TC-FR062-01",
+    "test_name": "Happy path — GET /c/{token}/status returns customer-safe stage label",
+    "category": "Happy Path",
+    "linked_fr": "FR-062",
+    "priority": "Critical",
+    "preconditions": [
+      "customer_links row: status='active', otp_verified_at=NOW(), expires_at=NOW()+7days",
+      "Lead in stage='contacted'",
+      "Raw token = 'statustoken0000000000000000000001'"
+    ],
+    "test_steps": [
+      "GET /api/v1/c/statustoken0000000000000000000001/status"
+    ],
+    "test_data": {
+      "raw_token": "statustoken0000000000000000000001",
+      "lead_stage": "contacted"
+    },
+    "expected_result": "HTTP 200; data.stage_label='In Progress'; data.stage_description present and non-empty; response body does NOT contain 'lead_stage', 'owner_id', 'los_application_id', 'score', 'score_reasons'; data.is_handed_off=false; error=null",
+    "postconditions": [
+      "audit_logs row with action='link_open' created for this call"
+    ]
+  },
+  {
+    "test_id": "TC-FR062-02",
+    "test_name": "Handed-off lead — status shows 'With Lending Team', LOS detail hidden",
+    "category": "Workflow",
+    "linked_fr": "FR-062",
+    "priority": "High",
+    "preconditions": [
+      "Lead in stage='handed_off', los_application_id='LOS-2026-00099'",
+      "Active OTP-verified token = 'statustoken0000000000000000000002'"
+    ],
+    "test_steps": [
+      "GET /api/v1/c/statustoken0000000000000000000002/status"
+    ],
+    "test_data": {
+      "raw_token": "statustoken0000000000000000000002",
+      "lead_stage": "handed_off",
+      "los_application_id": "LOS-2026-00099"
+    },
+    "expected_result": "HTTP 200; data.is_handed_off=true; data.los_status_label=null; response body does NOT contain 'LOS-2026-00099', 'owner_id', 'los_application_id'; stage_label indicates application is with lending team",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR062-03",
+    "test_name": "POST /c/{token}/callback — happy path creates RM task",
+    "category": "Happy Path",
+    "linked_fr": "FR-062",
+    "priority": "Critical",
+    "preconditions": [
+      "Active OTP-verified token = 'statustoken0000000000000000000001'",
+      "Lead in stage='contacted', lead is not handed_off, is_hot=false",
+      "Lead has owner_id='rmuser-uuid-1111-1111-111111111111'"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/statustoken0000000000000000000001/callback",
+      "Body: { \"preferred_slot\": \"<NOW + 2 hours ISO8601>\", \"note\": \"Please call after 10 AM\" }"
+    ],
+    "test_data": {
+      "raw_token": "statustoken0000000000000000000001",
+      "preferred_slot_offset_hours": 2,
+      "note": "Please call after 10 AM"
+    },
+    "expected_result": "HTTP 201; data.task_id is UUID; tasks row: type='callback', status='open', priority='high', owner_id='rmuser-uuid-1111-1111-111111111111'; leads.is_hot=true after request; audit_logs row with action='comm_send'",
+    "postconditions": [
+      "SELECT priority FROM tasks WHERE task_id=<returned_task_id> returns 'high'",
+      "SELECT is_hot FROM leads WHERE lead_id=<lead_id> returns true"
+    ]
+  },
+  {
+    "test_id": "TC-FR062-04",
+    "test_name": "Callback preferred_slot in the past — VALIDATION_ERROR",
+    "category": "Boundary",
+    "linked_fr": "FR-062",
+    "priority": "High",
+    "preconditions": [
+      "Active OTP-verified token = 'statustoken0000000000000000000001'"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/statustoken0000000000000000000001/callback",
+      "Body: { \"preferred_slot\": \"<NOW - 1 hour ISO8601>\" }"
+    ],
+    "test_data": {
+      "preferred_slot_offset_hours": -1
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[0].field='preferred_slot'; no tasks row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR062-05",
+    "test_name": "Callback preferred_slot more than 7 days away — VALIDATION_ERROR",
+    "category": "Boundary",
+    "linked_fr": "FR-062",
+    "priority": "High",
+    "preconditions": [
+      "Active OTP-verified token = 'statustoken0000000000000000000001'"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/statustoken0000000000000000000001/callback",
+      "Body: { \"preferred_slot\": \"<NOW + 8 days ISO8601>\" }"
+    ],
+    "test_data": {
+      "preferred_slot_offset_days": 8,
+      "max_days_ahead": 7
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[0].field='preferred_slot'; no tasks row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR062-06",
+    "test_name": "Callback blocked when lead is handed_off",
+    "category": "Workflow",
+    "linked_fr": "FR-062",
+    "priority": "High",
+    "preconditions": [
+      "Active OTP-verified token = 'statustoken0000000000000000000002'",
+      "Lead in stage='handed_off'"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/statustoken0000000000000000000002/callback",
+      "Body: { \"preferred_slot\": \"<NOW + 2 hours ISO8601>\" }"
+    ],
+    "test_data": {
+      "raw_token": "statustoken0000000000000000000002",
+      "lead_stage": "handed_off"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; message references lead stage restriction; no tasks row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR062-07",
+    "test_name": "Idempotency — replayed Idempotency-Key returns original task_id",
+    "category": "Boundary",
+    "linked_fr": "FR-062",
+    "priority": "High",
+    "preconditions": [
+      "Active OTP-verified token = 'statustoken0000000000000000000001'",
+      "First request with Idempotency-Key: 'idemp-key-cb-2026-001' already created task"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/statustoken0000000000000000000001/callback",
+      "Headers: Idempotency-Key: idemp-key-cb-2026-001",
+      "Body: { \"preferred_slot\": \"<same slot as first call>\" }",
+      "This is the second call with same idempotency key"
+    ],
+    "test_data": {
+      "idempotency_key": "idemp-key-cb-2026-001",
+      "preferred_slot_offset_hours": 2
+    },
+    "expected_result": "HTTP 200; data.task_id matches first call's task_id; meta.detail.reason='IDEMPOTENT_REPLAY'; SELECT COUNT(*) FROM tasks WHERE lead_id=<lead_id> AND type='callback' returns 1 (no duplicate)",
+    "postconditions": [
+      "Only one tasks row for this callback request"
+    ]
+  },
+  {
+    "test_id": "TC-FR062-08",
+    "test_name": "OTP step-up missing for status view — AUTH_REQUIRED",
+    "category": "Permission",
+    "linked_fr": "FR-062",
+    "priority": "Critical",
+    "preconditions": [
+      "Active link token = 'statustoken0000000000000000000003'",
+      "otp_verified_at IS NULL"
+    ],
+    "test_steps": [
+      "GET /api/v1/c/statustoken0000000000000000000003/status"
+    ],
+    "test_data": {
+      "raw_token": "statustoken0000000000000000000003",
+      "otp_verified_at": null
+    },
+    "expected_result": "HTTP 401; error.code='AUTH_REQUIRED'; no lead data returned",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR062-UI-01",
+    "test_name": "E2E — Customer views documents_pending status with pending actions",
+    "category": "UI/E2E",
+    "linked_fr": "FR-062",
+    "priority": "High",
+    "preconditions": [
+      "Lead in stage='documents_pending' with 2 documents in doc_status='pending'",
+      "Active OTP-verified fixture token 'uitesttoken0000000000000000000003'"
+    ],
+    "test_steps": [
+      "Navigate to /c/uitesttoken0000000000000000000003/status",
+      "Wait for page content to load"
+    ],
+    "test_data": {
+      "raw_token": "uitesttoken0000000000000000000003",
+      "lead_stage": "documents_pending",
+      "pending_doc_count": 2
+    },
+    "expected_result": "stage_label 'Documents Required' visible; pending_actions list has 2 items; no 'lead_stage', 'owner_id', 'score' text in page source; CallbackForm visible (not handed_off)",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/c/uitesttoken0000000000000000000003/status",
+      "locators": {
+        "stage_label": "getByTestId('stage-label')",
+        "pending_actions_list": "getByRole('list', { name: /pending actions/i })",
+        "callback_form": "getByTestId('callback-form')"
+      },
+      "viewport": "375x667",
+      "auth_state": "otp_verified (token scoped)",
+      "network_wait": "waitForResponse('**/status')",
+      "visual_assert": "Stage label text is 'Documents Required'; pending_actions list has 2 items",
+      "a11y": "stage label has semantic heading; pending actions list uses ul/li; callback form fields labeled"
+    }
+  },
+  {
+    "test_id": "TC-FR062-DI-01",
+    "test_name": "Data Integrity — Callback tasks always have priority=high",
+    "category": "Data Integrity",
+    "linked_fr": "FR-062",
+    "priority": "High",
+    "preconditions": [
+      "Test run has created callback tasks"
+    ],
+    "test_steps": [
+      "Execute invariant query after callback creation tests"
+    ],
+    "test_data": {
+      "invariant_sql": "SELECT task_id FROM tasks WHERE type = 'callback' AND priority <> 'high'"
+    },
+    "expected_result": "Query returns 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Run after TC-FR062-03 creates a callback task",
+      "action": "Query tasks table for non-high priority callback tasks",
+      "invariant_query": "SELECT task_id FROM tasks WHERE type = 'callback' AND priority <> 'high'",
+      "cleanup": "DELETE FROM tasks WHERE type='callback' AND lead_id = <test_lead_id>"
+    }
+  },
+  {
+    "test_id": "TC-FR070-01",
+    "test_name": "Happy path — GET /leads/{id}/documents returns merged checklist",
+    "category": "Happy Path",
+    "linked_fr": "FR-070",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead with product config having 3 checklist items: [{ doc_type:'pan', mandatory:true }, { doc_type:'address', mandatory:true }, { doc_type:'photo', mandatory:false }]",
+      "1 existing documents row: doc_type='pan', status='uploaded'",
+      "KYC user JWT with branch scope matching lead's branch"
+    ],
+    "test_steps": [
+      "GET /api/v1/leads/44444444-4444-4444-4444-444444444444/documents",
+      "Headers: Authorization: Bearer <kyc_jwt>"
+    ],
+    "test_data": {
+      "lead_id": "44444444-4444-4444-4444-444444444444",
+      "checklist": [
+        { "doc_type": "pan", "mandatory": true },
+        { "doc_type": "address", "mandatory": true },
+        { "doc_type": "photo", "mandatory": false }
+      ],
+      "existing_doc": { "doc_type": "pan", "status": "uploaded" }
+    },
+    "expected_result": "HTTP 200; data.checklist has 3 items; item pan has status='uploaded'; items address and photo have status='pending'; data.mandatory_complete=false; data.kyc_status='in_progress'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR070-02",
+    "test_name": "POST /leads/{id}/documents — Phase A upload returns signed URL",
+    "category": "Happy Path",
+    "linked_fr": "FR-070",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead with product config containing doc_type='pan' in checklist",
+      "RM JWT scoped to this lead (own)",
+      "GcsMockAdapter returns signed PUT URL"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/44444444-4444-4444-4444-444444444444/documents",
+      "Headers: Authorization: Bearer <rm_jwt>",
+      "Body: { \"doc_type\": \"pan\", \"applicant_scope\": \"applicant\", \"file_name\": \"pan.pdf\", \"file_type\": \"application/pdf\", \"file_size_kb\": 200 }"
+    ],
+    "test_data": {
+      "lead_id": "44444444-4444-4444-4444-444444444444",
+      "doc_type": "pan",
+      "applicant_scope": "applicant",
+      "file_name": "pan.pdf",
+      "file_type": "application/pdf",
+      "file_size_kb": 200
+    },
+    "expected_result": "HTTP 201; data.document_id is UUID; data.upload_url is non-empty string; data.upload_url_expires_at is in future; DB: 1 row in documents with status='pending'; audit_logs row with action='doc_upload'; data.upload_url_expires_at > NOW()",
+    "postconditions": [
+      "documents row with status='pending' and virus_scan_status='pending'"
+    ]
+  },
+  {
+    "test_id": "TC-FR070-03",
+    "test_name": "Re-upload — new version created, verified version 1 unchanged",
+    "category": "Workflow",
+    "linked_fr": "FR-070",
+    "priority": "Critical",
+    "preconditions": [
+      "Existing document: doc_type='pan', applicant_scope='applicant', status='verified', version=1",
+      "RM JWT scoped to this lead"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/44444444-4444-4444-4444-444444444444/documents",
+      "Body: { \"doc_type\": \"pan\", \"applicant_scope\": \"applicant\", \"file_name\": \"pan_v2.pdf\", \"file_type\": \"application/pdf\", \"file_size_kb\": 210 }"
+    ],
+    "test_data": {
+      "doc_type": "pan",
+      "applicant_scope": "applicant",
+      "file_name": "pan_v2.pdf",
+      "file_size_kb": 210,
+      "existing_version": 1,
+      "existing_status": "verified"
+    },
+    "expected_result": "HTTP 201; new document row created with version=2 and status='pending'; original version=1 row still has status='verified' (no revert); leads.kyc_status recomputed to 'in_progress' (new pending doc)",
+    "postconditions": [
+      "SELECT version, status FROM documents WHERE doc_type='pan' AND lead_id='44444444-4444-4444-4444-444444444444' ORDER BY version returns [(1,'verified'),(2,'pending')]"
+    ]
+  },
+  {
+    "test_id": "TC-FR070-04",
+    "test_name": "doc_type not in product checklist — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-070",
+    "priority": "High",
+    "preconditions": [
+      "Lead with product config checklist = ['pan', 'address']",
+      "RM JWT"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/44444444-4444-4444-4444-444444444444/documents",
+      "Body: { \"doc_type\": \"photo\", \"applicant_scope\": \"applicant\", \"file_name\": \"photo.jpg\", \"file_type\": \"image/jpeg\", \"file_size_kb\": 150 }"
+    ],
+    "test_data": {
+      "doc_type": "photo",
+      "checklist": ["pan", "address"]
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; message contains 'not in the product checklist'; no documents row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR070-05",
+    "test_name": "File type ZIP rejected — UNSUPPORTED_MEDIA",
+    "category": "Negative/Error",
+    "linked_fr": "FR-070",
+    "priority": "High",
+    "preconditions": [
+      "RM JWT for valid lead"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/44444444-4444-4444-4444-444444444444/documents",
+      "Body: { \"doc_type\": \"pan\", \"applicant_scope\": \"applicant\", \"file_name\": \"archive.zip\", \"file_type\": \"application/zip\", \"file_size_kb\": 500 }"
+    ],
+    "test_data": {
+      "doc_type": "pan",
+      "file_name": "archive.zip",
+      "file_type": "application/zip",
+      "file_size_kb": 500
+    },
+    "expected_result": "HTTP 415; error.code='UNSUPPORTED_MEDIA'; no documents row inserted; no GCS write",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR070-06",
+    "test_name": "File size 10 MB + 1 KB — PAYLOAD_TOO_LARGE",
+    "category": "Boundary",
+    "linked_fr": "FR-070",
+    "priority": "High",
+    "preconditions": [
+      "MAX_UPLOAD_MB=10 configured",
+      "RM JWT for valid lead"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/44444444-4444-4444-4444-444444444444/documents",
+      "Body: { \"doc_type\": \"pan\", \"applicant_scope\": \"applicant\", \"file_name\": \"large.pdf\", \"file_type\": \"application/pdf\", \"file_size_kb\": 10241 }"
+    ],
+    "test_data": {
+      "file_size_kb": 10241,
+      "max_size_mb": 10,
+      "file_name": "large.pdf"
+    },
+    "expected_result": "HTTP 413; error.code='PAYLOAD_TOO_LARGE'; no documents row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR070-07",
+    "test_name": "PATCH /leads/{id}/documents/{did}/waive — KYC waiver happy path",
+    "category": "Happy Path",
+    "linked_fr": "FR-070",
+    "priority": "Critical",
+    "preconditions": [
+      "Document doc_id='dddd0070-0000-0000-0000-000000000001' with status='uploaded' for lead '44444444-4444-4444-4444-444444444444'",
+      "KYC user JWT with branch scope"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/44444444-4444-4444-4444-444444444444/documents/dddd0070-0000-0000-0000-000000000001/waive",
+      "Headers: Authorization: Bearer <kyc_jwt>",
+      "Body: { \"reason\": \"Flood victim — approved by compliance EX-2026-00123\", \"expires_at\": \"2026-09-01\" }"
+    ],
+    "test_data": {
+      "document_id": "dddd0070-0000-0000-0000-000000000001",
+      "reason": "Flood victim — approved by compliance EX-2026-00123",
+      "expires_at": "2026-09-01",
+      "actor_role": "KYC"
+    },
+    "expected_result": "HTTP 200; data.status='waived'; DB: documents.status='waived', waiver_reason non-null; audit_logs row with action='doc_waive', entity_id='dddd0070-0000-0000-0000-000000000001'; leads.kyc_status recomputed",
+    "postconditions": [
+      "Document status is 'waived' in DB",
+      "Waiver audit entry present"
+    ]
+  },
+  {
+    "test_id": "TC-FR070-08",
+    "test_name": "RM cannot waive document — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-070",
+    "priority": "Critical",
+    "preconditions": [
+      "Document with status='uploaded'",
+      "RM JWT (no verify_doc capability)"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/44444444-4444-4444-4444-444444444444/documents/dddd0070-0000-0000-0000-000000000001/waive",
+      "Headers: Authorization: Bearer <rm_jwt>",
+      "Body: { \"reason\": \"Test waiver\", \"expires_at\": \"2026-12-31\" }"
+    ],
+    "test_data": {
+      "actor_role": "RM",
+      "capability_needed": "verify_doc"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; document status unchanged in DB",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR070-09",
+    "test_name": "Virus scan infected — document rejected and GCS object deleted",
+    "category": "Workflow",
+    "linked_fr": "FR-070",
+    "priority": "Critical",
+    "preconditions": [
+      "Document doc_id='dddd0070-0000-0000-0000-000000000002' with status='uploaded', virus_scan_status='pending', storage_ref='gs://staging/pan-infected.pdf'"
+    ],
+    "test_steps": [
+      "POST /api/v1/internal/documents/dddd0070-0000-0000-0000-000000000002/scan-result",
+      "Body: { \"status\": \"infected\" }",
+      "Headers: HMAC-Signature: <valid_signature>"
+    ],
+    "test_data": {
+      "document_id": "dddd0070-0000-0000-0000-000000000002",
+      "scan_result": "infected",
+      "storage_ref": "gs://staging/pan-infected.pdf"
+    },
+    "expected_result": "documents.virus_scan_status='infected'; documents.deleted_at IS NOT NULL; documents.storage_ref IS NULL; GcsMockAdapter.deleteObject called once with 'gs://staging/pan-infected.pdf'; audit_logs row written; event_outbox row with infected payload",
+    "postconditions": [
+      "SELECT document_id FROM documents WHERE virus_scan_status='infected' AND storage_ref IS NOT NULL returns 0 rows",
+      "SELECT document_id FROM documents WHERE virus_scan_status='infected' AND deleted_at IS NULL returns 0 rows"
+    ]
+  },
+  {
+    "test_id": "TC-FR070-10",
+    "test_name": "POST /c/{token}/documents — customer upload via customer link",
+    "category": "Happy Path",
+    "linked_fr": "FR-070",
+    "priority": "Critical",
+    "preconditions": [
+      "Active customer_links row for lead, OTP already verified",
+      "Raw token = 'statustoken0000000000000000000001'",
+      "GcsMockAdapter returns signed URL"
+    ],
+    "test_steps": [
+      "POST /api/v1/c/statustoken0000000000000000000001/documents",
+      "No Authorization header",
+      "Body: { \"doc_type\": \"pan\", \"applicant_scope\": \"applicant\", \"file_name\": \"customer_pan.pdf\", \"file_type\": \"application/pdf\", \"file_size_kb\": 180 }"
+    ],
+    "test_data": {
+      "raw_token": "statustoken0000000000000000000001",
+      "doc_type": "pan",
+      "file_name": "customer_pan.pdf",
+      "file_size_kb": 180,
+      "file_type": "application/pdf"
+    },
+    "expected_result": "HTTP 201; data.upload_url non-empty; DB: documents.uploaded_via='customer_link'; documents.org_id matches lead's org_id; no JWT required",
+    "postconditions": [
+      "Document row has uploaded_via='customer_link'"
+    ]
+  },
+  {
+    "test_id": "TC-FR070-UI-01",
+    "test_name": "E2E — Staff upload flow with checklist and scan status",
+    "category": "UI/E2E",
+    "linked_fr": "FR-070",
+    "priority": "High",
+    "preconditions": [
+      "RM logged in with valid session",
+      "Lead '44444444-4444-4444-4444-444444444444' with 2-item checklist, 1 mandatory unfulfilled"
+    ],
+    "test_steps": [
+      "Navigate to Lead 360 → Documents tab for lead 44444444-4444-4444-4444-444444444444",
+      "Wait for checklist to load",
+      "Assert mandatory PAN item shows StatusChip 'Pending'",
+      "Click Upload on PAN item",
+      "Select file pan_sample.pdf (180 KB) via file input",
+      "Click Upload to trigger Phase A",
+      "Simulate GCS PUT completion",
+      "Trigger Phase B confirm",
+      "Assert status chip changes to 'Uploaded'"
+    ],
+    "test_data": {
+      "lead_id": "44444444-4444-4444-4444-444444444444",
+      "file_name": "pan_sample.pdf",
+      "file_size_kb": 180,
+      "file_type": "application/pdf"
+    },
+    "expected_result": "Checklist renders; PAN chip shows 'Pending'; upload drawer opens; progress bar appears; after confirm chip changes to 'Uploaded'; Toast 'Document uploaded' visible; mandatory_complete remains false (second mandatory doc still pending)",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/44444444-4444-4444-4444-444444444444/documents",
+      "locators": {
+        "documents_tab": "getByRole('tab', { name: /documents/i })",
+        "pan_checklist_item": "getByTestId('checklist-item-pan')",
+        "upload_button": "getByRole('button', { name: /upload/i })",
+        "file_input": "getByTestId('file-dropzone-input')",
+        "progress_bar": "getByRole('progressbar')",
+        "status_chip_pan": "getByTestId('status-chip-pan')",
+        "success_toast": "getByTestId('toast-success')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "rm_jwt in cookie/header",
+      "network_wait": "waitForResponse('**/documents')",
+      "visual_assert": "StatusChip changes from 'Pending' to 'Uploaded'",
+      "a11y": "upload button accessible by keyboard; file input has aria-label; status chips have aria-label"
+    }
+  },
+  {
+    "test_id": "TC-FR070-DI-01",
+    "test_name": "Data Integrity — No version gap in document version sequence",
+    "category": "Data Integrity",
+    "linked_fr": "FR-070",
+    "priority": "High",
+    "preconditions": [
+      "Re-upload test has created version 2 document"
+    ],
+    "test_steps": [
+      "Execute invariant query after re-upload test"
+    ],
+    "test_data": {
+      "invariant_sql": "SELECT d2.document_id, d2.lead_id, d2.doc_type, d2.version FROM documents d2 WHERE d2.version > 1 AND NOT EXISTS (SELECT 1 FROM documents d1 WHERE d1.lead_id = d2.lead_id AND d1.doc_type = d2.doc_type AND d1.applicant_scope = d2.applicant_scope AND d1.version = d2.version - 1)"
+    },
+    "expected_result": "Query returns 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Run after TC-FR070-03 creates version 2",
+      "action": "Query documents for version sequence gaps",
+      "invariant_query": "SELECT d2.document_id, d2.lead_id, d2.doc_type, d2.version FROM documents d2 WHERE d2.version > 1 AND NOT EXISTS (SELECT 1 FROM documents d1 WHERE d1.lead_id = d2.lead_id AND d1.doc_type = d2.doc_type AND d1.applicant_scope = d2.applicant_scope AND d1.version = d2.version - 1)",
+      "cleanup": "DELETE FROM documents WHERE lead_id = '44444444-4444-4444-4444-444444444444' AND version = 2"
+    }
+  },
+  {
+    "test_id": "TC-FR071-01",
+    "test_name": "Happy path — PAN verification succeeds and returns masked PAN",
+    "category": "Happy Path",
+    "linked_fr": "FR-071",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead '55555555-5555-5555-5555-555555555555' in stage='kyc_in_progress'",
+      "KYC consent record present: purpose='kyc', state='granted'",
+      "KYC user JWT with branch scope matching lead",
+      "MockKycAdapter configured to return success with name match"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/pan",
+      "Headers: Authorization: Bearer <kyc_jwt>",
+      "Body: { \"pan\": \"ABCDE1234F\", \"consentId\": \"consent-uuid-0001\" }"
+    ],
+    "test_data": {
+      "lead_id": "55555555-5555-5555-5555-555555555555",
+      "pan": "ABCDE1234F",
+      "consent_id": "consent-uuid-0001",
+      "mock_provider_response": "success"
+    },
+    "expected_result": "HTTP 200; kyc_verifications row with status='success'; response data.maskedResponse.maskedPan matches format 'ABCDE****F'; raw PAN 'ABCDE1234F' NOT in response body; pan_token NOT in response; lead_identities.pan_masked='ABCDE****F'; data_sharing_logs row with purpose='kyc', consent_id='consent-uuid-0001'",
+    "postconditions": [
+      "SELECT pan_masked FROM lead_identities WHERE lead_id='55555555-5555-5555-5555-555555555555' returns 'ABCDE****F'",
+      "Raw PAN not in any column of kyc_verifications",
+      "data_sharing_logs row present"
+    ]
+  },
+  {
+    "test_id": "TC-FR071-02",
+    "test_name": "PAN name mismatch — failed verification creates exception, KYC_EXCEPTION outbox",
+    "category": "Workflow",
+    "linked_fr": "FR-071",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead in stage='kyc_in_progress', KYC consent granted",
+      "KYC user JWT",
+      "MockKycAdapter configured to return name_mismatch"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/pan",
+      "Body: { \"pan\": \"ZZZZZ9999Z\", \"consentId\": \"consent-uuid-0001\" }"
+    ],
+    "test_data": {
+      "pan": "ZZZZZ9999Z",
+      "consent_id": "consent-uuid-0001",
+      "mock_provider_response": "name_mismatch"
+    },
+    "expected_result": "HTTP 200 (not 503 — mismatch is a business result not an error); kyc_verifications.status='failed'; kyc_verifications.exception_type='name_mismatch'; leads.kyc_status='exception'; event_outbox contains KYC_EXCEPTION event with lead_id and kyc_verification_id; no UPSTREAM_UNAVAILABLE returned",
+    "postconditions": [
+      "SELECT kyc_status FROM leads WHERE lead_id='55555555-5555-5555-5555-555555555555' returns 'exception'",
+      "event_outbox row with event_code='KYC_EXCEPTION'"
+    ]
+  },
+  {
+    "test_id": "TC-FR071-03",
+    "test_name": "Provider downtime — UPSTREAM_UNAVAILABLE (503) + exception created",
+    "category": "Negative/Error",
+    "linked_fr": "FR-071",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead in stage='kyc_in_progress', KYC consent granted",
+      "KYC user JWT",
+      "MockKycAdapter configured to throw timeout"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/pan",
+      "Body: { \"pan\": \"ABCDE1234F\", \"consentId\": \"consent-uuid-0001\" }"
+    ],
+    "test_data": {
+      "pan": "ABCDE1234F",
+      "mock_provider_response": "timeout",
+      "consent_id": "consent-uuid-0001"
+    },
+    "expected_result": "HTTP 503; error.code='UPSTREAM_UNAVAILABLE'; error.retryable=true; kyc_verifications row with status='failed', exception_type='provider_down'; event_outbox contains KYC_EXCEPTION; integration_logs row with status='failed'",
+    "postconditions": [
+      "kyc_verifications exception_type='provider_down'",
+      "integration_logs row with status='failed'"
+    ]
+  },
+  {
+    "test_id": "TC-FR071-04",
+    "test_name": "Missing KYC consent — FORBIDDEN with CONSENT_MISSING reason",
+    "category": "Permission",
+    "linked_fr": "FR-071",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead in stage='kyc_in_progress'",
+      "No consent_records row with purpose='kyc' and state='granted' for this lead",
+      "KYC user JWT"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/pan",
+      "Body: { \"pan\": \"ABCDE1234F\", \"consentId\": \"consent-uuid-9999\" }"
+    ],
+    "test_data": {
+      "pan": "ABCDE1234F",
+      "consent_id": "consent-uuid-9999 (non-existent or withdrawn)"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; error.detail.reason='CONSENT_MISSING'; no kyc_verifications row inserted; no data_sharing_logs row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR071-05",
+    "test_name": "Invalid PAN format — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-071",
+    "priority": "High",
+    "preconditions": [
+      "Lead in stage='kyc_in_progress', KYC consent granted",
+      "KYC user JWT"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/pan",
+      "Body: { \"pan\": \"INVALID_PAN\", \"consentId\": \"consent-uuid-0001\" }"
+    ],
+    "test_data": {
+      "pan": "INVALID_PAN",
+      "expected_format": "5 uppercase letters + 4 digits + 1 uppercase letter (AAAAA9999A)"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[0].field='pan'; no kyc_verifications row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR071-06",
+    "test_name": "RM cannot run KYC orchestration — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-071",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead in stage='kyc_in_progress'",
+      "RM user JWT (no kyc_signoff capability)"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/pan",
+      "Headers: Authorization: Bearer <rm_jwt>",
+      "Body: { \"pan\": \"ABCDE1234F\", \"consentId\": \"consent-uuid-0001\" }"
+    ],
+    "test_data": {
+      "actor_role": "RM",
+      "capability_needed": "kyc_signoff"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no kyc_verifications row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR071-07",
+    "test_name": "Lead in wrong stage — CONFLICT blocks KYC",
+    "category": "Workflow",
+    "linked_fr": "FR-071",
+    "priority": "High",
+    "preconditions": [
+      "Lead in stage='documents_pending' (not kyc_in_progress)",
+      "KYC user JWT, consent granted"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/pan",
+      "Body: { \"pan\": \"ABCDE1234F\", \"consentId\": \"consent-uuid-0001\" }"
+    ],
+    "test_data": {
+      "lead_stage": "documents_pending"
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; no kyc_verifications row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR071-08",
+    "test_name": "Raw Aadhaar never stored — only tokenised reference persisted",
+    "category": "Data Integrity",
+    "linked_fr": "FR-071",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead in stage='kyc_in_progress', KYC consent granted",
+      "KYC user JWT",
+      "MockKycAdapter for aadhaar_otp returns raw Aadhaar '999988887777' in provider payload"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/aadhaar_otp",
+      "Body: { \"aadhaarOtp\": \"123456\", \"transactionId\": \"TXN-AADHAAR-001\", \"consentId\": \"consent-uuid-0001\" }",
+      "Query kyc_verifications.masked_response and lead_identities.aadhaar_ref_token"
+    ],
+    "test_data": {
+      "kyc_type": "aadhaar_otp",
+      "aadhaar_otp": "123456",
+      "transaction_id": "TXN-AADHAAR-001",
+      "mock_raw_aadhaar_in_provider_response": "999988887777"
+    },
+    "expected_result": "lead_identities.aadhaar_ref_token does NOT match '^[0-9]{12}$' (raw Aadhaar pattern); kyc_verifications.masked_response::text does NOT contain '999988887777'; only a tokenised/masked reference stored",
+    "postconditions": [
+      "SELECT kyc_verification_id FROM kyc_verifications WHERE masked_response::text ~* '[0-9]{12}' LIMIT 10 returns 0 rows",
+      "SELECT lead_identity_id FROM lead_identities WHERE aadhaar_ref_token ~ '^[0-9]{12}$' LIMIT 10 returns 0 rows"
+    ],
+    "di_meta": {
+      "setup_sql": "-- Lead seeded with kyc_in_progress stage + aadhaar_otp KYC type initiated",
+      "action": "POST /api/v1/leads/{id}/kyc/aadhaar_otp with mock provider returning raw Aadhaar",
+      "invariant_query": "SELECT kyc_verification_id FROM kyc_verifications WHERE masked_response::text ~* '[0-9]{12}' LIMIT 10",
+      "cleanup": "DELETE FROM kyc_verifications WHERE lead_id='55555555-5555-5555-5555-555555555555' AND kyc_type='aadhaar_otp'"
+    }
+  },
+  {
+    "test_id": "TC-FR071-09",
+    "test_name": "Idempotency — same Idempotency-Key returns original result without new row",
+    "category": "Boundary",
+    "linked_fr": "FR-071",
+    "priority": "High",
+    "preconditions": [
+      "First call with Idempotency-Key 'idemp-kyc-pan-001' already created kyc_verifications row with id='kycv-uuid-0001'"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/pan",
+      "Headers: Idempotency-Key: idemp-kyc-pan-001",
+      "Body: { \"pan\": \"ABCDE1234F\", \"consentId\": \"consent-uuid-0001\" }",
+      "This is the second call"
+    ],
+    "test_data": {
+      "idempotency_key": "idemp-kyc-pan-001",
+      "first_call_kyc_verification_id": "kycv-uuid-0001"
+    },
+    "expected_result": "HTTP 200; data.kycVerificationId='kycv-uuid-0001' (original); meta.detail.reason='IDEMPOTENT_REPLAY'; SELECT COUNT(*) FROM kyc_verifications WHERE lead_id='55555555-5555-5555-5555-555555555555' AND kyc_type='pan' returns 1 (no duplicate); no second data_sharing_logs row",
+    "postconditions": [
+      "Only one kyc_verifications row for this PAN verification"
+    ]
+  },
+  {
+    "test_id": "TC-FR071-UI-01",
+    "test_name": "E2E — KYC Workbench PAN verification happy path",
+    "category": "UI/E2E",
+    "linked_fr": "FR-071",
+    "priority": "High",
+    "preconditions": [
+      "KYC user logged in",
+      "Lead in kyc_in_progress stage",
+      "KYC consent granted for this lead"
+    ],
+    "test_steps": [
+      "Navigate to Lead 360 → KYC tab for lead 55555555-5555-5555-5555-555555555555",
+      "Assert KycWorkbench renders with PAN check row visible",
+      "Assert StatusChip shows 'Not Started' for PAN",
+      "Click 'Verify PAN' button",
+      "Enter PAN 'ABCDE1234F' in the input",
+      "Click Confirm/Submit",
+      "Wait for API response"
+    ],
+    "test_data": {
+      "lead_id": "55555555-5555-5555-5555-555555555555",
+      "pan": "ABCDE1234F",
+      "mock_result": "success"
+    },
+    "expected_result": "StatusChip changes to 'Verified'; masked PAN 'ABCDE****F' displayed in MaskedField; Toast shows success message; raw PAN not visible anywhere on page",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/55555555-5555-5555-5555-555555555555/kyc",
+      "locators": {
+        "kyc_tab": "getByRole('tab', { name: /kyc/i })",
+        "pan_status_chip": "getByTestId('status-chip-pan')",
+        "verify_pan_button": "getByRole('button', { name: /verify pan/i })",
+        "pan_input": "getByRole('textbox', { name: /pan/i })",
+        "masked_pan_field": "getByTestId('masked-pan-field')",
+        "success_toast": "getByRole('alert')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "kyc_jwt in cookie",
+      "network_wait": "waitForResponse('**/kyc/pan')",
+      "visual_assert": "StatusChip text changes from 'Not Started' to 'Verified'; masked PAN 'ABCDE****F' visible",
+      "a11y": "all interactive elements focusable via Tab; StatusChip has aria-label; ConsentGateBanner announced"
+    }
+  },
+  {
+    "test_id": "TC-FR071-DI-01",
+    "test_name": "Data Integrity — No raw Aadhaar in DB across all KYC rows",
+    "category": "Data Integrity",
+    "linked_fr": "FR-071",
+    "priority": "Critical",
+    "preconditions": [
+      "Aadhaar OTP test has run"
+    ],
+    "test_steps": [
+      "Execute both Aadhaar invariant queries"
+    ],
+    "test_data": {
+      "invariant_sql_1": "SELECT kyc_verification_id FROM kyc_verifications WHERE masked_response::text ~* '[0-9]{12}' LIMIT 10",
+      "invariant_sql_2": "SELECT lead_identity_id FROM lead_identities WHERE aadhaar_ref_token ~ '^[0-9]{12}$' LIMIT 10"
+    },
+    "expected_result": "Both queries return 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Run after any Aadhaar OTP verification test",
+      "action": "Query for raw Aadhaar patterns in kyc_verifications.masked_response and lead_identities.aadhaar_ref_token",
+      "invariant_query": "SELECT kyc_verification_id FROM kyc_verifications WHERE masked_response::text ~* '[0-9]{12}' LIMIT 10",
+      "cleanup": "-- No cleanup needed; invariant must hold permanently"
+    }
+  },
+  {
+    "test_id": "TC-FR072-01",
+    "test_name": "Happy path — KYC user resolves PAN mismatch exception with re_verified",
+    "category": "Happy Path",
+    "linked_fr": "FR-072",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead '55555555-5555-5555-5555-555555555555' in stage='kyc_in_progress', kyc_status='exception'",
+      "kyc_verifications row: id='kycv-uuid-0002', status='exception', exception_type='pan_mismatch'",
+      "Only this one exception for the lead",
+      "KYC user JWT with branch scope matching lead"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/kycv-uuid-0002/resolve",
+      "Headers: Authorization: Bearer <kyc_jwt>",
+      "Body: { \"resolutionCode\": \"re_verified\", \"remarks\": \"PAN re-checked and verified with applicant physically\" }"
+    ],
+    "test_data": {
+      "lead_id": "55555555-5555-5555-5555-555555555555",
+      "kyc_verification_id": "kycv-uuid-0002",
+      "resolution_code": "re_verified",
+      "remarks": "PAN re-checked and verified with applicant physically"
+    },
+    "expected_result": "HTTP 200; data.status='resolved'; data.resolutionCode='re_verified'; data.error=null; DB: kyc_verifications.status='resolved'; event_outbox row with event_code='KYC_EXCEPTION' and aggregate_id='kycv-uuid-0002'; leads.kyc_status='verified' (no remaining open exceptions); audit_logs row with action='kyc_exception' and entity_id='kycv-uuid-0002'",
+    "postconditions": [
+      "SELECT kyc_status FROM leads WHERE lead_id='55555555-5555-5555-5555-555555555555' returns 'verified'",
+      "SELECT status FROM kyc_verifications WHERE kyc_verification_id='kycv-uuid-0002' returns 'resolved'"
+    ]
+  },
+  {
+    "test_id": "TC-FR072-02",
+    "test_name": "BM resolves with waiver + evidenceRef",
+    "category": "Happy Path",
+    "linked_fr": "FR-072",
+    "priority": "Critical",
+    "preconditions": [
+      "kyc_verifications row: id='kycv-uuid-0003', status='exception', exception_type='address_mismatch'",
+      "BM user JWT with branch scope",
+      "compliance flag enabled"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/kycv-uuid-0003/resolve",
+      "Headers: Authorization: Bearer <bm_jwt>",
+      "Body: { \"resolutionCode\": \"waiver\", \"remarks\": \"Address mismatch waived — see compliance approval\", \"evidenceRef\": \"COMP-APPROVAL-2026-0047\" }"
+    ],
+    "test_data": {
+      "kyc_verification_id": "kycv-uuid-0003",
+      "resolution_code": "waiver",
+      "remarks": "Address mismatch waived — see compliance approval",
+      "evidence_ref": "COMP-APPROVAL-2026-0047",
+      "actor_role": "BM"
+    },
+    "expected_result": "HTTP 200; data.resolutionCode='waiver'; data.status='resolved'; audit intent queued with action='kyc_exception'; evidenceRef stored",
+    "postconditions": [
+      "SELECT resolution_code FROM kyc_verifications WHERE kyc_verification_id='kycv-uuid-0003' returns 'waiver'"
+    ]
+  },
+  {
+    "test_id": "TC-FR072-03",
+    "test_name": "RM cannot resolve KYC exception — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-072",
+    "priority": "Critical",
+    "preconditions": [
+      "kyc_verifications row: id='kycv-uuid-0002', status='exception'",
+      "RM user JWT (no kyc_signoff capability)"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/kycv-uuid-0002/resolve",
+      "Headers: Authorization: Bearer <rm_jwt>",
+      "Body: { \"resolutionCode\": \"re_verified\", \"remarks\": \"RM attempt\" }"
+    ],
+    "test_data": {
+      "actor_role": "RM",
+      "capability_needed": "kyc_signoff"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; kyc_verifications.status unchanged in DB",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR072-04",
+    "test_name": "provider_down_manual without compliance flag — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-072",
+    "priority": "Critical",
+    "preconditions": [
+      "kyc_verifications row with exception_type='provider_down', status='exception'",
+      "KYC user JWT",
+      "Compliance flag KYC_PROVIDER_DOWN_MANUAL_FALLBACK_ENABLED=false"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/kycv-uuid-0004/resolve",
+      "Headers: Authorization: Bearer <kyc_jwt>",
+      "Body: { \"resolutionCode\": \"provider_down_manual\", \"remarks\": \"Manual fallback\", \"evidenceRef\": \"MANUAL-001\" }"
+    ],
+    "test_data": {
+      "resolution_code": "provider_down_manual",
+      "compliance_flag_enabled": false
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; kyc_verifications.status unchanged; exception not resolved",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR072-05",
+    "test_name": "CONFLICT — exception already resolved, second resolution attempt rejected",
+    "category": "Workflow",
+    "linked_fr": "FR-072",
+    "priority": "High",
+    "preconditions": [
+      "kyc_verifications row: id='kycv-uuid-resolved', status='resolved' (already resolved by another user)",
+      "KYC user JWT"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/kycv-uuid-resolved/resolve",
+      "Headers: Authorization: Bearer <kyc_jwt>",
+      "Body: { \"resolutionCode\": \"re_verified\", \"remarks\": \"retry\" }"
+    ],
+    "test_data": {
+      "kyc_verification_id": "kycv-uuid-resolved",
+      "current_status": "resolved"
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; kyc_verifications.status remains 'resolved'; no duplicate audit or outbox entry",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR072-06",
+    "test_name": "waiver missing evidenceRef — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-072",
+    "priority": "High",
+    "preconditions": [
+      "kyc_verifications row with status='exception'",
+      "KYC user JWT"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/kycv-uuid-0002/resolve",
+      "Body: { \"resolutionCode\": \"waiver\", \"remarks\": \"Waiver without evidence\" }"
+    ],
+    "test_data": {
+      "resolution_code": "waiver",
+      "evidence_ref": null
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields[0].field='evidenceRef'; no status change in DB",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR072-07",
+    "test_name": "kyc_status remains exception when other open exceptions still exist",
+    "category": "Workflow",
+    "linked_fr": "FR-072",
+    "priority": "High",
+    "preconditions": [
+      "Lead has 2 kyc_verifications rows both in status='exception': kycv-uuid-A and kycv-uuid-B",
+      "KYC user JWT"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/kycv-uuid-A/resolve",
+      "Body: { \"resolutionCode\": \"re_verified\", \"remarks\": \"First exception resolved\" }",
+      "Query leads.kyc_status"
+    ],
+    "test_data": {
+      "first_exception_id": "kycv-uuid-A",
+      "second_exception_id": "kycv-uuid-B"
+    },
+    "expected_result": "HTTP 200; data.status='resolved' for kycv-uuid-A; leads.kyc_status STILL 'exception' (kycv-uuid-B still open); leads.kyc_status only changes to 'verified' after kycv-uuid-B is also resolved",
+    "postconditions": [
+      "SELECT kyc_status FROM leads WHERE lead_id='55555555-5555-5555-5555-555555555555' returns 'exception' (after first resolve only)"
+    ]
+  },
+  {
+    "test_id": "TC-FR072-08",
+    "test_name": "Transaction rollback — outbox INSERT failure rolls back resolution",
+    "category": "Data Integrity",
+    "linked_fr": "FR-072",
+    "priority": "Critical",
+    "preconditions": [
+      "kyc_verifications row with status='exception'",
+      "KYC user JWT",
+      "OutboxService.emit mock throws Error('DB write fail') after kyc_verifications UPDATE"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/55555555-5555-5555-5555-555555555555/kyc/kycv-uuid-0002/resolve",
+      "Body: { \"resolutionCode\": \"re_verified\", \"remarks\": \"Will fail mid-tx\" }",
+      "OutboxService.emit throws mid-transaction",
+      "Query kyc_verifications.status"
+    ],
+    "test_data": {
+      "injected_error": "OutboxService.emit throws Error('DB write fail')"
+    },
+    "expected_result": "HTTP 500; error.code='INTERNAL_ERROR'; no stack trace in response body; kyc_verifications.status remains 'exception' (transaction rolled back); no event_outbox row for this resolution; no audit_logs row for this resolution",
+    "postconditions": [
+      "SELECT status FROM kyc_verifications WHERE kyc_verification_id='kycv-uuid-0002' returns 'exception'"
+    ]
+  },
+  {
+    "test_id": "TC-FR072-09",
+    "test_name": "KYC_EXCEPTION_OPEN blocks hand-off — open exception prevents stage transition",
+    "category": "Integration",
+    "linked_fr": "FR-072",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead with kyc_status='exception' (open kyc_verifications row with status='exception')",
+      "BM user JWT attempting hand-off"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/55555555-5555-5555-5555-555555555555/stage/hand-off (or equivalent stage transition)",
+      "Headers: Authorization: Bearer <bm_jwt>"
+    ],
+    "test_data": {
+      "lead_stage": "ready_for_handoff",
+      "kyc_status": "exception",
+      "open_exception_id": "kycv-uuid-0002"
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; error detail contains 'KYC_EXCEPTION_OPEN'; leads.stage unchanged; no handoff action performed",
+    "postconditions": [
+      "leads.stage not changed to 'handed_off'"
+    ]
+  },
+  {
+    "test_id": "TC-FR072-UI-01",
+    "test_name": "E2E — KYC Workbench exception resolution full flow",
+    "category": "UI/E2E",
+    "linked_fr": "FR-072",
+    "priority": "High",
+    "preconditions": [
+      "KYC user logged in",
+      "Lead with open KYC exception in exception queue"
+    ],
+    "test_steps": [
+      "Navigate to Lead 360 → KYC tab",
+      "Locate exception queue section",
+      "Click Resolve on exception row",
+      "Assert ExceptionResolutionModal opens",
+      "Select resolutionCode 're_verified' from dropdown",
+      "Fill remarks 'Verified in person'",
+      "Click Resolve/Submit",
+      "Wait for API response"
+    ],
+    "test_data": {
+      "resolution_code": "re_verified",
+      "remarks": "Verified in person"
+    },
+    "expected_result": "Modal closes after successful resolution; exception row disappears from exception queue; Toast shows 'KYC exception resolved'; lead status chip updates from 'Exception' to 'Verified' (if last exception)",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/55555555-5555-5555-5555-555555555555/kyc",
+      "locators": {
+        "exception_queue": "getByTestId('exception-queue')",
+        "resolve_button": "getByRole('button', { name: /resolve/i })",
+        "resolution_modal": "getByTestId('exception-resolution-modal')",
+        "resolution_code_select": "getByRole('combobox', { name: /resolution code/i })",
+        "remarks_textarea": "getByRole('textbox', { name: /remarks/i })",
+        "submit_resolve": "getByRole('button', { name: /resolve/i })",
+        "success_toast": "getByTestId('toast-success')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "kyc_jwt in cookie",
+      "network_wait": "waitForResponse('**/kyc/**/resolve')",
+      "visual_assert": "Modal closes; Toast 'KYC exception resolved' visible; exception no longer in queue",
+      "a11y": "modal has role=dialog; focus trapped in modal; close button accessible; combobox and textarea labeled"
+    }
+  },
+  {
+    "test_id": "TC-FR072-DI-01",
+    "test_name": "Data Integrity — No resolved KYC exception without resolution_code or audit entry",
+    "category": "Data Integrity",
+    "linked_fr": "FR-072",
+    "priority": "Critical",
+    "preconditions": [
+      "Exception resolution tests have run"
+    ],
+    "test_steps": [
+      "Execute two invariant queries after resolution tests"
+    ],
+    "test_data": {
+      "invariant_sql_1": "SELECT kyc_verification_id FROM kyc_verifications WHERE status IN ('resolved', 'waived') AND resolution_code IS NULL",
+      "invariant_sql_2": "SELECT kv.kyc_verification_id FROM kyc_verifications kv WHERE kv.status = 'resolved' AND NOT EXISTS (SELECT 1 FROM audit_logs al WHERE al.entity_type = 'kyc_verifications' AND al.entity_id = kv.kyc_verification_id AND al.action = 'kyc_exception')"
+    },
+    "expected_result": "Both queries return 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Run after TC-FR072-01 resolves an exception",
+      "action": "Query for resolved exceptions missing resolution_code or audit entry",
+      "invariant_query": "SELECT kyc_verification_id FROM kyc_verifications WHERE status IN ('resolved', 'waived') AND resolution_code IS NULL",
+      "cleanup": "DELETE FROM kyc_verifications WHERE kyc_verification_id IN ('kycv-uuid-0002', 'kycv-uuid-0003')"
+    }
+  }
+]

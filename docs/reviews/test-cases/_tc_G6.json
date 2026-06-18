@@ -1,0 +1,2066 @@
+[
+  {
+    "test_id": "TC-FR080-01",
+    "test_name": "Happy path — BM triggers eligibility, LOS returns success",
+    "category": "Happy Path",
+    "linked_fr": "FR-080",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead with id='11111111-1111-1111-1111-111111111001' exists in stage='qualified'",
+      "product_config_id='PC-001' has eligibility_mapping present (not null)",
+      "Consent record exists for purpose='product_eligibility' for this lead",
+      "No prior eligibility_snapshots row exists for this lead",
+      "LosMockAdapter returns success response with indicative eligibility data",
+      "BM-001 is authenticated with valid JWT and has branch_id='BR-001'"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 (role=BM, branch_id='BR-001') and obtain JWT",
+      "POST /api/v1/leads/11111111-1111-1111-1111-111111111001/eligibility with BM JWT and header Idempotency-Key: IK-ELIG-HP-001",
+      "Assert HTTP response status is 200",
+      "Assert body.data.eligibility_status = 'received'",
+      "Assert body.data.is_indicative = true",
+      "Assert body.data.amount is a positive number",
+      "Query eligibility_snapshots WHERE lead_id='11111111-1111-1111-1111-111111111001' — expect exactly 1 row with status='received'",
+      "Query integration_logs WHERE lead_id='11111111-1111-1111-1111-111111111001' AND kind='eligibility_request' — expect status='success'",
+      "Query leads WHERE id='11111111-1111-1111-1111-111111111001' — expect stage='eligibility_requested'",
+      "Query event_outbox WHERE payload->>'lead_id'='11111111-1111-1111-1111-111111111001' AND event_type='ELIGIBILITY_RECEIVED' — expect 1 row",
+      "Query stage_history WHERE lead_id='11111111-1111-1111-1111-111111111001' ORDER BY created_at DESC LIMIT 1 — expect to_stage='eligibility_requested'"
+    ],
+    "test_data": {
+      "lead_id": "11111111-1111-1111-1111-111111111001",
+      "product_config_id": "PC-001",
+      "actor_role": "BM",
+      "actor_id": "BM-001",
+      "branch_id": "BR-001",
+      "idempotency_key": "IK-ELIG-HP-001",
+      "los_mock_fixture": "success",
+      "consent_purpose": "product_eligibility"
+    },
+    "expected_result": "HTTP 200; body.data.eligibility_status='received'; body.data.is_indicative=true; lead.stage='eligibility_requested'; 1 eligibility_snapshots row with status='received'; 1 integration_logs row with status='success'; 1 event_outbox row with event_type='ELIGIBILITY_RECEIVED'; stage_history updated; API envelope shape {data, meta, error}",
+    "postconditions": [
+      "lead.stage='eligibility_requested'",
+      "Exactly 1 eligibility_snapshots row for this lead with status='received'",
+      "Exactly 1 integration_logs row for this lead with kind='eligibility_request' and status='success'",
+      "Exactly 1 event_outbox row with event_type='ELIGIBILITY_RECEIVED'"
+    ]
+  },
+  {
+    "test_id": "TC-FR080-02",
+    "test_name": "LOS timeout — eligibility_status=pending, retry enqueued",
+    "category": "Integration",
+    "linked_fr": "FR-080",
+    "priority": "High",
+    "preconditions": [
+      "Lead with id='11111111-1111-1111-1111-111111111002' exists in stage='qualified'",
+      "LosMockAdapter fixture configured to simulate 30s timeout",
+      "Consent record exists for purpose='product_eligibility'",
+      "No prior eligibility_snapshots row for this lead"
+    ],
+    "test_steps": [
+      "Configure LosMockAdapter with fixture='timeout' (simulates 30-second timeout)",
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/11111111-1111-1111-1111-111111111002/eligibility with BM JWT",
+      "Assert HTTP response status is 200 (non-blocking; request accepted)",
+      "Assert body.data.eligibility_status = 'pending'",
+      "Query integration_logs WHERE lead_id='11111111-1111-1111-1111-111111111002' — expect status IN ('pending','retrying')",
+      "Query leads WHERE id='11111111-1111-1111-1111-111111111002' — expect stage='eligibility_requested'",
+      "Query event_outbox WHERE event_type='ELIGIBILITY_RECEIVED' AND payload->>'lead_id'='11111111-1111-1111-1111-111111111002' — expect 0 rows",
+      "Verify Cloud Task / retry queue has an enqueued job for this lead's eligibility retry"
+    ],
+    "test_data": {
+      "lead_id": "11111111-1111-1111-1111-111111111002",
+      "los_mock_fixture": "timeout",
+      "los_mock_delay_ms": 30000,
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 200; body.data.eligibility_status='pending'; integration_logs.status IN ('pending','retrying'); lead.stage='eligibility_requested'; no ELIGIBILITY_RECEIVED event in event_outbox; Cloud Task enqueued for retry",
+    "postconditions": [
+      "lead.stage='eligibility_requested'",
+      "eligibility_snapshots row with status='pending'",
+      "Retry job present in Cloud Tasks queue"
+    ]
+  },
+  {
+    "test_id": "TC-FR080-03",
+    "test_name": "Stage guard fails — lead already in handed_off stage",
+    "category": "Negative/Error",
+    "linked_fr": "FR-080",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead with id='11111111-1111-1111-1111-111111111003' exists in stage='handed_off' (terminal stage)",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/11111111-1111-1111-1111-111111111003/eligibility with BM JWT",
+      "Assert HTTP response status is 400",
+      "Assert body.error.code = 'STAGE_GUARD_FAILED'",
+      "Assert body.error.http_status = 400",
+      "Query eligibility_snapshots WHERE lead_id='11111111-1111-1111-1111-111111111003' — expect 0 rows",
+      "Query leads WHERE id='11111111-1111-1111-1111-111111111003' — expect stage still='handed_off' (unchanged)"
+    ],
+    "test_data": {
+      "lead_id": "11111111-1111-1111-1111-111111111003",
+      "lead_stage": "handed_off",
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 400; body.error.code='STAGE_GUARD_FAILED'; no eligibility_snapshots row created; lead.stage unchanged='handed_off'",
+    "postconditions": [
+      "No eligibility_snapshots row for this lead",
+      "lead.stage remains 'handed_off'"
+    ]
+  },
+  {
+    "test_id": "TC-FR080-04",
+    "test_name": "Consent missing for product_eligibility — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-080",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead with id='11111111-1111-1111-1111-111111111004' exists in stage='qualified'",
+      "No consent_records row exists for purpose='product_eligibility' for this lead",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/11111111-1111-1111-1111-111111111004/eligibility with BM JWT",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'CONSENT_MISSING'",
+      "Query eligibility_snapshots WHERE lead_id='11111111-1111-1111-1111-111111111004' — expect 0 rows",
+      "Query integration_logs WHERE lead_id='11111111-1111-1111-1111-111111111004' — expect 0 rows"
+    ],
+    "test_data": {
+      "lead_id": "11111111-1111-1111-1111-111111111004",
+      "lead_stage": "qualified",
+      "actor_role": "BM",
+      "actor_id": "BM-001",
+      "consent_present": false,
+      "consent_purpose": "product_eligibility"
+    },
+    "expected_result": "HTTP 403; body.error.code='CONSENT_MISSING'; no eligibility_snapshots row created; no integration_logs row created",
+    "postconditions": [
+      "No eligibility_snapshots row for this lead",
+      "No integration_logs row for this lead"
+    ]
+  },
+  {
+    "test_id": "TC-FR080-05",
+    "test_name": "Idempotent replay — existing pending snapshot returned, no new rows",
+    "category": "Boundary",
+    "linked_fr": "FR-080",
+    "priority": "High",
+    "preconditions": [
+      "eligibility_snapshots row already exists for lead '11111111-1111-1111-1111-111111111005' with status='pending' and idempotency_key='IK-ELIG-001'",
+      "integration_logs row already exists for this lead with idempotency_key='IK-ELIG-001'",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Note current COUNT(*) from eligibility_snapshots WHERE lead_id='11111111-1111-1111-1111-111111111005'",
+      "Note current COUNT(*) from integration_logs WHERE idempotency_key='IK-ELIG-001'",
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/11111111-1111-1111-1111-111111111005/eligibility with header Idempotency-Key: IK-ELIG-001",
+      "Assert HTTP response status is 200",
+      "Assert body.data.eligibility_status = 'pending' (same as existing snapshot)",
+      "Query eligibility_snapshots WHERE lead_id='11111111-1111-1111-1111-111111111005' — assert COUNT equals pre-request count (no new row)",
+      "Query integration_logs WHERE idempotency_key='IK-ELIG-001' — assert COUNT equals pre-request count (no new row)"
+    ],
+    "test_data": {
+      "lead_id": "11111111-1111-1111-1111-111111111005",
+      "idempotency_key": "IK-ELIG-001",
+      "existing_snapshot_status": "pending",
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 200; body.data.eligibility_status='pending' (existing snapshot data returned); no new eligibility_snapshots row inserted; no new integration_logs row inserted",
+    "postconditions": [
+      "eligibility_snapshots count for this lead unchanged",
+      "integration_logs count for idempotency_key='IK-ELIG-001' unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR080-06",
+    "test_name": "PARTNER role denied — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-080",
+    "priority": "High",
+    "preconditions": [
+      "Lead with id='11111111-1111-1111-1111-111111111006' exists",
+      "PARTNER-001 authenticated with valid PARTNER JWT"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-001 (role=PARTNER) and obtain JWT",
+      "POST /api/v1/leads/11111111-1111-1111-1111-111111111006/eligibility with PARTNER JWT",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "lead_id": "11111111-1111-1111-1111-111111111006",
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001"
+    },
+    "expected_result": "HTTP 403; body.error.code='FORBIDDEN'; no eligibility_snapshots row created",
+    "postconditions": [
+      "No eligibility_snapshots row created for this lead"
+    ]
+  },
+  {
+    "test_id": "TC-FR080-07",
+    "test_name": "Missing eligibility_mapping in ProductConfig — 400 VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-080",
+    "priority": "High",
+    "preconditions": [
+      "Lead exists in stage='qualified'",
+      "product_config record has eligibility_mapping=null",
+      "Consent record exists for purpose='product_eligibility'",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Ensure product_config has eligibility_mapping=null in database",
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/11111111-1111-1111-1111-111111111007/eligibility with BM JWT",
+      "Assert HTTP response status is 400",
+      "Assert body.error.code = 'VALIDATION_ERROR'",
+      "Assert body.error.message contains 'eligibility_mapping'",
+      "Query eligibility_snapshots WHERE lead_id='11111111-1111-1111-1111-111111111007' — expect 0 rows"
+    ],
+    "test_data": {
+      "lead_id": "11111111-1111-1111-1111-111111111007",
+      "product_config_id": "PC-NULL-MAP",
+      "product_config_eligibility_mapping": null,
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 400; body.error.code='VALIDATION_ERROR'; body.error.message contains 'eligibility_mapping'; no eligibility_snapshots row created",
+    "postconditions": [
+      "No eligibility_snapshots row for this lead"
+    ]
+  },
+  {
+    "test_id": "TC-FR080-UI-01",
+    "test_name": "Eligibility panel shows indicative badge and read-only snapshot",
+    "category": "UI/E2E",
+    "linked_fr": "FR-080",
+    "priority": "High",
+    "preconditions": [
+      "Lead '11111111-1111-1111-1111-111111111001' is in stage='eligibility_requested' with received snapshot",
+      "BM-001 authenticated session available"
+    ],
+    "test_steps": [
+      "Log in as BM-001 (role=BM)",
+      "Navigate to /leads/11111111-1111-1111-1111-111111111001 on viewport 1280x800",
+      "Wait for page to fully load (network idle)",
+      "Assert getByTestId('eligibility-panel') is visible",
+      "Assert getByText('Indicative') is visible within the eligibility panel",
+      "Assert getByTestId('eligibility-amount') is visible and shows a numeric value",
+      "Assert getByTestId('eligibility-tenure') is visible and shows a value",
+      "Assert no input fields are present in the eligibility panel (read-only)",
+      "Resize viewport to 375x667 (mobile)",
+      "Assert getByTestId('eligibility-panel') is still visible and readable at mobile viewport",
+      "Assert 'Indicative' badge still visible on mobile",
+      "Run accessibility check: verify panel region has aria-label='Eligibility Result'",
+      "Run accessibility check: verify eligibility-amount has an aria-label"
+    ],
+    "test_data": {
+      "lead_id": "11111111-1111-1111-1111-111111111001",
+      "actor_role": "BM",
+      "actor_id": "BM-001",
+      "expected_eligibility_status": "received",
+      "expected_is_indicative": true
+    },
+    "expected_result": "Eligibility panel visible at both viewports; 'Indicative' badge displayed; amount and tenure shown; no edit inputs present; aria-label on panel region and amount element",
+    "postconditions": [
+      "No data mutations — read-only view verification"
+    ],
+    "ui_meta": {
+      "route": "/leads/11111111-1111-1111-1111-111111111001",
+      "locators": {
+        "eligibility_panel": "getByTestId('eligibility-panel')",
+        "indicative_badge": "getByText('Indicative')",
+        "eligibility_amount": "getByTestId('eligibility-amount')",
+        "eligibility_tenure": "getByTestId('eligibility-tenure')"
+      },
+      "viewport": [
+        "1280x800",
+        "375x667"
+      ],
+      "auth_state": "BM JWT (BM-001, branch_id=BR-001)",
+      "network_wait": "await GET /api/v1/leads/11111111-1111-1111-1111-111111111001 response",
+      "visual_assert": [
+        "Eligibility panel is visible",
+        "'Indicative' badge displayed",
+        "Amount and tenure fields display numeric values",
+        "No editable input fields in panel"
+      ],
+      "a11y": [
+        "Panel region has aria-label='Eligibility Result'",
+        "Eligibility amount element has aria-label describing the value"
+      ]
+    }
+  },
+  {
+    "test_id": "TC-FR080-DI-01",
+    "test_name": "No orphan eligibility_snapshot — FK constraint enforced",
+    "category": "Data Integrity",
+    "linked_fr": "FR-080",
+    "priority": "Critical",
+    "preconditions": [
+      "Database is accessible with test credentials",
+      "Non-existent lead_id 'DEAD0000-0000-0000-0000-000000000000' used"
+    ],
+    "test_steps": [
+      "Attempt to INSERT INTO eligibility_snapshots (lead_id, eligibility_status, is_indicative, snapshot_data) VALUES ('DEAD0000-0000-0000-0000-000000000000', 'pending', true, '{}') directly via SQL",
+      "Assert the INSERT fails with a foreign key constraint violation",
+      "Run invariant query to confirm 0 orphan snapshots"
+    ],
+    "test_data": {
+      "orphan_lead_id": "DEAD0000-0000-0000-0000-000000000000",
+      "attempted_status": "pending"
+    },
+    "expected_result": "INSERT fails with FK violation; invariant query returns 0",
+    "postconditions": [
+      "No orphan eligibility_snapshots rows exist"
+    ],
+    "di_meta": {
+      "setup_sql": "-- No setup required; test uses non-existent lead_id",
+      "action": "INSERT INTO eligibility_snapshots (lead_id, eligibility_status, is_indicative, snapshot_data) VALUES ('DEAD0000-0000-0000-0000-000000000000', 'pending', true, '{}'::jsonb)",
+      "invariant_query": "SELECT COUNT(*) FROM eligibility_snapshots es LEFT JOIN leads l ON l.id = es.lead_id WHERE l.id IS NULL",
+      "cleanup": "DELETE FROM eligibility_snapshots WHERE lead_id = 'DEAD0000-0000-0000-0000-000000000000'"
+    }
+  },
+  {
+    "test_id": "TC-FR080-DI-02",
+    "test_name": "No duplicate idempotency_key in integration_logs",
+    "category": "Data Integrity",
+    "linked_fr": "FR-080",
+    "priority": "Critical",
+    "preconditions": [
+      "Database accessible with test credentials",
+      "integration_logs table has UNIQUE INDEX on idempotency_key WHERE idempotency_key IS NOT NULL"
+    ],
+    "test_steps": [
+      "INSERT first integration_logs row with idempotency_key='IK-TEST-DUP' and status='success'",
+      "Attempt INSERT second integration_logs row with idempotency_key='IK-TEST-DUP' and status='failed'",
+      "Assert second INSERT fails with unique constraint violation",
+      "Run invariant query: SELECT COUNT(*) FROM integration_logs WHERE idempotency_key='IK-TEST-DUP' — expect 1"
+    ],
+    "test_data": {
+      "idempotency_key": "IK-TEST-DUP",
+      "first_insert_status": "success",
+      "second_insert_status": "failed"
+    },
+    "expected_result": "Second INSERT fails with unique constraint violation; exactly 1 row with idempotency_key='IK-TEST-DUP' remains",
+    "postconditions": [
+      "Cleanup removes the test row"
+    ],
+    "di_meta": {
+      "setup_sql": "INSERT INTO integration_logs (lead_id, kind, idempotency_key, status, created_at) VALUES ('11111111-1111-1111-1111-111111111001', 'eligibility_request', 'IK-TEST-DUP', 'success', NOW())",
+      "action": "INSERT INTO integration_logs (lead_id, kind, idempotency_key, status, created_at) VALUES ('11111111-1111-1111-1111-111111111001', 'eligibility_request', 'IK-TEST-DUP', 'failed', NOW())",
+      "invariant_query": "SELECT COUNT(*) FROM integration_logs WHERE idempotency_key='IK-TEST-DUP'",
+      "cleanup": "DELETE FROM integration_logs WHERE idempotency_key='IK-TEST-DUP'"
+    }
+  },
+  {
+    "test_id": "TC-FR081-01",
+    "test_name": "Happy path — BM hands off lead with all guards satisfied",
+    "category": "Happy Path",
+    "linked_fr": "FR-081",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead '22222222-2222-2222-2222-222222222001' is in stage='ready_for_handoff'",
+      "consent_records row exists for purpose='los_handoff' for this lead",
+      "lead.duplicate_status='clear'",
+      "All mandatory documents have status='verified'",
+      "lead.kyc_status='success'",
+      "Product payload is valid with ProductConfig.eligibility_mapping present",
+      "BM-001 authenticated with valid JWT (role=BM, branch_id='BR-001')",
+      "LosMockAdapter returns los_application_id='LOS-APP-001'"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/22222222-2222-2222-2222-222222222001/handoff with header Idempotency-Key: IK-HO-001",
+      "Assert HTTP response status is 200",
+      "Assert body.data.stage = 'handed_off'",
+      "Assert body.data.los_application_id = 'LOS-APP-001'",
+      "Query los_application_mirrors WHERE los_application_id='LOS-APP-001' — expect exactly 1 row",
+      "Query data_sharing_logs WHERE lead_id='22222222-2222-2222-2222-222222222001' AND purpose='los_handoff' — expect 1 row",
+      "Query event_outbox WHERE event_type='LEAD_HANDED_OFF' AND payload->>'lead_id'='22222222-2222-2222-2222-222222222001' — expect 1 row",
+      "Query stage_history WHERE lead_id='22222222-2222-2222-2222-222222222001' ORDER BY created_at DESC LIMIT 1 — expect to_stage='handed_off'",
+      "Query leads WHERE id='22222222-2222-2222-2222-222222222001' — expect stage='handed_off' and los_application_id='LOS-APP-001'"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222001",
+      "actor_role": "BM",
+      "actor_id": "BM-001",
+      "idempotency_key": "IK-HO-001",
+      "los_mock_los_application_id": "LOS-APP-001",
+      "duplicate_status": "clear",
+      "kyc_status": "success",
+      "all_docs_status": "verified",
+      "consent_purpose": "los_handoff"
+    },
+    "expected_result": "HTTP 200; body.data.stage='handed_off'; body.data.los_application_id='LOS-APP-001'; los_application_mirrors row created with received_via='webhook'; data_sharing_logs row for los_handoff; LEAD_HANDED_OFF event in event_outbox; stage_history updated; API envelope {data, meta, error}",
+    "postconditions": [
+      "lead.stage='handed_off'",
+      "lead.los_application_id='LOS-APP-001'",
+      "1 los_application_mirrors row",
+      "1 data_sharing_logs row for los_handoff",
+      "1 LEAD_HANDED_OFF event_outbox row"
+    ]
+  },
+  {
+    "test_id": "TC-FR081-02",
+    "test_name": "Idempotent replay — same Idempotency-Key returns identical response",
+    "category": "Boundary",
+    "linked_fr": "FR-081",
+    "priority": "Critical",
+    "preconditions": [
+      "Handoff already completed for lead '22222222-2222-2222-2222-222222222001' with idempotency_key='IK-HO-001'",
+      "lead.stage='handed_off', lead.los_application_id='LOS-APP-001'",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Note pre-request counts: COUNT(*) from integration_logs, los_application_mirrors, event_outbox for this lead",
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/22222222-2222-2222-2222-222222222001/handoff with header Idempotency-Key: IK-HO-001 (same key as original)",
+      "Assert HTTP response status is 200",
+      "Assert body.data.los_application_id = 'LOS-APP-001' (same as original)",
+      "Assert body.data.stage = 'handed_off'",
+      "Query integration_logs for this lead — assert COUNT unchanged",
+      "Query los_application_mirrors for los_application_id='LOS-APP-001' — assert COUNT=1 (no duplicate)",
+      "Query event_outbox for LEAD_HANDED_OFF event for this lead — assert COUNT unchanged"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222001",
+      "idempotency_key": "IK-HO-001",
+      "actor_role": "BM",
+      "actor_id": "BM-001",
+      "expected_los_application_id": "LOS-APP-001"
+    },
+    "expected_result": "HTTP 200; body.data.los_application_id='LOS-APP-001' (same as original); no new integration_logs row; no new los_application_mirrors row; no new event_outbox row",
+    "postconditions": [
+      "All database counts unchanged from pre-request state"
+    ]
+  },
+  {
+    "test_id": "TC-FR081-03",
+    "test_name": "Stage guard fails — mandatory doc not verified",
+    "category": "Negative/Error",
+    "linked_fr": "FR-081",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead '22222222-2222-2222-2222-222222222003' is in stage='ready_for_handoff'",
+      "doc 'DOC-001' has status='uploaded' (not 'verified' or 'waived')",
+      "DOC-001 is a mandatory document for the product",
+      "All other handoff guards pass",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/22222222-2222-2222-2222-222222222003/handoff with BM JWT",
+      "Assert HTTP response status is 400",
+      "Assert body.error.code = 'STAGE_GUARD_FAILED'",
+      "Assert body.error.detail contains 'mandatory_doc_not_verified'",
+      "Query leads WHERE id='22222222-2222-2222-2222-222222222003' — assert stage='ready_for_handoff' (unchanged)",
+      "Query los_application_mirrors — expect 0 rows for this lead"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222003",
+      "doc_id": "DOC-001",
+      "doc_status": "uploaded",
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 400; body.error.code='STAGE_GUARD_FAILED'; body.error.detail contains 'mandatory_doc_not_verified'; lead.stage unchanged='ready_for_handoff'",
+    "postconditions": [
+      "lead.stage remains 'ready_for_handoff'",
+      "No los_application_mirrors row created",
+      "No integration_logs row for handoff created"
+    ]
+  },
+  {
+    "test_id": "TC-FR081-04",
+    "test_name": "Consent missing for los_handoff — STAGE_GUARD_FAILED with CONSENT_MISSING",
+    "category": "Negative/Error",
+    "linked_fr": "FR-081",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead '22222222-2222-2222-2222-222222222004' is in stage='ready_for_handoff'",
+      "No consent_records row for purpose='los_handoff' for this lead",
+      "All other guards would pass",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/22222222-2222-2222-2222-222222222004/handoff with BM JWT",
+      "Assert HTTP response status is 400",
+      "Assert body.error.code = 'STAGE_GUARD_FAILED'",
+      "Assert body.error.sub_code = 'CONSENT_MISSING'",
+      "Query leads WHERE id='22222222-2222-2222-2222-222222222004' — assert stage unchanged='ready_for_handoff'"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222004",
+      "consent_purpose": "los_handoff",
+      "consent_present": false,
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 400; body.error.code='STAGE_GUARD_FAILED'; body.error.sub_code='CONSENT_MISSING'; lead.stage unchanged='ready_for_handoff'",
+    "postconditions": [
+      "lead.stage remains 'ready_for_handoff'"
+    ]
+  },
+  {
+    "test_id": "TC-FR081-05",
+    "test_name": "PARTNER role cannot hand off — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-081",
+    "priority": "High",
+    "preconditions": [
+      "Lead '22222222-2222-2222-2222-222222222005' exists",
+      "PARTNER-001 authenticated with valid PARTNER JWT"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-001 (role=PARTNER) and obtain JWT",
+      "POST /api/v1/leads/22222222-2222-2222-2222-222222222005/handoff with PARTNER JWT",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222005",
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001"
+    },
+    "expected_result": "HTTP 403; body.error.code='FORBIDDEN'; no state changes",
+    "postconditions": [
+      "Lead stage unchanged",
+      "No los_application_mirrors row created"
+    ]
+  },
+  {
+    "test_id": "TC-FR081-06",
+    "test_name": "LOS 503 — handoff fails, stage unchanged, retry enqueued",
+    "category": "Integration",
+    "linked_fr": "FR-081",
+    "priority": "High",
+    "preconditions": [
+      "Lead '22222222-2222-2222-2222-222222222006' is in stage='ready_for_handoff'",
+      "All handoff guards pass",
+      "LosMockAdapter fixture='server_error' (returns 503)",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Configure LosMockAdapter with fixture='server_error'",
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/22222222-2222-2222-2222-222222222006/handoff with BM JWT",
+      "Assert HTTP response status is 503",
+      "Assert body.error.code = 'UPSTREAM_UNAVAILABLE'",
+      "Query leads WHERE id='22222222-2222-2222-2222-222222222006' — assert stage='ready_for_handoff' (unchanged)",
+      "Query event_outbox WHERE event_type='HANDOFF_FAILED' AND payload->>'lead_id'='22222222-2222-2222-2222-222222222006' — expect 1 row",
+      "Query integration_logs WHERE lead_id='22222222-2222-2222-2222-222222222006' AND kind='los_handoff' — expect status='failed'",
+      "Verify Cloud Task retry job enqueued for this lead"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222006",
+      "los_mock_fixture": "server_error",
+      "los_mock_status_code": 503,
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 503; body.error.code='UPSTREAM_UNAVAILABLE'; lead.stage unchanged='ready_for_handoff'; HANDOFF_FAILED event in event_outbox; integration_logs.status='failed'; Cloud Task retry enqueued",
+    "postconditions": [
+      "lead.stage remains 'ready_for_handoff'",
+      "Retry job in Cloud Tasks queue",
+      "HANDOFF_FAILED event in event_outbox"
+    ]
+  },
+  {
+    "test_id": "TC-FR081-07",
+    "test_name": "Duplicate LOS application blocked by unique index on concurrent retry",
+    "category": "Boundary",
+    "linked_fr": "FR-081",
+    "priority": "High",
+    "preconditions": [
+      "First handoff succeeded for this lead; los_application_id='LOS-APP-007' exists in los_application_mirrors and integration_logs",
+      "Lead stage is now 'handed_off'"
+    ],
+    "test_steps": [
+      "Attempt concurrent second POST /api/v1/leads/{id}/handoff with a NEW idempotency_key (not the original)",
+      "Assert HTTP response status is 409",
+      "Assert body.error.code = 'CONFLICT'",
+      "Query los_application_mirrors WHERE los_application_id='LOS-APP-007' — assert COUNT=1 (no duplicate)",
+      "Query integration_logs WHERE lead_id={id} AND kind='los_handoff' AND status='success' — assert exactly 1 row"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222007",
+      "existing_los_application_id": "LOS-APP-007",
+      "new_idempotency_key": "IK-HO-007-RETRY",
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 409; body.error.code='CONFLICT'; no duplicate los_application_id inserted in los_application_mirrors; exactly 1 success row in integration_logs for this lead's handoff",
+    "postconditions": [
+      "los_application_mirrors count for los_application_id='LOS-APP-007' remains 1"
+    ]
+  },
+  {
+    "test_id": "TC-FR081-08",
+    "test_name": "KYC waived passes KYC guard — handoff succeeds",
+    "category": "Workflow",
+    "linked_fr": "FR-081",
+    "priority": "High",
+    "preconditions": [
+      "Lead '22222222-2222-2222-2222-222222222008' is in stage='ready_for_handoff'",
+      "lead.kyc_status='waived' (not 'success')",
+      "All other guards pass (consent, docs, duplicate, product)",
+      "BM-001 authenticated with valid JWT",
+      "LosMockAdapter returns los_application_id='LOS-APP-008'"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "POST /api/v1/leads/22222222-2222-2222-2222-222222222008/handoff with BM JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data.stage = 'handed_off'",
+      "Assert body.data.los_application_id = 'LOS-APP-008'",
+      "Query leads WHERE id='22222222-2222-2222-2222-222222222008' — expect stage='handed_off'",
+      "Confirm KYC guard accepted kyc_status='waived' (no STAGE_GUARD_FAILED error)"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222008",
+      "kyc_status": "waived",
+      "actor_role": "BM",
+      "actor_id": "BM-001",
+      "los_mock_los_application_id": "LOS-APP-008"
+    },
+    "expected_result": "HTTP 200; body.data.stage='handed_off'; body.data.los_application_id='LOS-APP-008'; KYC waiver accepted by StageGuardService",
+    "postconditions": [
+      "lead.stage='handed_off'",
+      "1 los_application_mirrors row for LOS-APP-008"
+    ]
+  },
+  {
+    "test_id": "TC-FR081-UI-01",
+    "test_name": "Handoff checklist UI — all guards green, confirm dialog, success toast",
+    "category": "UI/E2E",
+    "linked_fr": "FR-081",
+    "priority": "High",
+    "preconditions": [
+      "Lead '22222222-2222-2222-2222-222222222001' is in stage='ready_for_handoff' with all guards passing",
+      "BM-001 authenticated session available",
+      "LosMockAdapter fixture='success'"
+    ],
+    "test_steps": [
+      "Log in as BM-001 (role=BM)",
+      "Navigate to /leads/22222222-2222-2222-2222-222222222001/handoff on viewport 1280x800",
+      "Assert getByTestId('handoff-checklist') is visible",
+      "Assert all checklist items show green tick (all guards satisfied)",
+      "Assert getByRole('button', {name: 'Initiate Hand-off'}) is enabled",
+      "Click 'Initiate Hand-off' button",
+      "Assert getByRole('dialog') appears with confirmation prompt",
+      "Assert dialog has role=alertdialog for accessibility",
+      "Confirm the action in the dialog",
+      "Wait for POST /api/v1/leads/*/handoff response to complete",
+      "Assert getByTestId('handoff-success-toast') is visible",
+      "Assert lead stage chip shows 'Handed Off'",
+      "Resize viewport to 375x667 (mobile) and repeat navigation",
+      "Assert checklist and button remain functional on mobile viewport",
+      "Assert checklist items have role=listitem"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222001",
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "All checklist items show green; confirm dialog appears; success toast visible after handoff; stage chip shows 'Handed Off'; fully functional at both viewports; dialog has role=alertdialog; checklist items have role=listitem",
+    "postconditions": [
+      "lead.stage='handed_off' in database"
+    ],
+    "ui_meta": {
+      "route": "/leads/22222222-2222-2222-2222-222222222001/handoff",
+      "locators": {
+        "handoff_checklist": "getByTestId('handoff-checklist')",
+        "initiate_button": "getByRole('button', {name: 'Initiate Hand-off'})",
+        "confirm_dialog": "getByRole('dialog')",
+        "success_toast": "getByTestId('handoff-success-toast')"
+      },
+      "viewport": [
+        "1280x800",
+        "375x667"
+      ],
+      "auth_state": "BM JWT (BM-001, branch_id=BR-001)",
+      "network_wait": "await POST /api/v1/leads/*/handoff response",
+      "visual_assert": [
+        "All checklist items display green tick",
+        "Success toast visible after confirmation",
+        "Lead stage chip displays 'Handed Off'"
+      ],
+      "a11y": [
+        "Confirm dialog has role=alertdialog",
+        "Checklist items have role=listitem"
+      ]
+    }
+  },
+  {
+    "test_id": "TC-FR081-DI-01",
+    "test_name": "handed_off lead must have los_application_id and matching los_application_mirrors row",
+    "category": "Data Integrity",
+    "linked_fr": "FR-081",
+    "priority": "Critical",
+    "preconditions": [
+      "TC-FR081-01 has run successfully (lead in handed_off state with LOS-APP-001)",
+      "Database accessible with test credentials"
+    ],
+    "test_steps": [
+      "Run invariant query against the database",
+      "Assert the query returns 0 rows (all handed_off leads have los_application_id and matching mirror row)"
+    ],
+    "test_data": {
+      "reference_lead_id": "22222222-2222-2222-2222-222222222001",
+      "expected_los_application_id": "LOS-APP-001"
+    },
+    "expected_result": "Invariant query returns 0 — every handed_off lead has a non-null los_application_id and a matching los_application_mirrors row",
+    "postconditions": [
+      "Read-only check — no cleanup required"
+    ],
+    "di_meta": {
+      "setup_sql": "-- TC-FR081-01 postconditions used; lead is already in handed_off state",
+      "action": "SELECT to verify invariant after TC-FR081-01 happy path",
+      "invariant_query": "SELECT COUNT(*) FROM leads l LEFT JOIN los_application_mirrors m ON m.los_application_id = l.los_application_id WHERE l.stage = 'handed_off' AND (l.los_application_id IS NULL OR m.id IS NULL)",
+      "cleanup": "-- None (read-only invariant)"
+    }
+  },
+  {
+    "test_id": "TC-FR082-01",
+    "test_name": "Valid HMAC webhook — LOS mirror created with correct status",
+    "category": "Happy Path",
+    "linked_fr": "FR-082",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead '33333333-3333-3333-3333-333333333001' is in stage='handed_off' with los_application_id='LOS-APP-001'",
+      "No existing los_application_mirrors row for LOS-APP-001",
+      "HMAC shared secret known for signature generation"
+    ],
+    "test_steps": [
+      "Compute valid HMAC-SHA256 signature of webhook body using shared secret",
+      "POST /los/webhooks/status with body {los_application_id:'LOS-APP-001', status:'under_review', status_date:'2026-06-17T10:00:00Z', event_id:'EVT-001'} and header X-LOS-Signature: <computed_sig>",
+      "Assert HTTP response status is 200",
+      "Query los_application_mirrors WHERE los_application_id='LOS-APP-001' — expect 1 row with status='under_review', status_date='2026-06-17T10:00:00Z', received_via='webhook'",
+      "Query integration_logs WHERE lead_id='33333333-3333-3333-3333-333333333001' AND kind='los_webhook' — expect status='success'"
+    ],
+    "test_data": {
+      "los_application_id": "LOS-APP-001",
+      "webhook_status": "under_review",
+      "status_date": "2026-06-17T10:00:00Z",
+      "event_id": "EVT-001",
+      "hmac_signature_valid": true,
+      "lead_id": "33333333-3333-3333-3333-333333333001"
+    },
+    "expected_result": "HTTP 200; los_application_mirrors row with status='under_review', status_date='2026-06-17T10:00:00Z', received_via='webhook'; integration_logs row with status='success'",
+    "postconditions": [
+      "1 los_application_mirrors row for LOS-APP-001",
+      "1 integration_logs row with status='success'"
+    ]
+  },
+  {
+    "test_id": "TC-FR082-02",
+    "test_name": "Out-of-order delivery — older status_date ignored, current mirror unchanged",
+    "category": "Boundary",
+    "linked_fr": "FR-082",
+    "priority": "High",
+    "preconditions": [
+      "los_application_mirrors row exists for LOS-APP-001 with status='approved', status_date='2026-06-17T12:00:00Z'",
+      "HMAC shared secret known"
+    ],
+    "test_steps": [
+      "Compute valid HMAC-SHA256 signature",
+      "POST /los/webhooks/status with body {los_application_id:'LOS-APP-001', status:'under_review', status_date:'2026-06-17T09:00:00Z', event_id:'EVT-002'} (older status_date)",
+      "Assert HTTP response status is 200 (acknowledged)",
+      "Query los_application_mirrors WHERE los_application_id='LOS-APP-001' — assert status still='approved' and status_date still='2026-06-17T12:00:00Z'",
+      "Query integration_logs for EVT-002 — expect 1 row recorded (for audit trail)"
+    ],
+    "test_data": {
+      "los_application_id": "LOS-APP-001",
+      "existing_status": "approved",
+      "existing_status_date": "2026-06-17T12:00:00Z",
+      "incoming_status": "under_review",
+      "incoming_status_date": "2026-06-17T09:00:00Z",
+      "event_id": "EVT-002",
+      "hmac_signature_valid": true
+    },
+    "expected_result": "HTTP 200; los_application_mirrors.status remains 'approved'; los_application_mirrors.status_date remains '2026-06-17T12:00:00Z'; out-of-order event logged in integration_logs",
+    "postconditions": [
+      "los_application_mirrors row unchanged (status='approved', status_date='2026-06-17T12:00:00Z')"
+    ]
+  },
+  {
+    "test_id": "TC-FR082-03",
+    "test_name": "Invalid HMAC signature — 403 FORBIDDEN, no database writes",
+    "category": "Negative/Error",
+    "linked_fr": "FR-082",
+    "priority": "Critical",
+    "preconditions": [
+      "HMAC shared secret known; tampered body or wrong secret used",
+      "Lead handed_off with LOS-APP-001"
+    ],
+    "test_steps": [
+      "POST /los/webhooks/status with body {los_application_id:'LOS-APP-001', status:'approved', status_date:'2026-06-17T11:00:00Z', event_id:'EVT-003'} and header X-LOS-Signature: 'invalid_sig'",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'FORBIDDEN'",
+      "Query los_application_mirrors WHERE los_application_id='LOS-APP-001' — assert no new row with status='approved' (status unchanged from pre-test)",
+      "Query integration_logs for EVT-003 — expect 0 rows (no write on auth failure)"
+    ],
+    "test_data": {
+      "los_application_id": "LOS-APP-001",
+      "webhook_status": "approved",
+      "event_id": "EVT-003",
+      "x_los_signature": "invalid_sig",
+      "hmac_signature_valid": false
+    },
+    "expected_result": "HTTP 403; body.error.code='FORBIDDEN'; no los_application_mirrors write; no integration_logs write",
+    "postconditions": [
+      "Database state unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR082-04",
+    "test_name": "Missing X-LOS-Signature header — 403 FORBIDDEN",
+    "category": "Negative/Error",
+    "linked_fr": "FR-082",
+    "priority": "Critical",
+    "preconditions": [
+      "Valid webhook body prepared, but no signature header included"
+    ],
+    "test_steps": [
+      "POST /los/webhooks/status with body {los_application_id:'LOS-APP-001', status:'approved', status_date:'2026-06-17T11:00:00Z', event_id:'EVT-004'} and NO X-LOS-Signature header",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "los_application_id": "LOS-APP-001",
+      "event_id": "EVT-004",
+      "x_los_signature_present": false
+    },
+    "expected_result": "HTTP 403; body.error.code='FORBIDDEN'; no database writes",
+    "postconditions": [
+      "Database state unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR082-05",
+    "test_name": "Unknown los_application_id — 200 acknowledged, logged as failed",
+    "category": "Negative/Error",
+    "linked_fr": "FR-082",
+    "priority": "Medium",
+    "preconditions": [
+      "No los_application_mirrors or leads row exists for 'LOS-UNKNOWN-999'",
+      "Valid HMAC signature computed"
+    ],
+    "test_steps": [
+      "Compute valid HMAC-SHA256 signature",
+      "POST /los/webhooks/status with body {los_application_id:'LOS-UNKNOWN-999', status:'approved', status_date:'2026-06-17T11:00:00Z', event_id:'EVT-005'}",
+      "Assert HTTP response status is 200 (acknowledged — do not reject to avoid webhook retries)",
+      "Query los_application_mirrors WHERE los_application_id='LOS-UNKNOWN-999' — expect 0 rows",
+      "Query integration_logs WHERE payload->>'los_application_id'='LOS-UNKNOWN-999' — expect 1 row with status='failed' and error_code='UNKNOWN_APP_ID'"
+    ],
+    "test_data": {
+      "los_application_id": "LOS-UNKNOWN-999",
+      "event_id": "EVT-005",
+      "hmac_signature_valid": true
+    },
+    "expected_result": "HTTP 200; no los_application_mirrors row created; integration_logs row with status='failed' and error_code='UNKNOWN_APP_ID'",
+    "postconditions": [
+      "No los_application_mirrors row for LOS-UNKNOWN-999"
+    ]
+  },
+  {
+    "test_id": "TC-FR082-06",
+    "test_name": "Idempotent duplicate webhook — same event_id deduplicated",
+    "category": "Boundary",
+    "linked_fr": "FR-082",
+    "priority": "High",
+    "preconditions": [
+      "Webhook with event_id='EVT-003' already processed; mirror row exists",
+      "integration_logs row for EVT-003 already exists",
+      "Valid HMAC signature computable"
+    ],
+    "test_steps": [
+      "Note pre-request COUNT(*) from integration_logs WHERE payload->>'event_id'='EVT-003'",
+      "Compute valid HMAC-SHA256 signature",
+      "POST /los/webhooks/status with same body as original (event_id='EVT-003')",
+      "Assert HTTP response status is 200",
+      "Query integration_logs WHERE payload->>'event_id'='EVT-003' — assert COUNT unchanged (no new row inserted)",
+      "Query los_application_mirrors — assert unchanged"
+    ],
+    "test_data": {
+      "los_application_id": "LOS-APP-001",
+      "event_id": "EVT-003",
+      "hmac_signature_valid": true,
+      "duplicate_event": true
+    },
+    "expected_result": "HTTP 200; no new integration_logs row (duplicate deduped by event_id); mirror row unchanged",
+    "postconditions": [
+      "integration_logs count for event_id='EVT-003' unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR082-07",
+    "test_name": "Reconciliation poll — stale lead updated via poll with LIMIT enforced",
+    "category": "Integration",
+    "linked_fr": "FR-082",
+    "priority": "High",
+    "preconditions": [
+      "Lead '33333333-3333-3333-3333-333333333007' is in stage='handed_off' for more than 1 hour with no webhook received",
+      "LOS poll response returns status='approved' for this lead",
+      "Service account has permission to trigger internal reconcile"
+    ],
+    "test_steps": [
+      "Trigger GET /internal/los/reconcile (service-to-service authenticated call)",
+      "Assert HTTP response status is 200",
+      "Query los_application_mirrors WHERE lead_id='33333333-3333-3333-3333-333333333007' — assert status='approved' and received_via='poll'",
+      "Query integration_logs for this lead and this reconciliation — expect status='success'",
+      "Verify reconciliation batch query uses LIMIT 100 (inspect logs or query plan)"
+    ],
+    "test_data": {
+      "lead_id": "33333333-3333-3333-3333-333333333007",
+      "stale_threshold_hours": 1,
+      "los_poll_response_status": "approved",
+      "expected_received_via": "poll",
+      "reconciliation_batch_limit": 100
+    },
+    "expected_result": "HTTP 200; los_application_mirrors row updated with status='approved' and received_via='poll'; integration_logs row created; LIMIT 100 enforced on reconciliation batch",
+    "postconditions": [
+      "los_application_mirrors.received_via='poll' for this lead",
+      "integration_logs row with status='success'"
+    ]
+  },
+  {
+    "test_id": "TC-FR082-UI-01",
+    "test_name": "RM sees LOS status panel with Read-only badge on own handed-off lead",
+    "category": "UI/E2E",
+    "linked_fr": "FR-082",
+    "priority": "High",
+    "preconditions": [
+      "Lead '22222222-2222-2222-2222-222222222001' is in stage='handed_off' with los_application_mirrors row showing status='under_review'",
+      "RM-001 is the owner of this lead",
+      "RM-001 authenticated session available"
+    ],
+    "test_steps": [
+      "Log in as RM-001 (role=RM, own lead)",
+      "Navigate to /leads/22222222-2222-2222-2222-222222222001 on viewport 1280x800",
+      "Wait for page load (network idle)",
+      "Assert getByTestId('los-status-panel') is visible",
+      "Assert getByText('Read-only') is visible within the LOS status panel",
+      "Assert getByTestId('los-status-chip') displays 'under_review' or equivalent label",
+      "Assert getByTestId('los-status-date') displays a formatted date",
+      "Assert no input or edit controls present in the LOS status panel",
+      "Resize viewport to 375x667 (mobile)",
+      "Assert getByTestId('los-status-panel') is visible and readable on mobile",
+      "Assert 'Read-only' badge visible on mobile",
+      "Run accessibility check: LOS panel has aria-label='LOS Application Status'",
+      "Run accessibility check: status chip has role=status"
+    ],
+    "test_data": {
+      "lead_id": "22222222-2222-2222-2222-222222222001",
+      "actor_role": "RM",
+      "actor_id": "RM-001",
+      "expected_los_status": "under_review"
+    },
+    "expected_result": "LOS status panel visible at both viewports; 'Read-only' badge shown; correct LOS status chip and date displayed; no edit controls; aria-label on panel and role=status on chip",
+    "postconditions": [
+      "No data mutations — read-only view"
+    ],
+    "ui_meta": {
+      "route": "/leads/22222222-2222-2222-2222-222222222001",
+      "locators": {
+        "los_status_panel": "getByTestId('los-status-panel')",
+        "read_only_badge": "getByText('Read-only')",
+        "los_status_chip": "getByTestId('los-status-chip')",
+        "los_status_date": "getByTestId('los-status-date')"
+      },
+      "viewport": [
+        "1280x800",
+        "375x667"
+      ],
+      "auth_state": "RM JWT (RM-001, own lead owner)",
+      "network_wait": "await GET /api/v1/leads/22222222-2222-2222-2222-222222222001 response",
+      "visual_assert": [
+        "LOS status panel is visible",
+        "'Read-only' badge visible in panel",
+        "Status chip shows correct LOS status",
+        "No editable input controls in panel"
+      ],
+      "a11y": [
+        "Panel has aria-label='LOS Application Status'",
+        "Status chip has role=status"
+      ]
+    }
+  },
+  {
+    "test_id": "TC-FR082-DI-01",
+    "test_name": "No two los_application_mirrors rows with same los_application_id",
+    "category": "Data Integrity",
+    "linked_fr": "FR-082",
+    "priority": "Critical",
+    "preconditions": [
+      "Database accessible with test credentials",
+      "los_application_mirrors has UNIQUE constraint on los_application_id"
+    ],
+    "test_steps": [
+      "INSERT first los_application_mirrors row with los_application_id='LOS-DI-001' and status='under_review'",
+      "Attempt INSERT second los_application_mirrors row with los_application_id='LOS-DI-001' and status='approved'",
+      "Assert second INSERT fails with unique constraint violation",
+      "Run invariant query: SELECT COUNT(*) FROM los_application_mirrors WHERE los_application_id='LOS-DI-001' — expect 1"
+    ],
+    "test_data": {
+      "los_application_id": "LOS-DI-001",
+      "first_status": "under_review",
+      "second_status": "approved"
+    },
+    "expected_result": "Second INSERT fails with unique constraint violation; exactly 1 row with los_application_id='LOS-DI-001' remains",
+    "postconditions": [
+      "Cleanup removes test row"
+    ],
+    "di_meta": {
+      "setup_sql": "INSERT INTO los_application_mirrors (los_application_id, status, status_date, received_via, created_at) VALUES ('LOS-DI-001', 'under_review', NOW(), 'webhook', NOW())",
+      "action": "INSERT INTO los_application_mirrors (los_application_id, status, status_date, received_via, created_at) VALUES ('LOS-DI-001', 'approved', NOW(), 'webhook', NOW())",
+      "invariant_query": "SELECT COUNT(*) FROM los_application_mirrors WHERE los_application_id='LOS-DI-001'",
+      "cleanup": "DELETE FROM los_application_mirrors WHERE los_application_id='LOS-DI-001'"
+    }
+  },
+  {
+    "test_id": "TC-FR090-01",
+    "test_name": "ADMIN creates partner successfully",
+    "category": "Happy Path",
+    "linked_fr": "FR-090",
+    "priority": "Critical",
+    "preconditions": [
+      "No partner with partner_code='DSA-001' exists in org 'ORG-001'",
+      "ADMIN user authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as ADMIN-001 and obtain JWT",
+      "POST /api/v1/partners with body {partner_code:'DSA-001', legal_name:'Apex DSA Pvt Ltd', partner_type:'DSA', status:'active', branch_id:'BR-001', contact_mobile:'9876543210', valid_until:'2027-12-31', risk_category:'low'}",
+      "Assert HTTP response status is 201",
+      "Assert body.data.partner_code = 'DSA-001'",
+      "Assert body.data.status = 'active'",
+      "Assert body.data.legal_name = 'Apex DSA Pvt Ltd'",
+      "Query partners WHERE partner_code='DSA-001' — expect 1 row",
+      "Query audit_logs WHERE entity_type='partner' AND action='partner_created' AND entity_id=<returned_partner_id> — expect 1 row",
+      "Assert audit_logs row does NOT contain raw mobile number '9876543210' in changes field"
+    ],
+    "test_data": {
+      "partner_code": "DSA-001",
+      "legal_name": "Apex DSA Pvt Ltd",
+      "partner_type": "DSA",
+      "status": "active",
+      "branch_id": "BR-001",
+      "contact_mobile": "9876543210",
+      "valid_until": "2027-12-31",
+      "risk_category": "low",
+      "actor_role": "ADMIN",
+      "actor_id": "ADMIN-001",
+      "org_id": "ORG-001"
+    },
+    "expected_result": "HTTP 201; body.data.partner_code='DSA-001'; body.data.status='active'; partners row created; ConfigurationVersion row created; audit_logs row with action='partner_created'; no raw mobile in audit_logs",
+    "postconditions": [
+      "1 partners row with partner_code='DSA-001'",
+      "1 audit_logs row with action='partner_created'",
+      "contact_mobile masked in audit_logs"
+    ]
+  },
+  {
+    "test_id": "TC-FR090-02",
+    "test_name": "ADMIN suspends active partner with status_reason",
+    "category": "Workflow",
+    "linked_fr": "FR-090",
+    "priority": "High",
+    "preconditions": [
+      "Partner 'PP-001' exists with status='active'",
+      "ADMIN-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as ADMIN-001 and obtain JWT",
+      "PATCH /api/v1/partners/PP-001 with body {status:'suspended', status_reason:'Regulatory hold Q2-2026'}",
+      "Assert HTTP response status is 200",
+      "Assert body.data.status = 'suspended'",
+      "Query partners WHERE id='PP-001' — expect status='suspended', status_reason='Regulatory hold Q2-2026'",
+      "Query audit_logs WHERE entity_type='partner' AND entity_id='PP-001' AND action='partner_status_changed' — expect 1 row with new value 'suspended'"
+    ],
+    "test_data": {
+      "partner_id": "PP-001",
+      "current_status": "active",
+      "new_status": "suspended",
+      "status_reason": "Regulatory hold Q2-2026",
+      "actor_role": "ADMIN",
+      "actor_id": "ADMIN-001"
+    },
+    "expected_result": "HTTP 200; body.data.status='suspended'; partners.status_reason='Regulatory hold Q2-2026'; audit_logs row with action='partner_status_changed'",
+    "postconditions": [
+      "partners.status='suspended' for PP-001",
+      "audit_logs row capturing status change"
+    ]
+  },
+  {
+    "test_id": "TC-FR090-03",
+    "test_name": "RM role denied access to partner endpoints — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-090",
+    "priority": "High",
+    "preconditions": [
+      "RM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as RM-001 (role=RM) and obtain JWT",
+      "GET /api/v1/partners with RM JWT",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'FORBIDDEN'",
+      "POST /api/v1/partners with RM JWT and any body",
+      "Assert HTTP response status is 403"
+    ],
+    "test_data": {
+      "actor_role": "RM",
+      "actor_id": "RM-001"
+    },
+    "expected_result": "HTTP 403 for both GET and POST /api/v1/partners; body.error.code='FORBIDDEN'",
+    "postconditions": [
+      "No partner rows created or modified"
+    ]
+  },
+  {
+    "test_id": "TC-FR090-04",
+    "test_name": "Duplicate partner_code in same org — 409 CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-090",
+    "priority": "High",
+    "preconditions": [
+      "Partner with partner_code='DSA-001' and org_id='ORG-001' already exists",
+      "ADMIN-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as ADMIN-001 and obtain JWT",
+      "POST /api/v1/partners with body {partner_code:'DSA-001', legal_name:'Second DSA', partner_type:'DSA', org_id:'ORG-001'}",
+      "Assert HTTP response status is 409",
+      "Assert body.error.code = 'CONFLICT'",
+      "Assert body.error.message contains 'partner_code'"
+    ],
+    "test_data": {
+      "partner_code": "DSA-001",
+      "org_id": "ORG-001",
+      "legal_name": "Second DSA",
+      "partner_type": "DSA",
+      "actor_role": "ADMIN",
+      "actor_id": "ADMIN-001"
+    },
+    "expected_result": "HTTP 409; body.error.code='CONFLICT'; body.error.message contains 'partner_code'; no new partner row created",
+    "postconditions": [
+      "No duplicate partner row created"
+    ]
+  },
+  {
+    "test_id": "TC-FR090-05",
+    "test_name": "Invalid state transition expired → active — 400 VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-090",
+    "priority": "High",
+    "preconditions": [
+      "Partner 'PP-002' exists with status='expired'",
+      "ADMIN-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as ADMIN-001 and obtain JWT",
+      "PATCH /api/v1/partners/PP-002 with body {status:'active'}",
+      "Assert HTTP response status is 400",
+      "Assert body.error.code = 'VALIDATION_ERROR'",
+      "Assert body.error.detail contains 'invalid_state_transition'",
+      "Query partners WHERE id='PP-002' — assert status still='expired'"
+    ],
+    "test_data": {
+      "partner_id": "PP-002",
+      "current_status": "expired",
+      "attempted_status": "active",
+      "actor_role": "ADMIN",
+      "actor_id": "ADMIN-001"
+    },
+    "expected_result": "HTTP 400; body.error.code='VALIDATION_ERROR'; body.error.detail contains 'invalid_state_transition'; partner status unchanged='expired'",
+    "postconditions": [
+      "partner.status remains 'expired'"
+    ]
+  },
+  {
+    "test_id": "TC-FR090-06",
+    "test_name": "Suspend without status_reason — 400 VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-090",
+    "priority": "Medium",
+    "preconditions": [
+      "Partner 'PP-001' exists with status='active'",
+      "ADMIN-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as ADMIN-001 and obtain JWT",
+      "PATCH /api/v1/partners/PP-001 with body {status:'suspended'} (no status_reason field)",
+      "Assert HTTP response status is 400",
+      "Assert body.error.code = 'VALIDATION_ERROR'",
+      "Query partners WHERE id='PP-001' — assert status still='active'"
+    ],
+    "test_data": {
+      "partner_id": "PP-001",
+      "current_status": "active",
+      "attempted_status": "suspended",
+      "status_reason_present": false,
+      "actor_role": "ADMIN",
+      "actor_id": "ADMIN-001"
+    },
+    "expected_result": "HTTP 400; body.error.code='VALIDATION_ERROR'; partner status unchanged='active'",
+    "postconditions": [
+      "partner.status remains 'active'"
+    ]
+  },
+  {
+    "test_id": "TC-FR090-07",
+    "test_name": "BM scope — GET /partners returns only own-branch partners",
+    "category": "Permission",
+    "linked_fr": "FR-090",
+    "priority": "High",
+    "preconditions": [
+      "3 partners with branch_id='BR-001' exist",
+      "2 partners with branch_id='BR-002' exist",
+      "BM-001 belongs to branch 'BR-001'",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 (role=BM, branch_id='BR-001') and obtain JWT",
+      "GET /api/v1/partners with BM JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data is an array with exactly 3 items",
+      "Assert all returned items have branch_id='BR-001' (or null branch where applicable)",
+      "Assert no items with branch_id='BR-002' are present"
+    ],
+    "test_data": {
+      "actor_role": "BM",
+      "actor_id": "BM-001",
+      "actor_branch_id": "BR-001",
+      "expected_count": 3,
+      "br001_partner_count": 3,
+      "br002_partner_count": 2
+    },
+    "expected_result": "HTTP 200; body.data array has exactly 3 items; all items have branch_id='BR-001'; no BR-002 partners in response",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR090-UI-01",
+    "test_name": "ADMIN creates partner via form and sees new partner in list",
+    "category": "UI/E2E",
+    "linked_fr": "FR-090",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN-001 authenticated session available",
+      "No partner with partner_code='DSA-001' exists yet"
+    ],
+    "test_steps": [
+      "Log in as ADMIN-001",
+      "Navigate to /partners/new on viewport 1280x800",
+      "Wait for form to render",
+      "Fill getByLabel('Partner Code') with 'DSA-001'",
+      "Fill getByLabel('Legal Name') with 'Apex DSA Pvt Ltd'",
+      "Select partner_type 'DSA' from dropdown",
+      "Fill contact mobile field with '9876543210'",
+      "Set valid_until to '2027-12-31'",
+      "Click getByRole('button', {name: 'Save Partner'})",
+      "Wait for POST /api/v1/partners response",
+      "Assert success toast or redirect to partner list",
+      "Navigate to /partners",
+      "Assert getByTestId('partner-table') contains a row with partner_code='DSA-001'",
+      "Assert status chip for that row shows 'Active'",
+      "Resize viewport to 375x667 (mobile) and verify form is usable",
+      "Run accessibility check: form fields have associated labels",
+      "Run accessibility check: error messages linked via aria-describedby"
+    ],
+    "test_data": {
+      "partner_code": "DSA-001",
+      "legal_name": "Apex DSA Pvt Ltd",
+      "partner_type": "DSA",
+      "contact_mobile": "9876543210",
+      "valid_until": "2027-12-31",
+      "actor_role": "ADMIN",
+      "actor_id": "ADMIN-001"
+    },
+    "expected_result": "Partner form submits successfully; new row with partner_code='DSA-001' and status chip 'Active' appears in partner table; form usable at mobile viewport; form fields have accessible labels",
+    "postconditions": [
+      "Partner 'DSA-001' created in database"
+    ],
+    "ui_meta": {
+      "route": "/partners/new",
+      "locators": {
+        "partner_form": "getByTestId('partner-form')",
+        "partner_code_input": "getByLabel('Partner Code')",
+        "legal_name_input": "getByLabel('Legal Name')",
+        "save_button": "getByRole('button', {name: 'Save Partner'})",
+        "partner_table": "getByTestId('partner-table')"
+      },
+      "viewport": [
+        "1280x800",
+        "375x667"
+      ],
+      "auth_state": "ADMIN JWT (ADMIN-001)",
+      "network_wait": "await POST /api/v1/partners response",
+      "visual_assert": [
+        "New row in partner-table with partner_code='DSA-001'",
+        "Status chip shows 'Active'"
+      ],
+      "a11y": [
+        "All form fields have associated labels",
+        "Error messages linked via aria-describedby to respective inputs"
+      ]
+    }
+  },
+  {
+    "test_id": "TC-FR090-DI-01",
+    "test_name": "No raw mobile number in audit_logs after partner creation",
+    "category": "Data Integrity",
+    "linked_fr": "FR-090",
+    "priority": "Critical",
+    "preconditions": [
+      "Database accessible with test credentials",
+      "TC-FR090-01 preconditions met"
+    ],
+    "test_steps": [
+      "Trigger TC-FR090-01 (POST /api/v1/partners with contact_mobile='9876543210')",
+      "Query audit_logs WHERE action='partner_created' AND changes::text ~ '[0-9]{10}'",
+      "Assert query returns 0 rows (no unmasked 10-digit mobile numbers in audit changes)"
+    ],
+    "test_data": {
+      "partner_code": "DSA-001",
+      "contact_mobile": "9876543210",
+      "actor_role": "ADMIN",
+      "actor_id": "ADMIN-001"
+    },
+    "expected_result": "Invariant query returns 0 — no raw 10-digit mobile number stored in audit_logs.changes",
+    "postconditions": [
+      "Read-only check — no cleanup required for invariant"
+    ],
+    "di_meta": {
+      "setup_sql": "-- Trigger TC-FR090-01 to create partner with contact_mobile='9876543210'",
+      "action": "POST /api/v1/partners (via TC-FR090-01 steps); then read audit_logs",
+      "invariant_query": "SELECT COUNT(*) FROM audit_logs WHERE changes::text ~ '[0-9]{10}'",
+      "cleanup": "-- None (read-only invariant check)"
+    }
+  },
+  {
+    "test_id": "TC-FR091-01",
+    "test_name": "Happy path — partner submits lead successfully",
+    "category": "Happy Path",
+    "linked_fr": "FR-091",
+    "priority": "Critical",
+    "preconditions": [
+      "Partner 'PP-001' exists with status='active'",
+      "Active ProductConfig for product_id='PROD-001' exists",
+      "PARTNER-001 authenticated with valid PARTNER JWT (partner_id='PP-001')"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-001 (role=PARTNER, partner_id='PP-001') and obtain JWT",
+      "POST /api/v1/partners/leads with body {applicant_name:'Ravi Kumar', mobile:'9123456789', product_id:'PROD-001', loan_amount:150000, source:'DSA'} and header Idempotency-Key: IK-P-001",
+      "Assert HTTP response status is 201",
+      "Assert body.data.lead_id is a non-empty UUID",
+      "Assert body.data.stage = 'captured'",
+      "Assert body.data.applicant_name is masked (e.g., 'R*** K***' or similar masking pattern, NOT 'Ravi Kumar')",
+      "Assert body response does NOT contain raw mobile '9123456789'",
+      "Query source_attributions WHERE lead_id=<returned_lead_id> — expect 1 row with partner_id='PP-001' and source='DSA'",
+      "Query event_outbox WHERE event_type='LEAD_CREATED' AND payload->>'lead_id'=<returned_lead_id> — expect 1 row",
+      "Query leads WHERE id=<returned_lead_id> — expect stage='captured'"
+    ],
+    "test_data": {
+      "applicant_name": "Ravi Kumar",
+      "mobile": "9123456789",
+      "product_id": "PROD-001",
+      "loan_amount": 150000,
+      "source": "DSA",
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001",
+      "idempotency_key": "IK-P-001"
+    },
+    "expected_result": "HTTP 201; body.data.lead_id is UUID; body.data.stage='captured'; applicant_name masked; no raw mobile in response; source_attributions row with partner_id='PP-001'; LEAD_CREATED event in event_outbox",
+    "postconditions": [
+      "1 leads row with stage='captured'",
+      "1 source_attributions row with partner_id='PP-001'",
+      "1 LEAD_CREATED event_outbox row"
+    ]
+  },
+  {
+    "test_id": "TC-FR091-02",
+    "test_name": "Suspended partner blocked — 403 FORBIDDEN with generic message",
+    "category": "Negative/Error",
+    "linked_fr": "FR-091",
+    "priority": "Critical",
+    "preconditions": [
+      "Partner 'PP-002' exists with status='suspended'",
+      "PARTNER-002 authenticated with valid PARTNER JWT (partner_id='PP-002')"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-002 (role=PARTNER, partner_id='PP-002') and obtain JWT",
+      "POST /api/v1/partners/leads with any valid lead body",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'FORBIDDEN'",
+      "Assert body.error.message does NOT reveal the word 'suspended' or internal suspension reason",
+      "Query leads — expect 0 new rows created by this request"
+    ],
+    "test_data": {
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-002",
+      "partner_status": "suspended",
+      "applicant_name": "Test Applicant",
+      "mobile": "9000000001",
+      "product_id": "PROD-001"
+    },
+    "expected_result": "HTTP 403; body.error.code='FORBIDDEN'; generic error message (no internal reason text exposed); no lead created",
+    "postconditions": [
+      "No lead created"
+    ]
+  },
+  {
+    "test_id": "TC-FR091-03",
+    "test_name": "Strong duplicate blocked — 409 with no PII leaked",
+    "category": "Negative/Error",
+    "linked_fr": "FR-091",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead already exists with mobile='9999999999' constituting a strong duplicate match",
+      "Partner 'PP-001' exists with status='active'",
+      "PARTNER-001 authenticated with valid PARTNER JWT"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-001 and obtain JWT",
+      "POST /api/v1/partners/leads with body {mobile:'9999999999', applicant_name:'Another Applicant', product_id:'PROD-001', loan_amount:100000, source:'DSA'}",
+      "Assert HTTP response status is 409",
+      "Assert body.error.code = 'DUPLICATE_BLOCKED'",
+      "Assert response body does NOT contain any matched lead_id",
+      "Assert response body does NOT contain any owner name or assignee details",
+      "Assert response body does NOT contain any other partner information",
+      "Assert response body does NOT contain applicant_name from the matched lead",
+      "Query leads — expect no new lead created for mobile='9999999999' by this request"
+    ],
+    "test_data": {
+      "mobile": "9999999999",
+      "applicant_name": "Another Applicant",
+      "product_id": "PROD-001",
+      "loan_amount": 100000,
+      "source": "DSA",
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001",
+      "expected_duplicate_type": "strong"
+    },
+    "expected_result": "HTTP 409; body.error.code='DUPLICATE_BLOCKED'; response body contains NO matched lead_id, NO owner/assignee name, NO other partner info, NO applicant name from matched lead; no new lead created",
+    "postconditions": [
+      "No new lead created for this mobile"
+    ]
+  },
+  {
+    "test_id": "TC-FR091-04",
+    "test_name": "Weak duplicate — lead created with flagged duplicate_status",
+    "category": "Workflow",
+    "linked_fr": "FR-091",
+    "priority": "High",
+    "preconditions": [
+      "Possible weak match exists for mobile='8888888888'",
+      "Partner 'PP-001' exists with status='active'",
+      "PARTNER-001 authenticated with valid PARTNER JWT"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-001 and obtain JWT",
+      "POST /api/v1/partners/leads with body {mobile:'8888888888', applicant_name:'Priya Sharma', product_id:'PROD-001', loan_amount:200000, source:'DSA'}",
+      "Assert HTTP response status is 201",
+      "Assert body.data.lead_id is a non-empty UUID",
+      "Assert body.data.duplicate_status = 'flagged'",
+      "Query leads WHERE id=<returned_lead_id> — expect duplicate_status='flagged'"
+    ],
+    "test_data": {
+      "mobile": "8888888888",
+      "applicant_name": "Priya Sharma",
+      "product_id": "PROD-001",
+      "loan_amount": 200000,
+      "source": "DSA",
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001",
+      "expected_duplicate_type": "weak"
+    },
+    "expected_result": "HTTP 201; lead created; body.data.duplicate_status='flagged'; no blocking error returned",
+    "postconditions": [
+      "1 new lead with duplicate_status='flagged'"
+    ]
+  },
+  {
+    "test_id": "TC-FR091-05",
+    "test_name": "Partner scope isolation — GET /partners/leads returns only own leads",
+    "category": "Permission",
+    "linked_fr": "FR-091",
+    "priority": "Critical",
+    "preconditions": [
+      "Partner PP-001 (PARTNER-001) has submitted exactly 2 leads",
+      "Partner PP-002 (PARTNER-002) has submitted exactly 3 leads",
+      "PARTNER-001 authenticated with valid PARTNER JWT"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-001 (role=PARTNER, partner_id='PP-001') and obtain JWT",
+      "GET /api/v1/partners/leads with PARTNER JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data is an array with exactly 2 items",
+      "For each item in body.data, query source_attributions to verify partner_id='PP-001'",
+      "Assert no items belong to partner PP-002"
+    ],
+    "test_data": {
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001",
+      "expected_count": 2,
+      "pp001_leads": 2,
+      "pp002_leads": 3
+    },
+    "expected_result": "HTTP 200; body.data has exactly 2 items; all items attributable to PP-001; no PP-002 leads in response",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR091-06",
+    "test_name": "RM cannot use partner submission endpoint — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-091",
+    "priority": "High",
+    "preconditions": [
+      "RM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as RM-001 (role=RM) and obtain JWT",
+      "POST /api/v1/partners/leads with RM JWT and any valid body",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "actor_role": "RM",
+      "actor_id": "RM-001"
+    },
+    "expected_result": "HTTP 403; body.error.code='FORBIDDEN'",
+    "postconditions": [
+      "No lead created"
+    ]
+  },
+  {
+    "test_id": "TC-FR091-07",
+    "test_name": "Rate limit — 61st POST within 60s window returns 429",
+    "category": "Boundary",
+    "linked_fr": "FR-091",
+    "priority": "High",
+    "preconditions": [
+      "PARTNER-001 authenticated with valid PARTNER JWT",
+      "Rate limiter configured to 60 POSTs/min per PARTNER JWT"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-001 and obtain JWT",
+      "Send 60 POST /api/v1/partners/leads requests within a 60-second window",
+      "Assert all 60 requests return 201",
+      "Send the 61st POST /api/v1/partners/leads within the same 60-second window",
+      "Assert HTTP response status is 429",
+      "Assert body.error.code = 'RATE_LIMITED'"
+    ],
+    "test_data": {
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001",
+      "rate_limit": 60,
+      "window_seconds": 60,
+      "test_request_count": 61
+    },
+    "expected_result": "HTTP 429 on 61st request; body.error.code='RATE_LIMITED'; first 60 requests succeed",
+    "postconditions": [
+      "Rate limit counter resets after window expires"
+    ]
+  },
+  {
+    "test_id": "TC-FR091-08",
+    "test_name": "Idempotent replay — same idempotency_key returns original lead",
+    "category": "Boundary",
+    "linked_fr": "FR-091",
+    "priority": "High",
+    "preconditions": [
+      "Lead already created for PARTNER-001 with idempotency_key='IK-P-001'; lead_id is known",
+      "PARTNER-001 authenticated with valid PARTNER JWT"
+    ],
+    "test_steps": [
+      "Note pre-request COUNT(*) from leads, source_attributions, event_outbox",
+      "Authenticate as PARTNER-001 and obtain JWT",
+      "POST /api/v1/partners/leads with body {applicant_name:'Ravi Kumar', mobile:'9123456789', product_id:'PROD-001', loan_amount:150000, source:'DSA'} and header Idempotency-Key: IK-P-001 (same key as original)",
+      "Assert HTTP response status is 201 or 200",
+      "Assert body.data.lead_id equals the original lead_id",
+      "Query leads — assert COUNT unchanged",
+      "Query source_attributions for this lead — assert COUNT unchanged",
+      "Query event_outbox for LEAD_CREATED event for this lead — assert COUNT unchanged"
+    ],
+    "test_data": {
+      "applicant_name": "Ravi Kumar",
+      "mobile": "9123456789",
+      "product_id": "PROD-001",
+      "loan_amount": 150000,
+      "source": "DSA",
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001",
+      "idempotency_key": "IK-P-001"
+    },
+    "expected_result": "HTTP 201 or 200; same lead_id returned; no new leads row; no new source_attributions row; no new event_outbox row",
+    "postconditions": [
+      "All database counts unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR091-UI-01",
+    "test_name": "Inline validation errors on partner submission form",
+    "category": "UI/E2E",
+    "linked_fr": "FR-091",
+    "priority": "High",
+    "preconditions": [
+      "PARTNER-001 authenticated session available (partner_id='PP-001')",
+      "Partner status='active'"
+    ],
+    "test_steps": [
+      "Log in as PARTNER-001 (role=PARTNER)",
+      "Navigate to /partner-portal/leads/new on viewport 1280x800",
+      "Wait for form to render",
+      "Enter 'ABCD123456' (10 chars non-digit) in getByLabel('Mobile') field",
+      "Click getByRole('button', {name: 'Submit Lead'})",
+      "Assert getByRole('alert') or inline error visible with message 'Invalid mobile number'",
+      "Assert Submit button is disabled during submission",
+      "Verify error message is linked via aria-describedby to the mobile input",
+      "Verify error summary has role=alert",
+      "Resize viewport to 375x667 (mobile)",
+      "Repeat validation — assert inline error still visible and accessible on mobile",
+      "Enter a valid 10-digit mobile number",
+      "Assert inline error clears when valid input entered"
+    ],
+    "test_data": {
+      "invalid_mobile": "ABCD123456",
+      "valid_mobile": "9123456789",
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001"
+    },
+    "expected_result": "Inline error 'Invalid mobile number' shown below mobile field; button disabled during submission; error linked via aria-describedby; error summary has role=alert; error clears on valid input; functional at both viewports",
+    "postconditions": [
+      "No lead submitted with invalid data"
+    ],
+    "ui_meta": {
+      "route": "/partner-portal/leads/new",
+      "locators": {
+        "mobile_input": "getByLabel('Mobile')",
+        "submit_button": "getByRole('button', {name: 'Submit Lead'})",
+        "error_alert": "getByRole('alert')"
+      },
+      "viewport": [
+        "1280x800",
+        "375x667"
+      ],
+      "auth_state": "PARTNER JWT (PP-001)",
+      "network_wait": "await POST /api/v1/partners/leads response (if submitted)",
+      "visual_assert": [
+        "Error message 'Invalid mobile number' inline below mobile field",
+        "Submit button disabled during submission"
+      ],
+      "a11y": [
+        "Error message linked via aria-describedby to mobile input",
+        "Error summary has role=alert"
+      ]
+    }
+  },
+  {
+    "test_id": "TC-FR091-DI-01",
+    "test_name": "Every DSA/Dealer channel lead has partner_id in source_attributions",
+    "category": "Data Integrity",
+    "linked_fr": "FR-091",
+    "priority": "Critical",
+    "preconditions": [
+      "TC-FR091-01 run to create a DSA lead",
+      "Database accessible with test credentials"
+    ],
+    "test_steps": [
+      "Trigger TC-FR091-01 (partner submits DSA lead)",
+      "Run invariant query against source_attributions and leads",
+      "Assert query returns 0 rows"
+    ],
+    "test_data": {
+      "source": "DSA",
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001"
+    },
+    "expected_result": "Invariant query returns 0 — no DSA or Dealer leads exist without a partner_id in source_attributions",
+    "postconditions": [
+      "Read-only check"
+    ],
+    "di_meta": {
+      "setup_sql": "-- Trigger TC-FR091-01 to create partner-submitted lead",
+      "action": "POST /api/v1/partners/leads (via TC-FR091-01); then run invariant query",
+      "invariant_query": "SELECT COUNT(*) FROM leads l JOIN source_attributions sa ON sa.lead_id = l.id WHERE sa.source IN ('DSA','Dealer') AND sa.partner_id IS NULL",
+      "cleanup": "-- None (read-only invariant)"
+    }
+  },
+  {
+    "test_id": "TC-FR092-01",
+    "test_name": "BM retrieves quality score for own-branch partner",
+    "category": "Happy Path",
+    "linked_fr": "FR-092",
+    "priority": "Critical",
+    "preconditions": [
+      "Partner 'PP-001' exists in branch 'BR-001' with 15 submitted leads in varied stages",
+      "BM-001 is in branch 'BR-001'",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 (role=BM, branch_id='BR-001') and obtain JWT",
+      "GET /api/v1/partners/PP-001/quality with BM JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data.quality_score is an integer between 0 and 100",
+      "Assert body.data.insufficient_data = false",
+      "Assert body.data.metrics.total_leads = 15",
+      "Assert body.data.factors is a non-empty array"
+    ],
+    "test_data": {
+      "partner_id": "PP-001",
+      "partner_branch_id": "BR-001",
+      "actor_role": "BM",
+      "actor_id": "BM-001",
+      "actor_branch_id": "BR-001",
+      "lead_count": 15,
+      "date_filter": null
+    },
+    "expected_result": "HTTP 200; body.data.quality_score integer 0-100; body.data.insufficient_data=false; body.data.metrics.total_leads=15; body.data.factors array present",
+    "postconditions": [
+      "No data mutations — read-only endpoint"
+    ]
+  },
+  {
+    "test_id": "TC-FR092-02",
+    "test_name": "PARTNER retrieves own quality score",
+    "category": "Happy Path",
+    "linked_fr": "FR-092",
+    "priority": "High",
+    "preconditions": [
+      "Partner 'PP-001' has sufficient leads for a score",
+      "PARTNER-001 authenticated with valid PARTNER JWT (partner_id='PP-001')"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-001 (role=PARTNER, partner_id='PP-001') and obtain JWT",
+      "GET /api/v1/partners/PP-001/quality with PARTNER JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data.quality_score is an integer between 0 and 100"
+    ],
+    "test_data": {
+      "partner_id": "PP-001",
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001"
+    },
+    "expected_result": "HTTP 200; body.data.quality_score integer 0-100",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR092-03",
+    "test_name": "Insufficient data — fewer than MIN_VOLUME leads returns null score",
+    "category": "Boundary",
+    "linked_fr": "FR-092",
+    "priority": "High",
+    "preconditions": [
+      "Partner 'PP-003' has exactly 2 leads submitted (below MIN_VOLUME threshold)",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "GET /api/v1/partners/PP-003/quality with BM JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data.insufficient_data = true",
+      "Assert body.data.quality_score = null",
+      "Assert all items in body.data.factors have value=null"
+    ],
+    "test_data": {
+      "partner_id": "PP-003",
+      "lead_count": 2,
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 200; body.data.insufficient_data=true; body.data.quality_score=null; all factors[*].value=null",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR092-04",
+    "test_name": "Zero denominator — document_quality_index returns null not 0%",
+    "category": "Boundary",
+    "linked_fr": "FR-092",
+    "priority": "High",
+    "preconditions": [
+      "Partner 'PP-004' has leads with sufficient volume but none have any documents uploaded",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "GET /api/v1/partners/PP-004/quality with BM JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data.metrics.document_quality_index = null (not 0 or 0.0)",
+      "Assert body.data.quality_score is computed from non-null factors only (not zeroed out by null doc factor)"
+    ],
+    "test_data": {
+      "partner_id": "PP-004",
+      "lead_count": 10,
+      "documents_uploaded": 0,
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 200; body.data.metrics.document_quality_index=null (strict null, not 0); quality_score computed from non-null factors",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR092-05",
+    "test_name": "PARTNER accessing another partner's score — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-092",
+    "priority": "Critical",
+    "preconditions": [
+      "Partner 'PP-001' and 'PP-002' both exist",
+      "PARTNER-001 authenticated with PARTNER JWT for PP-001 only"
+    ],
+    "test_steps": [
+      "Authenticate as PARTNER-001 (role=PARTNER, partner_id='PP-001') and obtain JWT",
+      "GET /api/v1/partners/PP-002/quality with PARTNER JWT",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001",
+      "target_partner_id": "PP-002"
+    },
+    "expected_result": "HTTP 403; body.error.code='FORBIDDEN'; no quality data from PP-002 returned",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR092-06",
+    "test_name": "RM role cannot access quality endpoint — 403 FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-092",
+    "priority": "High",
+    "preconditions": [
+      "RM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as RM-001 (role=RM) and obtain JWT",
+      "GET /api/v1/partners/PP-001/quality with RM JWT",
+      "Assert HTTP response status is 403",
+      "Assert body.error.code = 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "actor_role": "RM",
+      "actor_id": "RM-001",
+      "target_partner_id": "PP-001"
+    },
+    "expected_result": "HTTP 403; body.error.code='FORBIDDEN'",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR092-07",
+    "test_name": "Formula correctness — deterministic numeric verification against known distribution",
+    "category": "Boundary",
+    "linked_fr": "FR-092",
+    "priority": "Critical",
+    "preconditions": [
+      "Partner 'PP-005' exists with known deterministic lead distribution: 15 total leads, 10 contactable (contacted or later stage), 1 duplicate (duplicate_status='flagged' or 'linked'), 2 rejected, 10 kyc_pass (kyc_status IN ('success','waived')), 8 handed_off",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "GET /api/v1/partners/PP-005/quality with BM JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data.quality_score = 64 (raw=63.5 rounded per §12.4 formula)",
+      "Assert body.data.factors is an array where individual factor values match the known lead distribution",
+      "Manually verify each factor against formula: contactability_rate=10/15, duplicate_rate=1/15, rejection_rate=2/15, kyc_pass_rate=10/15, conversion_rate=8/15"
+    ],
+    "test_data": {
+      "partner_id": "PP-005",
+      "total_leads": 15,
+      "contactable_leads": 10,
+      "duplicate_leads": 1,
+      "rejected_leads": 2,
+      "kyc_pass_leads": 10,
+      "handed_off_leads": 8,
+      "expected_quality_score": 64,
+      "expected_raw_score": 63.5,
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 200; body.data.quality_score=64 (raw 63.5 rounded per §12.4); body.data.factors verifiable against formula inputs",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR092-08",
+    "test_name": "Date range filter — only leads within from/to window counted",
+    "category": "Boundary",
+    "linked_fr": "FR-092",
+    "priority": "High",
+    "preconditions": [
+      "Partner 'PP-001' has 10 leads submitted Jan-Mar 2026 and 5 leads submitted Apr-Jun 2026",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as BM-001 and obtain JWT",
+      "GET /api/v1/partners/PP-001/quality?from=2026-01-01&to=2026-03-31 with BM JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data.metrics.total_leads = 10 (only Jan-Mar window counted)",
+      "Assert body.data.metrics does not include Apr-Jun leads"
+    ],
+    "test_data": {
+      "partner_id": "PP-001",
+      "date_from": "2026-01-01",
+      "date_to": "2026-03-31",
+      "jan_mar_leads": 10,
+      "apr_jun_leads": 5,
+      "expected_total_leads": 10,
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "HTTP 200; body.data.metrics.total_leads=10; only Jan-Mar 2026 leads counted",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR092-09",
+    "test_name": "HEAD role — cross-branch quality access permitted",
+    "category": "Permission",
+    "linked_fr": "FR-092",
+    "priority": "High",
+    "preconditions": [
+      "Partner 'PP-001' exists in branch 'BR-001'",
+      "HEAD-001 belongs to a different branch or has cross-branch scope (scope=A)",
+      "HEAD-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Authenticate as HEAD-001 (role=HEAD, scope=A) and obtain JWT",
+      "GET /api/v1/partners/PP-001/quality with HEAD JWT",
+      "Assert HTTP response status is 200",
+      "Assert body.data.quality_score is an integer or null (not 403)"
+    ],
+    "test_data": {
+      "partner_id": "PP-001",
+      "partner_branch_id": "BR-001",
+      "actor_role": "HEAD",
+      "actor_id": "HEAD-001",
+      "actor_scope": "A"
+    },
+    "expected_result": "HTTP 200; quality data returned; HEAD cross-branch access (scope A) permitted",
+    "postconditions": [
+      "No data mutations"
+    ]
+  },
+  {
+    "test_id": "TC-FR092-UI-01",
+    "test_name": "PARTNER sees own quality dashboard with score gauge and factor breakdown",
+    "category": "UI/E2E",
+    "linked_fr": "FR-092",
+    "priority": "High",
+    "preconditions": [
+      "Partner 'PP-001' has sufficient leads for a score (quality_score=64)",
+      "PARTNER-001 authenticated session available"
+    ],
+    "test_steps": [
+      "Log in as PARTNER-001 (role=PARTNER)",
+      "Navigate to /partner-portal/quality on viewport 1280x800",
+      "Wait for page to load (network idle)",
+      "Assert getByTestId('quality-score-gauge') is visible",
+      "Assert gauge displays integer score 64",
+      "Assert getByTestId('quality-factors-list') is visible with factor rows",
+      "Assert factor rows display percentages",
+      "Assert getByTestId('insufficient-data-banner') is NOT visible (sufficient data)",
+      "Assert no coaching/recommendation banner is shown for PARTNER role (BM-only feature)",
+      "Resize viewport to 375x667 (mobile)",
+      "Assert getByTestId('quality-score-gauge') and getByTestId('quality-factors-list') are visible on mobile",
+      "Run accessibility check: gauge has aria-label='Quality Score: 64 out of 100'",
+      "Run accessibility check: factor list has role=list"
+    ],
+    "test_data": {
+      "partner_id": "PP-001",
+      "expected_quality_score": 64,
+      "actor_role": "PARTNER",
+      "actor_partner_id": "PP-001"
+    },
+    "expected_result": "Quality gauge visible showing score 64; factor rows with percentages visible; no insufficient-data banner; no coaching banner for PARTNER; accessible at both viewports; gauge aria-label present; factor list has role=list",
+    "postconditions": [
+      "No data mutations"
+    ],
+    "ui_meta": {
+      "route": "/partner-portal/quality",
+      "locators": {
+        "quality_score_gauge": "getByTestId('quality-score-gauge')",
+        "quality_factors_list": "getByTestId('quality-factors-list')",
+        "insufficient_data_banner": "getByTestId('insufficient-data-banner')"
+      },
+      "viewport": [
+        "1280x800",
+        "375x667"
+      ],
+      "auth_state": "PARTNER JWT (PP-001)",
+      "network_wait": "await GET /api/v1/partners/PP-001/quality response",
+      "visual_assert": [
+        "Gauge shows integer score 64",
+        "Factor rows display percentage values",
+        "No insufficient-data banner visible",
+        "No coaching/recommendation banner for PARTNER role"
+      ],
+      "a11y": [
+        "Gauge has aria-label='Quality Score: 64 out of 100'",
+        "Factor list has role=list"
+      ]
+    }
+  },
+  {
+    "test_id": "TC-FR092-DI-01",
+    "test_name": "FR-092 is read-only — no stage_history or audit_logs rows written",
+    "category": "Data Integrity",
+    "linked_fr": "FR-092",
+    "priority": "Critical",
+    "preconditions": [
+      "Database accessible with test credentials",
+      "Partner 'PP-001' has quality data available",
+      "BM-001 authenticated with valid JWT"
+    ],
+    "test_steps": [
+      "Query MAX(id) from stage_history — capture as max_stage_history_id",
+      "Query MAX(id) from audit_logs — capture as max_audit_logs_id",
+      "Authenticate as BM-001 and obtain JWT",
+      "GET /api/v1/partners/PP-001/quality with BM JWT",
+      "Assert HTTP response status is 200",
+      "Run invariant query: SELECT COUNT(*) FROM stage_history WHERE id > <max_stage_history_id> — expect 0",
+      "Run invariant query: SELECT COUNT(*) FROM audit_logs WHERE id > <max_audit_logs_id> — expect 0"
+    ],
+    "test_data": {
+      "partner_id": "PP-001",
+      "actor_role": "BM",
+      "actor_id": "BM-001"
+    },
+    "expected_result": "GET /quality does not insert any rows into stage_history or audit_logs; both invariant queries return 0",
+    "postconditions": [
+      "No data mutations confirmed"
+    ],
+    "di_meta": {
+      "setup_sql": "SELECT MAX(id) AS max_stage_history_id FROM stage_history; SELECT MAX(id) AS max_audit_logs_id FROM audit_logs;",
+      "action": "GET /api/v1/partners/PP-001/quality (read-only call)",
+      "invariant_query": "SELECT COUNT(*) FROM stage_history WHERE id > :max_stage_history_id; SELECT COUNT(*) FROM audit_logs WHERE id > :max_audit_logs_id;",
+      "cleanup": "-- None (read-only invariant)"
+    }
+  }
+]

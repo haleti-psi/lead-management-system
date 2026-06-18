@@ -1,0 +1,1201 @@
+[
+  {
+    "test_id": "TC-FR040-01",
+    "test_name": "Create product config draft — full valid SBL payload",
+    "category": "Happy Path",
+    "linked_fr": "FR-040",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN JWT minted for user-A (user_id: 'user-admin-a')",
+      "No existing product_configs row for product_code='SBL' in the org",
+      "Testcontainers-Postgres with Flyway migrations applied"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/products with ADMIN JWT",
+      "Body: { product_code: 'SBL', name: 'Secured Business Loan v1', field_schema: { groups: [{ id: 'g1', label: 'Business Info', fields: [{ id: 'constitution', label: 'Constitution', type: 'select', mandatory: true, options: ['pvt_ltd','partnership','proprietorship'] }, { id: 'turnover', label: 'Annual Turnover', type: 'number', mandatory: true }, { id: 'gstin', label: 'GSTIN', type: 'text', mandatory: false }] }] }, document_checklist: { items: [{ doc_type: 'gst', label: 'GST Certificate', mandatory: true }, { doc_type: 'itr', label: 'ITR 3 years', mandatory: true }] }, sla_config: { first_contact_hours: 4, kyc_days: 3 }, eligibility_mapping: { fields: [{ lms_field: 'turnover', los_field: 'annualTurnover' }, { lms_field: 'constitution', los_field: 'entityType' }] }, pan_required_at: 'at_capture' }",
+      "Assert HTTP 201 response",
+      "Assert response envelope: data.status = 'draft', data.config_version_status = 'pending', data.version = 1",
+      "Query DB: SELECT status, version, org_id, created_by FROM product_configs WHERE product_code='SBL'",
+      "Query DB: SELECT status, maker_id, config_type FROM configuration_versions WHERE config_ref = data.product_config_id",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE event_code='CONFIG_CHANGED'"
+    ],
+    "test_data": {
+      "product_code": "SBL",
+      "name": "Secured Business Loan v1",
+      "pan_required_at": "at_capture",
+      "field_schema_groups_count": 1,
+      "field_schema_fields": ["constitution", "turnover", "gstin"],
+      "eligibility_mapping_fields": [
+        { "lms_field": "turnover", "los_field": "annualTurnover" },
+        { "lms_field": "constitution", "los_field": "entityType" }
+      ],
+      "document_checklist_doc_types": ["gst", "itr"],
+      "admin_user_id": "user-admin-a"
+    },
+    "expected_result": "HTTP 201. data.status='draft', data.config_version_status='pending', data.version=1. DB: product_configs row exists with status='draft', version=1. DB: configuration_versions row exists with status='pending', maker_id='user-admin-a', config_type='product_config'. DB: event_outbox has CONFIG_CHANGED row. Response envelope shape: { data: {...}, meta: {...}, error: null }.",
+    "postconditions": [
+      "product_configs row with status='draft' exists",
+      "configuration_versions row with status='pending' exists",
+      "No active product config for SBL exists yet"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-02",
+    "test_name": "Full maker-checker approval cycle — draft activates, previous version retires",
+    "category": "Workflow",
+    "linked_fr": "FR-040",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: active product_configs row for product_code='CV', version=2, product_config_id='pc-cv-v2'",
+      "ADMIN user-A (maker) and ADMIN user-B (checker) both seeded",
+      "Testcontainers-Postgres with Flyway migrations applied"
+    ],
+    "test_steps": [
+      "As user-A: POST /api/v1/admin/products with body { product_code: 'CV', name: 'CV Config v3', field_schema: { groups: [{ id: 'g1', label: 'Asset', fields: [{ id: 'vehicle_type', label: 'Vehicle Type', type: 'select', mandatory: true, options: ['LCV','HCV','MCV'] }] }] }, document_checklist: { items: [{ doc_type: 'permit', label: 'Route Permit', mandatory: true }] }, pan_required_at: 'before_kyc' }",
+      "Capture configuration_version_id from response",
+      "As user-B: POST /api/v1/admin/config/{configuration_version_id}/approve with body { action: 'approved', remarks: 'Schema validated OK' }",
+      "Assert HTTP 200 response",
+      "Assert data.status='active', data.product_config_status='active'",
+      "Query DB: SELECT status FROM product_configs WHERE product_config_id = new_pc_id",
+      "Query DB: SELECT status FROM product_configs WHERE product_config_id = 'pc-cv-v2'",
+      "Query DB: SELECT status, checker_id, effective_at FROM configuration_versions WHERE configuration_version_id = cv_id",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE event_code='CONFIG_CHANGED' AND payload->>'status'='active'"
+    ],
+    "test_data": {
+      "maker_user_id": "user-admin-a",
+      "checker_user_id": "user-admin-b",
+      "product_code": "CV",
+      "existing_active_version": 2,
+      "existing_product_config_id": "pc-cv-v2",
+      "approve_action": "approved",
+      "approve_remarks": "Schema validated OK"
+    },
+    "expected_result": "HTTP 200 on approve. data.status='active', data.product_config_status='active'. DB: new product_configs row has status='active'. DB: old product_configs row 'pc-cv-v2' now has status='retired'. DB: configuration_versions row has status='active', checker_id='user-admin-b', effective_at NOT NULL. DB: event_outbox has CONFIG_CHANGED with status='active'.",
+    "postconditions": [
+      "Only one active product_configs row exists for CV",
+      "Previous version 'pc-cv-v2' has status='retired' but still exists (FK integrity for in-flight leads)"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-03",
+    "test_name": "Self-approval blocked — maker cannot approve own pending CV",
+    "category": "Permission",
+    "linked_fr": "FR-040",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN user-A seeded",
+      "Seed: pending configuration_versions row created by user-A, status='pending', maker_id='user-admin-a'"
+    ],
+    "test_steps": [
+      "As user-A: POST /api/v1/admin/config/{cv_id}/approve with body { action: 'approved', remarks: 'Self approve' }",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'",
+      "Query DB: SELECT status FROM configuration_versions WHERE configuration_version_id = cv_id"
+    ],
+    "test_data": {
+      "user_id": "user-admin-a",
+      "configuration_version_id": "cv-pending-001",
+      "maker_id": "user-admin-a",
+      "action": "approved",
+      "remarks": "Self approve"
+    },
+    "expected_result": "HTTP 403. error.code='FORBIDDEN'. DB: configuration_versions.status remains 'pending'. No product_configs row modified.",
+    "postconditions": [
+      "configuration_versions row unchanged, status still 'pending'"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-04",
+    "test_name": "Eligibility-mapping change blocked for BM checker (requires scope A)",
+    "category": "Permission",
+    "linked_fr": "FR-040",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN user-A creates a draft config that modifies eligibility_mapping",
+      "BM user-B (role='BM', data_scope='B') seeded",
+      "configuration_versions diff contains key 'eligibility_mapping'"
+    ],
+    "test_steps": [
+      "As user-A (ADMIN): POST /api/v1/admin/products with eligibility_mapping change",
+      "Capture configuration_version_id",
+      "As user-B (BM): POST /api/v1/admin/config/{cv_id}/approve with { action: 'approved', remarks: 'OK' }",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'",
+      "Query DB: SELECT status FROM configuration_versions WHERE configuration_version_id = cv_id"
+    ],
+    "test_data": {
+      "maker_user_id": "user-admin-a",
+      "checker_user_id": "user-bm-b",
+      "checker_role": "BM",
+      "checker_scope": "B",
+      "cv_diff_includes_eligibility_mapping": true
+    },
+    "expected_result": "HTTP 403. error.code='FORBIDDEN'. configuration_versions.status remains 'pending'. No product_configs activated.",
+    "postconditions": [
+      "configuration_versions.status unchanged ('pending')"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-05",
+    "test_name": "Edit active config creates new draft — original row immutable",
+    "category": "Workflow",
+    "linked_fr": "FR-040",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: active product_configs row for product_code='HRM', version=3, product_config_id='pc-hrm-v3', name='HRM Config v3'",
+      "ADMIN user-A seeded"
+    ],
+    "test_steps": [
+      "As user-A: PATCH /api/v1/admin/products/pc-hrm-v3 with body { name: 'HRM Config v3 Revised' }",
+      "Assert HTTP 200",
+      "Assert data.version=4, data.status='draft', data.based_on_version=3",
+      "Query DB: SELECT version, status, name FROM product_configs WHERE product_config_id = 'pc-hrm-v3'",
+      "Query DB: SELECT product_config_id, version, status, name FROM product_configs WHERE product_code='HRM' AND version=4",
+      "Query DB: SELECT status, maker_id FROM configuration_versions WHERE config_ref = new_pc_id"
+    ],
+    "test_data": {
+      "existing_product_config_id": "pc-hrm-v3",
+      "existing_version": 3,
+      "existing_status": "active",
+      "patch_body": { "name": "HRM Config v3 Revised" },
+      "admin_user_id": "user-admin-a"
+    },
+    "expected_result": "HTTP 200. data.version=4, data.status='draft'. DB: original row 'pc-hrm-v3' still has version=3, status='active', name='HRM Config v3' (unchanged). DB: new row exists with version=4, status='draft', name='HRM Config v3 Revised'. DB: configuration_versions row with status='pending' points to new row.",
+    "postconditions": [
+      "Original active config row is unchanged",
+      "New draft row exists at version 4"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-06",
+    "test_name": "Edit draft config returns CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-040",
+    "priority": "High",
+    "preconditions": [
+      "Seed: draft product_configs row for product_code='TW', version=1, product_config_id='pc-tw-draft'",
+      "ADMIN user-A seeded"
+    ],
+    "test_steps": [
+      "As user-A: PATCH /api/v1/admin/products/pc-tw-draft with body { name: 'Any Name' }",
+      "Assert HTTP 409",
+      "Assert error.code = 'CONFLICT'",
+      "Query DB: SELECT COUNT(*) FROM product_configs WHERE product_code='TW' AND version > 1"
+    ],
+    "test_data": {
+      "product_config_id": "pc-tw-draft",
+      "product_code": "TW",
+      "existing_status": "draft",
+      "patch_body": { "name": "Any Name" }
+    },
+    "expected_result": "HTTP 409. error.code='CONFLICT'. No new product_configs rows created. Draft row unchanged.",
+    "postconditions": [
+      "product_configs row count for TW unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-07",
+    "test_name": "Invalid product_code returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-040",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN user-A JWT"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/products with body { product_code: 'TRUCK', name: 'Test', field_schema: { groups: [] }, document_checklist: { items: [] }, pan_required_at: 'before_kyc' }",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.fields contains an entry with field='product_code'"
+    ],
+    "test_data": {
+      "product_code": "TRUCK",
+      "name": "Test Config"
+    },
+    "expected_result": "HTTP 400. error.code='VALIDATION_ERROR'. error.fields[0].field='product_code'. No DB rows inserted. Response must NOT expose stack trace.",
+    "postconditions": [
+      "No product_configs row created"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-08",
+    "test_name": "Eligibility_mapping references undeclared lms_field — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-040",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN user-A JWT"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/products with body { product_code: 'CE', name: 'CE Config', field_schema: { groups: [{ id: 'g1', label: 'Equipment', fields: [{ id: 'equipment_type', label: 'Equipment Type', type: 'text', mandatory: true }] }] }, document_checklist: { items: [] }, eligibility_mapping: { fields: [{ lms_field: 'invoice_value', los_field: 'assetValue' }] }, pan_required_at: 'before_kyc' }",
+      "Assert HTTP 400",
+      "Assert error.code = 'VALIDATION_ERROR'",
+      "Assert error.fields contains an entry referencing 'eligibility_mapping' and the undeclared field 'invoice_value'"
+    ],
+    "test_data": {
+      "product_code": "CE",
+      "declared_lms_fields": ["equipment_type"],
+      "bad_eligibility_mapping_lms_field": "invoice_value"
+    },
+    "expected_result": "HTTP 400. error.code='VALIDATION_ERROR'. error.fields[0].field references 'eligibility_mapping.fields[0].lms_field'. No DB writes occur.",
+    "postconditions": [
+      "No product_configs row created"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-09",
+    "test_name": "Version pinning — in-flight lead keeps pinned config after activation of new version",
+    "category": "Data Integrity",
+    "linked_fr": "FR-040",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: active product_configs row, product_code='CAR', version=2, product_config_id='pc-car-v2'",
+      "Seed: leads row with product_config_id='pc-car-v2' (in-flight lead)",
+      "ADMIN user-A (maker) and ADMIN user-B (checker) seeded"
+    ],
+    "test_steps": [
+      "As user-A: POST /api/v1/admin/products to create new draft for 'CAR' (version=3). Capture new product_config_id 'pc-car-v3' and cv_id",
+      "As user-B: POST /api/v1/admin/config/{cv_id}/approve with { action: 'approved', remarks: 'OK' }",
+      "Assert HTTP 200 on approve",
+      "Query DB: SELECT product_config_id FROM leads WHERE product_config_id = 'pc-car-v2'",
+      "Query DB: SELECT status FROM product_configs WHERE product_config_id = 'pc-car-v2'",
+      "Query DB: SELECT status FROM product_configs WHERE product_config_id = 'pc-car-v3'"
+    ],
+    "test_data": {
+      "existing_product_config_id": "pc-car-v2",
+      "in_flight_lead_id": "lead-001",
+      "maker_user_id": "user-admin-a",
+      "checker_user_id": "user-admin-b"
+    },
+    "expected_result": "DB: leads row still has product_config_id='pc-car-v2' (unchanged). DB: product_configs 'pc-car-v2' has status='retired' but still exists. DB: product_configs 'pc-car-v3' has status='active'. No UPDATE leads statement was executed.",
+    "postconditions": [
+      "In-flight lead FK 'pc-car-v2' still valid (row exists, just retired)",
+      "No orphaned lead FK"
+    ],
+    "di_meta": {
+      "setup_sql": "INSERT INTO product_configs (product_config_id, org_id, product_code, name, version, status, field_schema, document_checklist, pan_required_at, created_by, updated_by) VALUES ('pc-car-v2', '00000000-0000-0000-0000-000000000001', 'CAR', 'Car Config v2', 2, 'active', '{\"groups\":[]}', '{\"items\":[]}', 'before_kyc', 'user-admin-a', 'user-admin-a'); INSERT INTO leads (lead_id, org_id, product_code, product_config_id, stage, created_by, updated_by) VALUES ('lead-001', '00000000-0000-0000-0000-000000000001', 'CAR', 'pc-car-v2', 'captured', 'user-admin-a', 'user-admin-a');",
+      "action": "Complete maker-checker approval cycle activating 'pc-car-v3'",
+      "invariant_query": "SELECT l.lead_id FROM leads l WHERE l.lead_id='lead-001' AND l.product_config_id != 'pc-car-v2'",
+      "cleanup": "DELETE FROM leads WHERE lead_id='lead-001'; DELETE FROM product_configs WHERE product_config_id IN ('pc-car-v2','pc-car-v3');"
+    }
+  },
+  {
+    "test_id": "TC-FR040-10",
+    "test_name": "Rejection path — remarks required, draft retired on rejection",
+    "category": "Workflow",
+    "linked_fr": "FR-040",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN user-A creates draft config for 'TRACTOR'. Capture cv_id and draft_pc_id",
+      "ADMIN user-B seeded as checker",
+      "Existing active TRACTOR config 'pc-tractor-v1' seeded"
+    ],
+    "test_steps": [
+      "As user-B: POST /api/v1/admin/config/{cv_id}/approve with { action: 'rejected' } (no remarks field)",
+      "Assert HTTP 400, error.code='VALIDATION_ERROR', error.fields[0].field='remarks'",
+      "As user-B: POST /api/v1/admin/config/{cv_id}/approve with { action: 'rejected', remarks: 'Field mapping incorrect.' }",
+      "Assert HTTP 200, data.status='rejected'",
+      "Query DB: SELECT status FROM configuration_versions WHERE configuration_version_id = cv_id",
+      "Query DB: SELECT status FROM product_configs WHERE product_config_id = draft_pc_id",
+      "Query DB: SELECT status FROM product_configs WHERE product_config_id = 'pc-tractor-v1'"
+    ],
+    "test_data": {
+      "maker_user_id": "user-admin-a",
+      "checker_user_id": "user-admin-b",
+      "product_code": "TRACTOR",
+      "reject_without_remarks": { "action": "rejected" },
+      "reject_with_remarks": { "action": "rejected", "remarks": "Field mapping incorrect." }
+    },
+    "expected_result": "Step 1: HTTP 400, VALIDATION_ERROR, error.fields[0].field='remarks'. Step 2: HTTP 200, data.status='rejected'. DB: configuration_versions row has status='rejected', checker_id set. DB: draft product_configs row has status='retired'. DB: original active 'pc-tractor-v1' still has status='active' (original not changed on rejection).",
+    "postconditions": [
+      "Pending CV is now rejected",
+      "Draft product_configs row retired",
+      "Previously active config unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-11",
+    "test_name": "Retire active config — in-flight leads unaffected",
+    "category": "Workflow",
+    "linked_fr": "FR-040",
+    "priority": "High",
+    "preconditions": [
+      "Seed: active product_configs 'pc-tw-v1' for product_code='TW', version=1",
+      "Seed: leads row with product_config_id='pc-tw-v1'",
+      "ADMIN user-A seeded"
+    ],
+    "test_steps": [
+      "As user-A: PATCH /api/v1/admin/products/pc-tw-v1 with { status: 'retired' }",
+      "Assert HTTP 200, data.status='retired'",
+      "Query DB: SELECT status FROM product_configs WHERE product_config_id='pc-tw-v1'",
+      "Query DB: SELECT product_config_id FROM leads WHERE product_config_id='pc-tw-v1'"
+    ],
+    "test_data": {
+      "product_config_id": "pc-tw-v1",
+      "status_to_set": "retired"
+    },
+    "expected_result": "HTTP 200. data.status='retired'. DB: product_configs row has status='retired'. DB: leads row still references 'pc-tw-v1' (FK valid, row exists). No UPDATE leads executed.",
+    "postconditions": [
+      "product_configs row 'pc-tw-v1' exists with status='retired'",
+      "In-flight lead FK still valid"
+    ]
+  },
+  {
+    "test_id": "TC-FR040-12",
+    "test_name": "RM cannot access /admin/products — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-040",
+    "priority": "High",
+    "preconditions": [
+      "RM user JWT minted (role='RM', no 'configuration' capability)"
+    ],
+    "test_steps": [
+      "GET /api/v1/admin/products with RM JWT",
+      "Assert HTTP 403",
+      "Assert error.code = 'FORBIDDEN'",
+      "Assert response body does NOT contain stack trace or internal paths"
+    ],
+    "test_data": {
+      "user_role": "RM",
+      "endpoint": "GET /api/v1/admin/products"
+    },
+    "expected_result": "HTTP 403. error.code='FORBIDDEN'. No product_config data returned. Response body shape: { data: null, meta: null, error: { code: 'FORBIDDEN', message: '...' } }.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR040-13",
+    "test_name": "Transaction rollback — outbox failure rolls back all DB writes atomically",
+    "category": "Data Integrity",
+    "linked_fr": "FR-040",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN user-A JWT",
+      "Test double: OutboxService.emit configured to throw after product_configs INSERT"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/products with valid SBL body (OutboxService.emit stubbed to throw)",
+      "Assert HTTP 500",
+      "Assert error.code = 'INTERNAL_ERROR'",
+      "Query DB: SELECT COUNT(*) FROM product_configs WHERE product_code='SBL' AND created_at > NOW() - INTERVAL '10 seconds'",
+      "Query DB: SELECT COUNT(*) FROM configuration_versions WHERE created_at > NOW() - INTERVAL '10 seconds'",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE event_code='CONFIG_CHANGED' AND created_at > NOW() - INTERVAL '10 seconds'"
+    ],
+    "test_data": {
+      "inject_outbox_failure": true,
+      "product_code": "SBL"
+    },
+    "expected_result": "HTTP 500. error.code='INTERNAL_ERROR'. DB: no new product_configs row persists. DB: no new configuration_versions row persists. DB: no new event_outbox row persists. Full atomicity maintained.",
+    "postconditions": [
+      "Database state identical to pre-test state"
+    ],
+    "di_meta": {
+      "setup_sql": "-- No prior state needed; clean org",
+      "action": "POST /admin/products with OutboxService.emit stubbed to throw mid-transaction",
+      "invariant_query": "SELECT COUNT(*) AS cnt FROM product_configs WHERE product_code='SBL' AND created_at > NOW() - INTERVAL '10 seconds' HAVING COUNT(*) > 0",
+      "cleanup": "-- Nothing to clean (rollback guaranteed)"
+    }
+  },
+  {
+    "test_id": "TC-FR040-UI-01",
+    "test_name": "Approve button disabled when current user is the config maker",
+    "category": "UI/E2E",
+    "linked_fr": "FR-040",
+    "priority": "High",
+    "preconditions": [
+      "User-A (ADMIN) is logged in",
+      "User-A previously created a pending configuration_versions row (maker_id = user-A's id)",
+      "Version history page loaded showing that pending CV row"
+    ],
+    "test_steps": [
+      "Navigate to /admin/products/{product_config_id}/versions",
+      "Locate the row with status='pending' and maker_id === currentUserId",
+      "Assert the 'Approve' button is disabled (aria-disabled=true or disabled attribute)",
+      "Hover/focus the approve button",
+      "Assert a tooltip appears explaining the self-approval restriction"
+    ],
+    "test_data": {
+      "route": "/admin/products/{product_config_id}/versions",
+      "auth_state": "logged_in_as_maker",
+      "pending_cv_maker_id_equals_current_user": true
+    },
+    "expected_result": "Approve button is disabled (aria-disabled='true' or disabled). Tooltip text explains: 'You submitted this change; a different user must approve.'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/products/{product_config_id}/versions",
+      "locators": {
+        "approve_button": "getByRole('button', { name: /approve/i })",
+        "tooltip": "getByRole('tooltip')"
+      },
+      "viewport": ["1440x900", "375x667"],
+      "auth_state": "admin_user_who_is_maker",
+      "network_wait": "waitForResponse('/api/v1/admin/config*')",
+      "visual_assert": "Approve button has disabled styling (opacity reduced or greyed out)",
+      "a11y": "aria-disabled='true' on approve button; tooltip associated via aria-describedby"
+    }
+  },
+  {
+    "test_id": "TC-FR040-UI-02",
+    "test_name": "Full E2E maker-checker workflow — create HRM config draft then checker activates it",
+    "category": "UI/E2E",
+    "linked_fr": "FR-040",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN user-A credentials available",
+      "ADMIN user-B credentials available (different user)",
+      "No existing HRM product_config rows for the test org"
+    ],
+    "test_steps": [
+      "Login as user-A. Navigate to /admin/products. Click 'New Configuration'.",
+      "Fill form: product_code='HRM', name='Home Renovation v1', add group 'Property Details' with 2 mandatory fields (property_type: select, renovation_purpose: text), add checklist item (doc_type=property), set pan_required_at='before_kyc'. Submit.",
+      "Assert toast: 'Configuration submitted for checker approval'. Assert redirect to product list or detail page. Assert status chip shows 'draft'.",
+      "Login as user-B. Navigate to version history for the new config (/admin/products/{id}/versions).",
+      "Click 'Approve'. Fill remarks: 'All fields verified'. Submit.",
+      "Assert status chip changes to 'active'. Assert version history row shows status='active', checker_id set."
+    ],
+    "test_data": {
+      "maker_credentials": { "email": "admin-a@test.org", "password": "Test@1234" },
+      "checker_credentials": { "email": "admin-b@test.org", "password": "Test@1234" },
+      "product_code": "HRM",
+      "config_name": "Home Renovation v1",
+      "pan_required_at": "before_kyc",
+      "field_group_label": "Property Details",
+      "checklist_doc_type": "property",
+      "approve_remarks": "All fields verified"
+    },
+    "expected_result": "End-to-end: new product_configs row has status='active' after checker approval. Version history shows 2 rows: the activated v1 and configuration_versions entry with status='active'. StatusChip on list page shows 'active'.",
+    "postconditions": [
+      "Active HRM product_configs row exists",
+      "configuration_versions row with status='active' exists"
+    ],
+    "ui_meta": {
+      "route": "/admin/products",
+      "locators": {
+        "new_config_button": "getByRole('button', { name: /new configuration/i })",
+        "product_code_select": "getByRole('combobox', { name: /product/i })",
+        "name_input": "getByTestId('config-name-input')",
+        "pan_timing_select": "getByRole('combobox', { name: /pan required/i })",
+        "submit_button": "getByRole('button', { name: /submit/i })",
+        "approve_button": "getByRole('button', { name: /approve/i })",
+        "remarks_input": "getByTestId('approve-remarks-input')",
+        "status_chip": "getByTestId('status-chip')",
+        "success_toast": "getByRole('status')"
+      },
+      "viewport": ["1440x900", "375x667"],
+      "auth_state": "admin_user_a then admin_user_b",
+      "network_wait": "waitForResponse('/api/v1/admin/config/*/approve')",
+      "visual_assert": "StatusChip text is 'active' with green styling",
+      "a11y": "All form inputs reachable via Tab; status chip has role='status' or descriptive aria-label"
+    }
+  },
+  {
+    "test_id": "TC-FR040-DI-01",
+    "test_name": "Only one active product_config per product_code per org at any time",
+    "category": "Data Integrity",
+    "linked_fr": "FR-040",
+    "priority": "Critical",
+    "preconditions": [
+      "Multiple activation cycles run for product_code='CV' (v1, v2, v3 each activated in sequence)"
+    ],
+    "test_steps": [
+      "Complete 3 sequential maker-checker approval cycles for product_code='CV'",
+      "After each activation, run invariant SQL query",
+      "Assert query returns 0 rows each time"
+    ],
+    "test_data": {
+      "product_code": "CV",
+      "activation_cycles": 3
+    },
+    "expected_result": "Invariant query returns 0 rows after each activation, confirming no more than one active config per (org_id, product_code).",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Run 3 sequential activation cycles for CV via maker-checker API calls",
+      "action": "3 sequential POST /admin/products + approve cycles",
+      "invariant_query": "SELECT org_id, product_code, COUNT(*) AS active_count FROM product_configs WHERE status='active' GROUP BY org_id, product_code HAVING COUNT(*) > 1",
+      "cleanup": "DELETE FROM product_configs WHERE product_code='CV' AND org_id='00000000-0000-0000-0000-000000000001'; DELETE FROM configuration_versions WHERE config_type='product_config';"
+    }
+  },
+  {
+    "test_id": "TC-FR040-DI-02",
+    "test_name": "No self-approved configuration_versions — checker_id must differ from maker_id",
+    "category": "Data Integrity",
+    "linked_fr": "FR-040",
+    "priority": "Critical",
+    "preconditions": [
+      "Several maker-checker approval cycles completed",
+      "Self-approval attempts made (should have been blocked at API layer)"
+    ],
+    "test_steps": [
+      "After any approval workflow run, execute invariant SQL query",
+      "Assert 0 rows returned"
+    ],
+    "test_data": {
+      "expected_self_approvals": 0
+    },
+    "expected_result": "Invariant query returns 0 rows — no configuration_versions row has checker_id = maker_id.",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- State built by prior approval-cycle tests",
+      "action": "Read-only invariant check after all approval cycle tests",
+      "invariant_query": "SELECT configuration_version_id FROM configuration_versions WHERE checker_id IS NOT NULL AND checker_id = maker_id",
+      "cleanup": "-- No cleanup needed (read-only check)"
+    }
+  },
+  {
+    "test_id": "TC-FR041-01",
+    "test_name": "All 7 seeded product configs present and active after Flyway V003 migration",
+    "category": "Happy Path",
+    "linked_fr": "FR-041",
+    "priority": "Critical",
+    "preconditions": [
+      "Testcontainers-Postgres with Flyway migrations including V003 applied",
+      "ADMIN JWT minted"
+    ],
+    "test_steps": [
+      "GET /api/v1/admin/products?limit=25 with ADMIN JWT",
+      "Assert HTTP 200",
+      "Assert data array contains exactly 7 items",
+      "Assert meta.pagination.total = 7",
+      "Assert each item has status='active' and version=1",
+      "Assert product_code values include: 'CV', 'CAR', 'TRACTOR', 'CE', 'TW', 'SBL', 'HRM'"
+    ],
+    "test_data": {
+      "expected_product_codes": ["CV", "CAR", "TRACTOR", "CE", "TW", "SBL", "HRM"],
+      "expected_status": "active",
+      "expected_version": 1,
+      "limit": 25,
+      "admin_user_id": "user-admin-seed"
+    },
+    "expected_result": "HTTP 200. data.length=7. meta.pagination.total=7. All 7 product codes present. Each has status='active', version=1. Response envelope: { data: [...], meta: { pagination: { total: 7, limit: 25 } }, error: null }.",
+    "postconditions": [
+      "Seed state confirmed — downstream FR-010 capture tests can proceed"
+    ]
+  },
+  {
+    "test_id": "TC-FR041-02",
+    "test_name": "Correct pan_required_at per product — TW=before_handoff, SBL/HRM=at_capture, others=before_kyc",
+    "category": "Happy Path",
+    "linked_fr": "FR-041",
+    "priority": "Critical",
+    "preconditions": [
+      "Flyway V003 migration applied",
+      "ADMIN JWT minted"
+    ],
+    "test_steps": [
+      "GET /api/v1/admin/products?limit=25 with ADMIN JWT",
+      "From response, extract pan_required_at for each product",
+      "Assert TW has pan_required_at='before_handoff'",
+      "Assert SBL has pan_required_at='at_capture'",
+      "Assert HRM has pan_required_at='at_capture'",
+      "Assert CV, CAR, TRACTOR, CE each have pan_required_at='before_kyc'"
+    ],
+    "test_data": {
+      "TW_expected_pan_timing": "before_handoff",
+      "SBL_expected_pan_timing": "at_capture",
+      "HRM_expected_pan_timing": "at_capture",
+      "CV_expected_pan_timing": "before_kyc",
+      "CAR_expected_pan_timing": "before_kyc",
+      "TRACTOR_expected_pan_timing": "before_kyc",
+      "CE_expected_pan_timing": "before_kyc"
+    },
+    "expected_result": "Each product's pan_required_at matches domain rule: TW=before_handoff, SBL=at_capture, HRM=at_capture, CV/CAR/TRACTOR/CE=before_kyc.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR041-03",
+    "test_name": "CV product config has correct mandatory capture fields and document checklist",
+    "category": "Happy Path",
+    "linked_fr": "FR-041",
+    "priority": "High",
+    "preconditions": [
+      "Flyway V003 applied",
+      "ADMIN JWT"
+    ],
+    "test_steps": [
+      "GET /api/v1/admin/products/{cv_product_config_id} with ADMIN JWT",
+      "Assert HTTP 200",
+      "Assert data.product_code='CV'",
+      "Assert data.field_schema.groups is non-empty array",
+      "Assert field_schema contains fields: vehicle_type, fleet_size, down_payment, dealer (check mandatory=true for at least vehicle_type)",
+      "Assert data.document_checklist.items includes doc_type values: 'permit', 'insurance', 'id', 'pan'",
+      "Assert data.eligibility_mapping is non-null and contains at least one mapping entry"
+    ],
+    "test_data": {
+      "product_code": "CV",
+      "expected_mandatory_fields": ["vehicle_type", "fleet_size"],
+      "expected_checklist_doc_types": ["permit", "insurance", "id", "pan"],
+      "expected_eligibility_keys": ["asset value", "LTV inputs"]
+    },
+    "expected_result": "HTTP 200. CV product config returned with non-null field_schema (includes vehicle_type mandatory), non-null document_checklist (includes permit, insurance), non-null eligibility_mapping.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR041-04",
+    "test_name": "Seed idempotency — re-running V003 migration does not create duplicate rows",
+    "category": "Boundary",
+    "linked_fr": "FR-041",
+    "priority": "High",
+    "preconditions": [
+      "Flyway V003 migration applied once",
+      "product_configs table has 7 rows"
+    ],
+    "test_steps": [
+      "Execute V003 seed INSERT statements a second time (or re-run Flyway with repeatable migration pattern)",
+      "Query DB: SELECT COUNT(*) FROM product_configs WHERE version=1 AND status='active'",
+      "Assert COUNT = 7 (no duplicates created)",
+      "Run invariant: SELECT org_id, product_code, version, COUNT(*) FROM product_configs GROUP BY org_id, product_code, version HAVING COUNT(*) > 1"
+    ],
+    "test_data": {
+      "expected_row_count_after_rerun": 7,
+      "migration_statement": "INSERT INTO product_configs ... ON CONFLICT DO NOTHING"
+    },
+    "expected_result": "Row count remains 7 after second run. No error thrown. Invariant query returns 0 rows (no duplicates).",
+    "postconditions": [
+      "product_configs table still has exactly 7 seed rows"
+    ],
+    "di_meta": {
+      "setup_sql": "-- V003 applied once: 7 rows in product_configs",
+      "action": "Re-execute V003 seed SQL block",
+      "invariant_query": "SELECT org_id, product_code, version, COUNT(*) AS cnt FROM product_configs GROUP BY org_id, product_code, version HAVING COUNT(*) > 1",
+      "cleanup": "-- No cleanup; seed state retained for other tests"
+    }
+  },
+  {
+    "test_id": "TC-FR041-05",
+    "test_name": "RM cannot access product config list — FORBIDDEN (no configuration capability)",
+    "category": "Permission",
+    "linked_fr": "FR-041",
+    "priority": "High",
+    "preconditions": [
+      "RM user JWT minted",
+      "V003 seed applied"
+    ],
+    "test_steps": [
+      "GET /api/v1/admin/products with RM JWT",
+      "Assert HTTP 403",
+      "Assert error.code='FORBIDDEN'",
+      "Assert response body does NOT include any product_config data",
+      "Assert response does NOT expose internal paths or stack traces"
+    ],
+    "test_data": {
+      "user_role": "RM",
+      "user_capability": "create_lead (not configuration)"
+    },
+    "expected_result": "HTTP 403. error.code='FORBIDDEN'. data=null. No product config details leaked.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR041-06",
+    "test_name": "limit > 100 returns VALIDATION_ERROR",
+    "category": "Boundary",
+    "linked_fr": "FR-041",
+    "priority": "Medium",
+    "preconditions": [
+      "ADMIN JWT minted"
+    ],
+    "test_steps": [
+      "GET /api/v1/admin/products?limit=200 with ADMIN JWT",
+      "Assert HTTP 400",
+      "Assert error.code='VALIDATION_ERROR'",
+      "Assert error.fields contains entry for 'limit'"
+    ],
+    "test_data": {
+      "limit": 200,
+      "max_allowed_limit": 100
+    },
+    "expected_result": "HTTP 400. error.code='VALIDATION_ERROR'. error.fields[0].field='limit'. Enforces global LIMIT ≤ 100 rule.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR041-UI-01",
+    "test_name": "Product picker in lead capture form shows all 7 seeded products",
+    "category": "UI/E2E",
+    "linked_fr": "FR-041",
+    "priority": "High",
+    "preconditions": [
+      "V003 seed applied",
+      "RM user logged in",
+      "Capture Lead form page loaded"
+    ],
+    "test_steps": [
+      "Login as RM. Navigate to /leads/new (Capture Lead form).",
+      "Click the product selector / combobox.",
+      "Assert dropdown/radio list contains exactly 7 options.",
+      "Assert options include labels for: Commercial Vehicle, Car, Tractor, Construction Equipment, Two Wheeler, Secured Business, Home Renovation."
+    ],
+    "test_data": {
+      "route": "/leads/new",
+      "expected_product_count": 7,
+      "expected_product_labels": ["Commercial Vehicle", "Car", "Tractor", "Construction Equipment", "Two Wheeler", "Secured Business", "Home Renovation"]
+    },
+    "expected_result": "Product picker shows exactly 7 options with correct labels. No 'No options' empty state. All options are selectable.",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/new",
+      "locators": {
+        "product_picker": "getByRole('combobox', { name: /product/i })",
+        "product_options": "getByRole('option')"
+      },
+      "viewport": ["1440x900", "375x667"],
+      "auth_state": "rm_user_logged_in",
+      "network_wait": "waitForResponse('/api/v1/admin/products*')",
+      "visual_assert": "7 product options visible in dropdown; no empty state component rendered",
+      "a11y": "Combobox has aria-expanded=true when open; each option has role='option' and accessible name"
+    }
+  },
+  {
+    "test_id": "TC-FR041-DI-01",
+    "test_name": "All 7 seed configs have non-null field_schema, document_checklist, eligibility_mapping",
+    "category": "Data Integrity",
+    "linked_fr": "FR-041",
+    "priority": "Critical",
+    "preconditions": [
+      "Flyway V003 applied"
+    ],
+    "test_steps": [
+      "Execute invariant SQL queries against product_configs table",
+      "Assert query for null field_schema returns 0 rows",
+      "Assert query for null document_checklist returns 0 rows",
+      "Assert query for null eligibility_mapping returns 0 rows for the 7 v1 seed rows"
+    ],
+    "test_data": {
+      "seed_version": 1,
+      "seed_status": "active"
+    },
+    "expected_result": "All 3 invariant queries return 0 rows. All 7 seeded product configs have populated JSONB fields.",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- Flyway V003 applied",
+      "action": "Read-only invariant check",
+      "invariant_query": "SELECT product_config_id FROM product_configs WHERE version=1 AND status='active' AND (field_schema IS NULL OR document_checklist IS NULL OR eligibility_mapping IS NULL)",
+      "cleanup": "-- No cleanup (read-only)"
+    }
+  },
+  {
+    "test_id": "TC-FR042-01",
+    "test_name": "ADMIN creates valid scheme — 201 with audit log",
+    "category": "Happy Path",
+    "linked_fr": "FR-042",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN JWT minted for user-admin-a",
+      "No scheme with code='DEALER-TW-Q3' exists in the org"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/schemes with ADMIN JWT",
+      "Body: { code: 'DEALER-TW-Q3', name: 'TW Dealer Q3 2026 Offer', product_code: 'TW', subvention_flag: true, valid_from: '2026-07-01', valid_to: '2026-09-30' }",
+      "Assert HTTP 201",
+      "Assert data.scheme_id is UUID",
+      "Assert data.code='DEALER-TW-Q3'",
+      "Assert data.is_active=true",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE entity_type='scheme' AND action='config_change'"
+    ],
+    "test_data": {
+      "code": "DEALER-TW-Q3",
+      "name": "TW Dealer Q3 2026 Offer",
+      "product_code": "TW",
+      "subvention_flag": true,
+      "valid_from": "2026-07-01",
+      "valid_to": "2026-09-30",
+      "created_by_role": "ADMIN"
+    },
+    "expected_result": "HTTP 201. data.scheme_id is non-null UUID. data.code='DEALER-TW-Q3'. data.is_active=true. DB: schemes row exists with correct values. DB: audit_logs row with action='config_change', entity_type='scheme'.",
+    "postconditions": [
+      "Scheme available for RM to attach to TW leads"
+    ]
+  },
+  {
+    "test_id": "TC-FR042-02",
+    "test_name": "RM attaches valid active product-matched scheme to a TW lead",
+    "category": "Happy Path",
+    "linked_fr": "FR-042",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: active scheme { code: 'DEALER-TW-Q3', product_code: 'TW', valid_from: '2026-07-01', valid_to: '2026-12-31', is_active: true }",
+      "Seed: lead_id='lead-tw-001' with product_code='TW' in stage='captured'",
+      "RM user JWT minted and lead is within RM's scope"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/lead-tw-001 with RM JWT",
+      "Body: { product_detail: { scheme_code: 'DEALER-TW-Q3' } }",
+      "Assert HTTP 200",
+      "Assert data.lead_product_detail.attributes.scheme_code='DEALER-TW-Q3'",
+      "Query DB: SELECT attributes->>'scheme_code' FROM lead_product_details WHERE lead_id='lead-tw-001'"
+    ],
+    "test_data": {
+      "lead_id": "lead-tw-001",
+      "lead_product_code": "TW",
+      "scheme_code": "DEALER-TW-Q3",
+      "scheme_product_code": "TW",
+      "scheme_valid_from": "2026-07-01",
+      "scheme_valid_to": "2026-12-31",
+      "scheme_is_active": true,
+      "rm_user_id": "user-rm-001"
+    },
+    "expected_result": "HTTP 200. data.lead_product_detail.attributes.scheme_code='DEALER-TW-Q3'. DB: lead_product_details row has attributes->>'scheme_code'='DEALER-TW-Q3'. DB: audit_logs row with action='lead_update' and lead_id set.",
+    "postconditions": [
+      "Scheme code attached to lead; will be included in LOS eligibility payload (FR-080)"
+    ]
+  },
+  {
+    "test_id": "TC-FR042-03",
+    "test_name": "Attach expired scheme returns VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-042",
+    "priority": "Critical",
+    "preconditions": [
+      "Seed: scheme { code: 'EXPIRED-TW-Q1', product_code: 'TW', valid_from: '2026-01-01', valid_to: '2026-03-31', is_active: true } (valid_to is yesterday relative to test date 2026-06-17)",
+      "Seed: TW lead 'lead-tw-002' in scope of RM user"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/lead-tw-002 with RM JWT",
+      "Body: { product_detail: { scheme_code: 'EXPIRED-TW-Q1' } }",
+      "Assert HTTP 400",
+      "Assert error.code='VALIDATION_ERROR'",
+      "Assert error.fields[0].field='scheme_code'",
+      "Assert error.fields[0].message contains 'expired' (case-insensitive)",
+      "Query DB: SELECT attributes->>'scheme_code' FROM lead_product_details WHERE lead_id='lead-tw-002'"
+    ],
+    "test_data": {
+      "scheme_code": "EXPIRED-TW-Q1",
+      "scheme_valid_to": "2026-03-31",
+      "current_date": "2026-06-17",
+      "lead_id": "lead-tw-002",
+      "lead_product_code": "TW"
+    },
+    "expected_result": "HTTP 400. error.code='VALIDATION_ERROR'. error.fields[0].field='scheme_code'. error message mentions 'expired'. DB: lead_product_details.attributes has no scheme_code (unchanged).",
+    "postconditions": [
+      "Lead remains without scheme attachment"
+    ]
+  },
+  {
+    "test_id": "TC-FR042-04",
+    "test_name": "Attach scheme for wrong product — VALIDATION_ERROR",
+    "category": "Negative/Error",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "Seed: scheme { code: 'DEALER-CAR-Q3', product_code: 'CAR', valid_to: '2026-12-31', is_active: true }",
+      "Seed: lead 'lead-cv-001' with product_code='CV'"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/lead-cv-001 with RM JWT",
+      "Body: { product_detail: { scheme_code: 'DEALER-CAR-Q3' } }",
+      "Assert HTTP 400",
+      "Assert error.code='VALIDATION_ERROR'",
+      "Assert error.fields[0].field='scheme_code'",
+      "Assert error message contains 'not available for this product' (case-insensitive)"
+    ],
+    "test_data": {
+      "scheme_code": "DEALER-CAR-Q3",
+      "scheme_product_code": "CAR",
+      "lead_id": "lead-cv-001",
+      "lead_product_code": "CV"
+    },
+    "expected_result": "HTTP 400. error.code='VALIDATION_ERROR'. error.fields[0].field='scheme_code'. Product mismatch error message returned.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR042-05",
+    "test_name": "Duplicate scheme code returns CONFLICT",
+    "category": "Negative/Error",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN JWT",
+      "Scheme with code='DUPE-SCHEME-01' already created in the org"
+    ],
+    "test_steps": [
+      "First POST /api/v1/admin/schemes with { code: 'DUPE-SCHEME-01', name: 'First', product_code: 'CV', valid_from: '2026-07-01', valid_to: '2026-12-31' } — assert 201",
+      "Second POST /api/v1/admin/schemes with same code 'DUPE-SCHEME-01'",
+      "Assert HTTP 409",
+      "Assert error.code='CONFLICT'",
+      "Query DB: SELECT COUNT(*) FROM schemes WHERE code='DUPE-SCHEME-01'"
+    ],
+    "test_data": {
+      "code": "DUPE-SCHEME-01",
+      "name_first": "First",
+      "name_second": "Duplicate Attempt",
+      "product_code": "CV",
+      "valid_from": "2026-07-01",
+      "valid_to": "2026-12-31"
+    },
+    "expected_result": "First call: HTTP 201. Second call: HTTP 409. error.code='CONFLICT'. DB: exactly 1 schemes row with code='DUPE-SCHEME-01'.",
+    "postconditions": [
+      "Only 1 scheme row with that code in DB"
+    ],
+    "di_meta": {
+      "setup_sql": "-- First POST creates the scheme row",
+      "action": "Second POST /admin/schemes with same (org_id, code)",
+      "invariant_query": "SELECT COUNT(*) AS cnt FROM schemes WHERE code='DUPE-SCHEME-01' HAVING COUNT(*) > 1",
+      "cleanup": "DELETE FROM schemes WHERE code='DUPE-SCHEME-01';"
+    }
+  },
+  {
+    "test_id": "TC-FR042-06",
+    "test_name": "Create scheme with valid_to before valid_from — VALIDATION_ERROR",
+    "category": "Boundary",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN JWT"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/schemes with body { code: 'BAD-DATE-001', name: 'Bad Dates', product_code: 'SBL', valid_from: '2026-10-01', valid_to: '2026-09-01' }",
+      "Assert HTTP 400",
+      "Assert error.code='VALIDATION_ERROR'",
+      "Assert error.fields contains entry with field='valid_to'"
+    ],
+    "test_data": {
+      "code": "BAD-DATE-001",
+      "valid_from": "2026-10-01",
+      "valid_to": "2026-09-01"
+    },
+    "expected_result": "HTTP 400. error.code='VALIDATION_ERROR'. error.fields[0].field='valid_to'. No schemes row inserted.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR042-07",
+    "test_name": "Scheme with valid_from = valid_to (one-day scheme) — attach succeeds on that day",
+    "category": "Boundary",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "Seed: scheme { code: 'ONE-DAY-SCHEME', product_code: 'HRM', valid_from: '2026-06-17', valid_to: '2026-06-17', is_active: true } (today is 2026-06-17)",
+      "Seed: lead 'lead-hrm-001' with product_code='HRM'"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/lead-hrm-001 with RM JWT, body { product_detail: { scheme_code: 'ONE-DAY-SCHEME' } }",
+      "Assert HTTP 200",
+      "Assert data.lead_product_detail.attributes.scheme_code='ONE-DAY-SCHEME'",
+      "Confirm: boundary condition valid_to = today is treated as NOT expired"
+    ],
+    "test_data": {
+      "scheme_code": "ONE-DAY-SCHEME",
+      "valid_from": "2026-06-17",
+      "valid_to": "2026-06-17",
+      "today": "2026-06-17",
+      "lead_id": "lead-hrm-001",
+      "lead_product_code": "HRM"
+    },
+    "expected_result": "HTTP 200. Scheme successfully attached. valid_to = today is not expired (boundary: inclusive end date).",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR042-08",
+    "test_name": "RM cannot create scheme — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "RM JWT minted (role='RM', lacks 'configuration' capability)"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/schemes with RM JWT",
+      "Body: { code: 'RM-CREATED', name: 'RM Scheme', product_code: 'TW', valid_from: '2026-07-01', valid_to: '2026-12-31' }",
+      "Assert HTTP 403",
+      "Assert error.code='FORBIDDEN'"
+    ],
+    "test_data": {
+      "user_role": "RM",
+      "scheme_code": "RM-CREATED"
+    },
+    "expected_result": "HTTP 403. error.code='FORBIDDEN'. No schemes row created.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR042-09",
+    "test_name": "Null product_code scheme attaches to any lead product",
+    "category": "Boundary",
+    "linked_fr": "FR-042",
+    "priority": "Medium",
+    "preconditions": [
+      "Seed: scheme { code: 'GLOBAL-SCHEME-01', product_code: null, valid_from: '2026-01-01', valid_to: '2099-12-31', is_active: true }",
+      "Seed: CV lead 'lead-cv-002' in RM scope"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/lead-cv-002 with RM JWT, body { product_detail: { scheme_code: 'GLOBAL-SCHEME-01' } }",
+      "Assert HTTP 200",
+      "Assert data.lead_product_detail.attributes.scheme_code='GLOBAL-SCHEME-01'"
+    ],
+    "test_data": {
+      "scheme_code": "GLOBAL-SCHEME-01",
+      "scheme_product_code": null,
+      "lead_id": "lead-cv-002",
+      "lead_product_code": "CV"
+    },
+    "expected_result": "HTTP 200. Scheme with null product_code successfully attaches to a CV lead (null = all-product scheme). Product match check passes.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR042-10",
+    "test_name": "Scheme attach preserves existing lead_product_detail attributes",
+    "category": "Data Integrity",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "Seed: lead 'lead-car-001' with product_code='CAR'",
+      "Seed: lead_product_details row for 'lead-car-001' with attributes = { vehicle_reg: 'MH01AB1234', down_payment: 50000 }",
+      "Seed: active scheme { code: 'DEALER-CAR-Q3', product_code: 'CAR', valid_to: '2099-12-31', is_active: true }"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/leads/lead-car-001 with RM JWT, body { product_detail: { scheme_code: 'DEALER-CAR-Q3' } }",
+      "Assert HTTP 200",
+      "Assert data.lead_product_detail.attributes.scheme_code='DEALER-CAR-Q3'",
+      "Assert data.lead_product_detail.attributes.vehicle_reg='MH01AB1234' (preserved)",
+      "Assert data.lead_product_detail.attributes.down_payment=50000 (preserved)"
+    ],
+    "test_data": {
+      "lead_id": "lead-car-001",
+      "existing_attributes": { "vehicle_reg": "MH01AB1234", "down_payment": 50000 },
+      "scheme_code": "DEALER-CAR-Q3",
+      "product_code": "CAR"
+    },
+    "expected_result": "HTTP 200. After PATCH, attributes JSONB contains both pre-existing keys (vehicle_reg, down_payment) and new key (scheme_code). No existing attribute keys dropped.",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO lead_product_details (lead_id, org_id, product_config_id, attributes, created_by, updated_by) VALUES ('lead-car-001', '00000000-0000-0000-0000-000000000001', 'pc-car-v1', '{\"vehicle_reg\":\"MH01AB1234\",\"down_payment\":50000}', 'user-rm-001', 'user-rm-001');",
+      "action": "PATCH /leads/lead-car-001 attaching scheme_code",
+      "invariant_query": "SELECT lead_id FROM lead_product_details WHERE lead_id='lead-car-001' AND (attributes->>'vehicle_reg' IS NULL OR attributes->>'down_payment' IS NULL)",
+      "cleanup": "UPDATE lead_product_details SET attributes = '{\"vehicle_reg\":\"MH01AB1234\",\"down_payment\":50000}'::jsonb WHERE lead_id='lead-car-001';"
+    }
+  },
+  {
+    "test_id": "TC-FR042-11",
+    "test_name": "Unauthenticated request to create scheme returns AUTH_REQUIRED",
+    "category": "Permission",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "No Authorization header"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/schemes with no JWT header",
+      "Assert HTTP 401",
+      "Assert error.code='AUTH_REQUIRED'"
+    ],
+    "test_data": {
+      "auth_header": null
+    },
+    "expected_result": "HTTP 401. error.code='AUTH_REQUIRED'. No scheme created.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR042-12",
+    "test_name": "List schemes — pagination limit enforced at 100",
+    "category": "Boundary",
+    "linked_fr": "FR-042",
+    "priority": "Medium",
+    "preconditions": [
+      "ADMIN JWT",
+      "At least 1 scheme in DB"
+    ],
+    "test_steps": [
+      "GET /api/v1/admin/schemes?limit=999 with ADMIN JWT",
+      "Assert HTTP 200 (no 4xx for clamping) OR HTTP 400 with VALIDATION_ERROR",
+      "If 200: Assert meta.pagination.limit <= 100",
+      "Assert data.length <= 100"
+    ],
+    "test_data": {
+      "requested_limit": 999,
+      "max_allowed_limit": 100
+    },
+    "expected_result": "If limit is clamped: HTTP 200, meta.pagination.limit=100. If limit is rejected: HTTP 400, error.code='VALIDATION_ERROR'. Either way, no more than 100 rows returned.",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR042-UI-01",
+    "test_name": "Scheme picker shows active product-matched schemes; expired scheme visually flagged",
+    "category": "UI/E2E",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "Seed: active scheme for TW ('DEALER-TW-Q3', valid_to: future)",
+      "Seed: expired scheme for TW ('EXPIRED-TW-Q1', valid_to: past)",
+      "RM logged in; on lead 360 page for TW lead"
+    ],
+    "test_steps": [
+      "Navigate to /leads/{lead_id} (TW lead, Lead 360 view)",
+      "Locate scheme picker / Combobox",
+      "Assert 'DEALER-TW-Q3' option is visible and selectable",
+      "Assert 'EXPIRED-TW-Q1' option either does not appear or is marked aria-disabled=true with 'Expired' status chip",
+      "Select 'DEALER-TW-Q3'",
+      "Assert Toast 'Scheme attached' appears",
+      "Reload page. Assert scheme picker shows 'DEALER-TW-Q3' as selected value"
+    ],
+    "test_data": {
+      "lead_id": "lead-tw-e2e-001",
+      "lead_product_code": "TW",
+      "active_scheme_code": "DEALER-TW-Q3",
+      "expired_scheme_code": "EXPIRED-TW-Q1"
+    },
+    "expected_result": "Active scheme selectable. Expired scheme absent or aria-disabled. After selection: Toast 'Scheme attached'. After reload: scheme still attached.",
+    "postconditions": [
+      "Scheme persisted on lead after page reload"
+    ],
+    "ui_meta": {
+      "route": "/leads/{lead_id}",
+      "locators": {
+        "scheme_picker": "getByRole('combobox', { name: /scheme/i })",
+        "scheme_options": "getByRole('option')",
+        "expired_chip": "getByTestId('status-chip-expired')",
+        "success_toast": "getByRole('status', { name: /scheme attached/i })"
+      },
+      "viewport": ["1440x900", "375x667"],
+      "auth_state": "rm_user_logged_in",
+      "network_wait": "waitForResponse('/api/v1/leads/*')",
+      "visual_assert": "Active scheme option has no disabled styling; expired scheme chip has 'Expired' label with muted/warning color",
+      "a11y": "Expired option has aria-disabled='true'; active option is focusable; Combobox label associated via aria-labelledby"
+    }
+  },
+  {
+    "test_id": "TC-FR042-DI-01",
+    "test_name": "No lead_product_details references a scheme code that does not exist in schemes table",
+    "category": "Data Integrity",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "Several scheme attach operations completed",
+      "Some detach (null) operations completed"
+    ],
+    "test_steps": [
+      "Execute invariant SQL query joining lead_product_details.attributes->>'scheme_code' against schemes table",
+      "Assert 0 rows returned (no orphaned scheme_code references)"
+    ],
+    "test_data": {
+      "org_id": "00000000-0000-0000-0000-000000000001"
+    },
+    "expected_result": "0 rows returned — every non-null scheme_code in lead_product_details.attributes references a valid schemes row.",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- State built by prior scheme attach tests",
+      "action": "Read-only logical FK invariant check (no DB FK on JSONB field)",
+      "invariant_query": "SELECT lpd.lead_id, lpd.attributes->>'scheme_code' AS bad_code FROM lead_product_details lpd WHERE lpd.attributes->>'scheme_code' IS NOT NULL AND NOT EXISTS (SELECT 1 FROM schemes s WHERE s.code = lpd.attributes->>'scheme_code' AND s.org_id = lpd.org_id)",
+      "cleanup": "-- No cleanup (read-only)"
+    }
+  },
+  {
+    "test_id": "TC-FR042-DI-02",
+    "test_name": "No duplicate (org_id, code) in schemes table",
+    "category": "Data Integrity",
+    "linked_fr": "FR-042",
+    "priority": "High",
+    "preconditions": [
+      "Several scheme creation attempts including duplicate code attempts (all rejected at API layer)"
+    ],
+    "test_steps": [
+      "Execute uniqueness invariant SQL query on schemes table",
+      "Assert 0 rows returned"
+    ],
+    "test_data": {
+      "org_id": "00000000-0000-0000-0000-000000000001"
+    },
+    "expected_result": "0 rows — unique constraint on (org_id, code) is upheld. No duplicate scheme codes exist.",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "-- State built by prior scheme tests including CONFLICT-rejected duplicates",
+      "action": "Read-only uniqueness check",
+      "invariant_query": "SELECT org_id, code, COUNT(*) AS cnt FROM schemes GROUP BY org_id, code HAVING COUNT(*) > 1",
+      "cleanup": "-- No cleanup (read-only)"
+    }
+  }
+]

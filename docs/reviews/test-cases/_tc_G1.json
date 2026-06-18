@@ -1,0 +1,2080 @@
+[
+  {
+    "test_id": "TC-FR001-01",
+    "test_name": "Happy path login without MFA returns access token and sets httpOnly refresh cookie",
+    "category": "Happy Path",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "User 'priya.rm@nbfc.local' exists with status='active', role_code='RM', mfa_enabled=false",
+      "No Redis lockout key exists for this user",
+      "No prior failed login attempts"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/login with body { \"username\": \"priya.rm@nbfc.local\", \"password\": \"Secure@1234!\" }",
+      "2. Capture the HTTP response status, body, and Set-Cookie headers",
+      "3. Inspect response body for access_token and mfa_required fields",
+      "4. Query audit_logs for action='login' and actor matching the user"
+    ],
+    "test_data": {
+      "username": "priya.rm@nbfc.local",
+      "password": "Secure@1234!",
+      "role": "RM",
+      "mfa_enabled": false
+    },
+    "expected_result": "HTTP 200; response envelope { data: { access_token: '<jwt>', mfa_required: false }, meta: {}, error: null }; Set-Cookie header contains 'lms_refresh' with HttpOnly and Secure flags; audit_logs contains 1 row with action='login' and actor_id matching the user; users.last_login_at updated to within 5 seconds of now",
+    "postconditions": [
+      "Redis key 'fail:<user_id>' is absent",
+      "users.last_login_at is recent",
+      "audit_logs has login event"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-02",
+    "test_name": "Login for ADMIN (MFA-mandatory role) returns mfa_required=true and no access token",
+    "category": "Happy Path",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "User 'admin.sys@nbfc.local' exists with status='active', role_code='ADMIN', mfa_enabled=false (flag irrelevant — role mandates MFA)",
+      "TOTP secret seeded for this user in the test fixture"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/login with body { \"username\": \"admin.sys@nbfc.local\", \"password\": \"Admin@5678!\" }",
+      "2. Assert response status and body structure",
+      "3. Assert that no access_token is present in the response",
+      "4. Assert Redis key 'mfa:challenge:<user_id>' exists with a TTL"
+    ],
+    "test_data": {
+      "username": "admin.sys@nbfc.local",
+      "password": "Admin@5678!",
+      "role": "ADMIN",
+      "mfa_enabled": false
+    },
+    "expected_result": "HTTP 200; data.mfa_required=true; data.mfa_challenge_token is a non-empty string; data.access_token is absent; Redis key mfa:challenge:<user_id> exists; no audit_logs(action='login') row yet (deferred until MFA step)",
+    "postconditions": [
+      "Redis mfa:challenge key is set with TTL",
+      "No access token issued yet"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-03",
+    "test_name": "MFA verify with correct TOTP issues access token and records login audit",
+    "category": "Happy Path",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "Login step completed for admin.sys@nbfc.local (TC-FR001-02), mfa_challenge_token captured",
+      "TOTP seed known; current 6-digit code generated from the seed"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/mfa with body { \"mfa_challenge_token\": \"<token_from_step>\", \"otp\": \"<current_totp_6_digit>\" }",
+      "2. Assert HTTP status and access_token in response",
+      "3. Confirm Redis key 'mfa:challenge:<user_id>' is deleted",
+      "4. Query audit_logs for action='login'"
+    ],
+    "test_data": {
+      "mfa_challenge_token": "<captured_from_prior_step>",
+      "otp": "482917"
+    },
+    "expected_result": "HTTP 200; data.access_token is a valid JWT; data.mfa_required is absent or false; lms_refresh httpOnly cookie set; Redis mfa:challenge:<user_id> key is deleted; audit_logs has 1 row with action='login'; users.last_login_at updated",
+    "postconditions": [
+      "Valid access token available for subsequent requests",
+      "MFA challenge key deleted from Redis"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-04",
+    "test_name": "Refresh token rotation issues new access token and invalidates old refresh token",
+    "category": "Happy Path",
+    "linked_fr": "FR-001",
+    "priority": "High",
+    "preconditions": [
+      "User logged in as priya.rm@nbfc.local; valid lms_refresh cookie available",
+      "Access token NOT expired (this tests rotation, not silent-refresh-on-401)"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/refresh with the lms_refresh httpOnly cookie attached",
+      "2. Capture the new access_token and new lms_refresh cookie",
+      "3. Attempt POST /api/v1/auth/refresh again using the OLD lms_refresh value",
+      "4. Assert the second attempt is rejected"
+    ],
+    "test_data": {
+      "username": "priya.rm@nbfc.local",
+      "scenario": "valid_refresh_within_idle_window"
+    },
+    "expected_result": "First call: HTTP 200; new access_token returned; new lms_refresh cookie set; old refresh UUID is no longer in Redis. Second call with old cookie: HTTP 401 with error.code='AUTH_REQUIRED'",
+    "postconditions": [
+      "Only the new refresh token is valid in Redis",
+      "Old token cannot be reused"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-05",
+    "test_name": "Wrong password increments lockout counter and returns generic 401 without user enumeration",
+    "category": "Negative/Error",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "User 'rajesh.bm@nbfc.local' exists with status='active', no prior failures in Redis"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/login with body { \"username\": \"rajesh.bm@nbfc.local\", \"password\": \"WrongPass!\" }",
+      "2. Assert HTTP status and error code",
+      "3. Inspect Redis key 'fail:<user_id>' value",
+      "4. Confirm audit_logs has action='login_failed'"
+    ],
+    "test_data": {
+      "username": "rajesh.bm@nbfc.local",
+      "password": "WrongPass!"
+    },
+    "expected_result": "HTTP 401; error.code='AUTH_REQUIRED'; error.message is generic (does not indicate whether username exists or password is wrong); Redis fail:<user_id>=1; audit_logs has action='login_failed'",
+    "postconditions": [
+      "Redis fail counter = 1",
+      "User status remains 'active'"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-06",
+    "test_name": "Fifth consecutive wrong password triggers account lockout",
+    "category": "Negative/Error",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "User 'rajesh.bm@nbfc.local' has Redis fail:<user_id>=4 (4 prior failures in Redis)",
+      "User status is 'active'"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/login with { \"username\": \"rajesh.bm@nbfc.local\", \"password\": \"WrongPass!\" } (5th attempt)",
+      "2. Assert HTTP status and error body",
+      "3. Query users table for status field",
+      "4. Confirm Redis lockout:<user_id> key exists",
+      "5. Verify audit_logs has login_failed with detail.reason='lockout_triggered'"
+    ],
+    "test_data": {
+      "username": "rajesh.bm@nbfc.local",
+      "password": "WrongPass!",
+      "prior_failures": 4
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; error.detail.reason='ACCOUNT_LOCKED'; users.status='locked' in DB; Redis lockout:<user_id> key present; audit_logs has action='login_failed' with detail.reason='lockout_triggered'",
+    "postconditions": [
+      "users.status='locked'",
+      "No access token issued",
+      "Subsequent login with correct password returns 403"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-07",
+    "test_name": "Login on a locked account returns FORBIDDEN immediately without verifying password",
+    "category": "Negative/Error",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "User 'rajesh.bm@nbfc.local' has status='locked' in the users table"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/login with { \"username\": \"rajesh.bm@nbfc.local\", \"password\": \"Correct@1234!\" }",
+      "2. Assert HTTP status, error code, and detail",
+      "3. Confirm audit_logs has login_failed event",
+      "4. Confirm argon2 verify was NOT called (mock spy assertion in unit test context)"
+    ],
+    "test_data": {
+      "username": "rajesh.bm@nbfc.local",
+      "password": "Correct@1234!",
+      "user_status": "locked"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; error.detail.reason='ACCOUNT_LOCKED'; error.detail.retry_after_seconds is a positive integer; no access_token; audit_logs has action='login_failed'",
+    "postconditions": [
+      "User status remains 'locked'",
+      "No tokens issued"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-08",
+    "test_name": "Wrong OTP in MFA step returns 401 and preserves the challenge token for retry",
+    "category": "Negative/Error",
+    "linked_fr": "FR-001",
+    "priority": "High",
+    "preconditions": [
+      "MFA challenge initiated for admin.sys@nbfc.local; mfa_challenge_token captured",
+      "Redis mfa:challenge:<user_id> exists"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/mfa with { \"mfa_challenge_token\": \"<token>\", \"otp\": \"000000\" }",
+      "2. Assert HTTP status and error code",
+      "3. Confirm Redis mfa:challenge:<user_id> key still exists (not consumed)",
+      "4. Confirm audit_logs has action='mfa_failed'"
+    ],
+    "test_data": {
+      "mfa_challenge_token": "<captured>",
+      "otp": "000000"
+    },
+    "expected_result": "HTTP 401; error.code='AUTH_REQUIRED'; Redis mfa:challenge:<user_id> key still present; audit_logs has action='mfa_failed'; no access_token issued",
+    "postconditions": [
+      "Challenge token still valid for retry",
+      "No access token issued"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-09",
+    "test_name": "Replayed MFA challenge token is rejected after first use",
+    "category": "Negative/Error",
+    "linked_fr": "FR-001",
+    "priority": "High",
+    "preconditions": [
+      "MFA challenge completed successfully for admin.sys@nbfc.local",
+      "The original mfa_challenge_token was consumed (Redis key deleted)"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/mfa with the already-used mfa_challenge_token and a valid OTP",
+      "2. Assert HTTP status and error code"
+    ],
+    "test_data": {
+      "mfa_challenge_token": "<already_used_token>",
+      "otp": "482917"
+    },
+    "expected_result": "HTTP 401; error.code='AUTH_REQUIRED' (Redis key absent so token invalid); no second access_token issued",
+    "postconditions": [
+      "No additional tokens issued",
+      "Single-use enforcement confirmed"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-10",
+    "test_name": "Expired refresh token returns 401 and does not issue new access token",
+    "category": "Negative/Error",
+    "linked_fr": "FR-001",
+    "priority": "High",
+    "preconditions": [
+      "A refresh token UUID that is NOT present in Redis (expired or never issued)"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/refresh with a cookie 'lms_refresh=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' (not in Redis)",
+      "2. Assert HTTP status and error code"
+    ],
+    "test_data": {
+      "lms_refresh_cookie": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    },
+    "expected_result": "HTTP 401; error.code='AUTH_REQUIRED'; no new tokens issued",
+    "postconditions": [
+      "No tokens issued"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-11",
+    "test_name": "Rate limit on login endpoint returns 429 after 10 requests per minute",
+    "category": "Boundary",
+    "linked_fr": "FR-001",
+    "priority": "High",
+    "preconditions": [
+      "Same IP address has made exactly 10 login requests within the past 60 seconds"
+    ],
+    "test_steps": [
+      "1. Send the 11th POST /api/v1/auth/login from the same IP within 60 seconds",
+      "2. Assert HTTP status, error code, and Retry-After header"
+    ],
+    "test_data": {
+      "request_count_preceding": 10,
+      "window_seconds": 60
+    },
+    "expected_result": "HTTP 429; error.code='RATE_LIMITED'; Retry-After header is present with a positive integer value",
+    "postconditions": [
+      "Request was not processed beyond rate-limit check"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-12",
+    "test_name": "VALIDATION_ERROR returned when username is missing from login body",
+    "category": "Negative/Error",
+    "linked_fr": "FR-001",
+    "priority": "High",
+    "preconditions": [],
+    "test_steps": [
+      "1. POST /api/v1/auth/login with body { \"password\": \"Secure@1234!\" } (username omitted)",
+      "2. Assert HTTP status, error code, and fields array"
+    ],
+    "test_data": {
+      "body": { "password": "Secure@1234!" }
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains an entry with field='username'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR001-13",
+    "test_name": "VALIDATION_ERROR returned when OTP is not 6 digits in MFA step",
+    "category": "Negative/Error",
+    "linked_fr": "FR-001",
+    "priority": "Medium",
+    "preconditions": [
+      "A valid mfa_challenge_token exists in Redis"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/mfa with body { \"mfa_challenge_token\": \"<token>\", \"otp\": \"1234\" }",
+      "2. Assert HTTP status and fields"
+    ],
+    "test_data": {
+      "mfa_challenge_token": "<valid_token>",
+      "otp": "1234"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains entry with field='otp'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR001-14",
+    "test_name": "Password reset returns identical 200 response whether email exists or not (anti-enumeration)",
+    "category": "Negative/Error",
+    "linked_fr": "FR-001",
+    "priority": "High",
+    "preconditions": [
+      "User with email 'priya.rm@nbfc.local' exists",
+      "Email 'nobody@nowhere.invalid' does not exist"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/reset with body { \"email\": \"priya.rm@nbfc.local\" } — record response body and status",
+      "2. POST /api/v1/auth/reset with body { \"email\": \"nobody@nowhere.invalid\" } — record response body and status",
+      "3. Compare both responses for any difference in status code, body structure, or field values"
+    ],
+    "test_data": {
+      "existing_email": "priya.rm@nbfc.local",
+      "nonexistent_email": "nobody@nowhere.invalid"
+    },
+    "expected_result": "Both calls return HTTP 200; response body is { data: null, meta: {}, error: null } for both; bodies are byte-identical; timing difference is less than 50 ms",
+    "postconditions": [
+      "Redis pw_reset key set only for existing user",
+      "NotificationChannelPort called only for existing user"
+    ]
+  },
+  {
+    "test_id": "TC-FR001-15",
+    "test_name": "MFA is mandatory for PARTNER role regardless of mfa_enabled flag value",
+    "category": "Permission",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "User 'partner.user@dsa.com' exists with role_code='PARTNER', mfa_enabled=false"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/auth/login with valid PARTNER credentials",
+      "2. Inspect response for mfa_required field"
+    ],
+    "test_data": {
+      "username": "partner.user@dsa.com",
+      "password": "Partner@9012!",
+      "role": "PARTNER",
+      "mfa_enabled": false
+    },
+    "expected_result": "HTTP 200; data.mfa_required=true; data.mfa_challenge_token present; no access_token in response",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR001-DI-01",
+    "test_name": "Audit logs never contain password hash, access token, refresh token, or OTP values",
+    "category": "Data Integrity",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "Several successful and failed login attempts have been executed, generating audit_logs rows"
+    ],
+    "test_steps": [
+      "1. Execute invariant SQL query against the test database",
+      "2. Assert zero rows returned"
+    ],
+    "test_data": {
+      "actions_checked": ["login", "login_failed", "mfa_failed"]
+    },
+    "expected_result": "Invariant query returns 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO audit_logs (audit_id, org_id, actor_id, action, entity_type, created_at) VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000001', gen_random_uuid(), 'login', 'users', now())",
+      "action": "Run successful and failed logins; then execute the invariant query",
+      "invariant_query": "SELECT COUNT(*) FROM audit_logs WHERE action IN ('login','login_failed','mfa_failed') AND (detail::text LIKE '%password%' OR detail::text LIKE '%access_token%' OR detail::text LIKE '%refresh_token%' OR detail::text LIKE '%otp%')",
+      "cleanup": "DELETE FROM audit_logs WHERE created_at > :test_start AND org_id = '00000000-0000-0000-0000-000000000001'"
+    }
+  },
+  {
+    "test_id": "TC-FR001-DI-02",
+    "test_name": "Locked user cannot appear as active in users table after lockout audit",
+    "category": "Data Integrity",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "Lockout triggered for user 'rajesh.bm@nbfc.local' in the same test run"
+    ],
+    "test_steps": [
+      "1. Trigger account lockout via 5 wrong-password attempts",
+      "2. Run invariant SQL to confirm no locked user shows status='active'"
+    ],
+    "test_data": {
+      "username": "rajesh.bm@nbfc.local"
+    },
+    "expected_result": "Invariant query returns 0 rows; users.status='locked' for the tested user",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT user_id FROM users WHERE username = 'rajesh.bm@nbfc.local'",
+      "action": "Perform 5 failed login attempts, then run invariant",
+      "invariant_query": "SELECT u.user_id FROM users u WHERE u.status = 'active' AND EXISTS (SELECT 1 FROM audit_logs al WHERE al.actor_id = u.user_id AND al.action = 'login_failed' AND al.detail->>'reason' = 'lockout_triggered' AND al.created_at > now() - interval '5 minutes')",
+      "cleanup": "UPDATE users SET status='active', version=version+1 WHERE username='rajesh.bm@nbfc.local'; DELETE FROM audit_logs WHERE actor_id = (SELECT user_id FROM users WHERE username='rajesh.bm@nbfc.local') AND created_at > :test_start"
+    }
+  },
+  {
+    "test_id": "TC-FR001-UI-01",
+    "test_name": "Login form renders all required fields and is keyboard accessible",
+    "category": "UI/E2E",
+    "linked_fr": "FR-001",
+    "priority": "High",
+    "preconditions": [
+      "Application is running; user is unauthenticated"
+    ],
+    "test_steps": [
+      "1. Navigate to /login",
+      "2. Assert username and password inputs are visible",
+      "3. Assert submit button is present and enabled",
+      "4. Tab through the form to confirm keyboard navigation reaches all inputs"
+    ],
+    "test_data": {
+      "url": "/login",
+      "viewport": "1280x800"
+    },
+    "expected_result": "Username input visible; password input visible; submit button visible; all inputs reachable via Tab key; no accessibility violations (axe)",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/login",
+      "locators": {
+        "username_input": "getByRole('textbox', { name: /username/i })",
+        "password_input": "getByLabel(/password/i)",
+        "submit_button": "getByRole('button', { name: /log in|sign in/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "unauthenticated",
+      "network_wait": null,
+      "visual_assert": "Form is centered; inputs have visible labels",
+      "a11y": "axe scan on /login page — 0 violations"
+    }
+  },
+  {
+    "test_id": "TC-FR001-UI-02",
+    "test_name": "MFA challenge view appears after login with ADMIN credentials and accepts 6-digit OTP",
+    "category": "UI/E2E",
+    "linked_fr": "FR-001",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN user 'admin.sys@nbfc.local' exists with MFA configured"
+    ],
+    "test_steps": [
+      "1. Navigate to /login",
+      "2. Enter username='admin.sys@nbfc.local' and password='Admin@5678!' and submit",
+      "3. Assert password form is replaced by OTP input without page reload",
+      "4. Assert 'Enter the 6-digit code' text is visible",
+      "5. Enter valid TOTP code and submit",
+      "6. Assert redirect to /dashboard"
+    ],
+    "test_data": {
+      "username": "admin.sys@nbfc.local",
+      "password": "Admin@5678!",
+      "totp_seed": "TEST_TOTP_SEED_ADMIN"
+    },
+    "expected_result": "OTP input appears in place of password form; 'Enter the 6-digit code' text visible; valid TOTP leads to /dashboard; lms_refresh cookie is HttpOnly; access_token absent from localStorage and sessionStorage",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/login",
+      "locators": {
+        "otp_input": "getByRole('textbox', { name: /code|otp/i })",
+        "mfa_heading": "getByText(/Enter the 6-digit code/i)",
+        "dashboard": "getByRole('main')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "unauthenticated",
+      "network_wait": "waitForResponse('/api/v1/auth/mfa')",
+      "visual_assert": "Password form replaced by OTP form in same page without full reload",
+      "a11y": "axe scan on MFA view — 0 violations"
+    }
+  },
+  {
+    "test_id": "TC-FR001-UI-03",
+    "test_name": "Refresh token is stored in httpOnly cookie — not in localStorage or sessionStorage",
+    "category": "UI/E2E",
+    "linked_fr": "FR-001",
+    "priority": "Critical",
+    "preconditions": [
+      "RM user 'priya.rm@nbfc.local' credentials are valid"
+    ],
+    "test_steps": [
+      "1. Log in as priya.rm@nbfc.local via the UI",
+      "2. After successful login, evaluate localStorage.getItem('access_token') in the browser",
+      "3. Evaluate sessionStorage.getItem('access_token')",
+      "4. Check document.cookie for any token-like values"
+    ],
+    "test_data": {
+      "username": "priya.rm@nbfc.local",
+      "password": "Secure@1234!"
+    },
+    "expected_result": "localStorage.getItem('access_token') === null; sessionStorage.getItem('access_token') === null; document.cookie does not contain 'lms_refresh' (HttpOnly cookies are not accessible via JS); network response headers show Set-Cookie with HttpOnly flag",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/login",
+      "locators": {
+        "storage_check": "page.evaluate(() => localStorage.getItem('access_token'))",
+        "session_check": "page.evaluate(() => sessionStorage.getItem('access_token'))"
+      },
+      "viewport": "1280x800",
+      "auth_state": "unauthenticated",
+      "network_wait": "waitForResponse('/api/v1/auth/login')",
+      "visual_assert": "Dashboard loads after login",
+      "a11y": null
+    }
+  },
+  {
+    "test_id": "TC-FR002-01",
+    "test_name": "RM with scope O can view their own assigned lead",
+    "category": "Happy Path",
+    "linked_fr": "FR-002",
+    "priority": "Critical",
+    "preconditions": [
+      "RM user 'priya.rm@nbfc.local' (user_id=RM-A) is logged in",
+      "Lead LD-2026-000101 exists with owner_id=RM-A and stage='assigned'"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads/LD-2026-000101 with RM-A's JWT",
+      "2. Assert HTTP status and data returned",
+      "3. Confirm PAN is masked in the response"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000101",
+      "requesting_user_role": "RM",
+      "owner": "RM-A"
+    },
+    "expected_result": "HTTP 200; data.lead_code='LD-2026-000101'; data.lead_identities.pan_masked='ABCxxxx4F' (not raw); data.lead_identities.mobile='98xxxxxx10' (masked)",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR002-02",
+    "test_name": "RM receives 403 when attempting to view a lead owned by another RM",
+    "category": "Permission",
+    "linked_fr": "FR-002",
+    "priority": "Critical",
+    "preconditions": [
+      "RM-A ('priya.rm@nbfc.local') and RM-B ('suresh.rm@nbfc.local') both exist in the same branch",
+      "Lead LD-2026-000202 has owner_id=RM-B"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads/LD-2026-000202 using RM-A's JWT",
+      "2. Assert HTTP status and error code",
+      "3. Query audit_logs for an abac_deny event with actor_id=RM-A"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000202",
+      "requesting_user": "RM-A",
+      "lead_owner": "RM-B"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; audit_logs has action='abac_deny' with actor_id=RM-A and entity_id matching the lead",
+    "postconditions": [
+      "Deny audit row written"
+    ]
+  },
+  {
+    "test_id": "TC-FR002-03",
+    "test_name": "BM with scope B sees all leads in their branch including other RMs' leads",
+    "category": "Happy Path",
+    "linked_fr": "FR-002",
+    "priority": "High",
+    "preconditions": [
+      "BM 'rajesh.bm@nbfc.local' is in branch_id=BRANCH-001",
+      "Three leads exist all with branch_id=BRANCH-001, each assigned to a different RM"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads?branch_id=BRANCH-001 with BM's JWT",
+      "2. Assert count of leads returned"
+    ],
+    "test_data": {
+      "branch_id": "BRANCH-001",
+      "requesting_user_role": "BM",
+      "expected_count": 3
+    },
+    "expected_result": "HTTP 200; data array contains exactly 3 leads; all 3 have branch_id=BRANCH-001; mobile fields are masked as '98xxxxxx10'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR002-04",
+    "test_name": "PARTNER receives 404 (existence hidden) when requesting another partner's lead",
+    "category": "Permission",
+    "linked_fr": "FR-002",
+    "priority": "Critical",
+    "preconditions": [
+      "PARTNER user 'partner.dsa1@dsa.com' has partner_id=PARTNER-001",
+      "Lead LD-2026-000303 was submitted by PARTNER-002"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads/LD-2026-000303 with PARTNER-001's JWT",
+      "2. Assert HTTP status hides existence"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000303",
+      "requesting_partner": "PARTNER-001",
+      "lead_partner": "PARTNER-002"
+    },
+    "expected_result": "HTTP 404; error.code='NOT_FOUND' (existence hidden per PARTNER_CROSS_ACCESS rule — must NOT return 403 which would confirm existence)",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR002-05",
+    "test_name": "ADMIN without break-glass grant receives 403 on lead list endpoint",
+    "category": "Permission",
+    "linked_fr": "FR-002",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN user 'admin.sys@nbfc.local' has no active break_glass_grants"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads with ADMIN's JWT",
+      "2. Assert HTTP status and error code"
+    ],
+    "test_data": {
+      "requesting_user_role": "ADMIN",
+      "break_glass_grants": "none"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN' (ADMIN has no standing lead-content access per auth-matrix.json)",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR002-06",
+    "test_name": "DPO receives masked mobile (scope M) on lead list — no raw PII returned",
+    "category": "Happy Path",
+    "linked_fr": "FR-002",
+    "priority": "High",
+    "preconditions": [
+      "DPO user 'dpo@nbfc.local' is logged in",
+      "At least 1 lead exists with mobile='9876543210'"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads with DPO's JWT",
+      "2. Inspect mobile field in every returned lead"
+    ],
+    "test_data": {
+      "requesting_user_role": "DPO",
+      "raw_mobile": "9876543210",
+      "expected_masked": "98xxxxxx10"
+    },
+    "expected_result": "HTTP 200; every lead in data array has mobile='98xxxxxx10'; no lead has mobile='9876543210' (raw); pan_masked values are also masked; no Reveal button available without break-glass",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR002-07",
+    "test_name": "SM with scope T sees only leads belonging to their team members",
+    "category": "Happy Path",
+    "linked_fr": "FR-002",
+    "priority": "High",
+    "preconditions": [
+      "SM 'smita.sm@nbfc.local' manages team TEAM-001 containing RM-A and RM-B",
+      "4 leads exist: 2 owned by RM-A (TEAM-001), 2 owned by RM-C (TEAM-002)"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads with SM's JWT",
+      "2. Assert exactly 2 leads returned"
+    ],
+    "test_data": {
+      "requesting_user_role": "SM",
+      "team_id": "TEAM-001",
+      "team_members": ["RM-A", "RM-B"],
+      "expected_count": 2
+    },
+    "expected_result": "HTTP 200; data contains exactly 2 leads; both have owner_id in [RM-A, RM-B]; no leads from TEAM-002 appear",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR002-08",
+    "test_name": "Unauthenticated request to leads endpoint returns 401",
+    "category": "Permission",
+    "linked_fr": "FR-002",
+    "priority": "Critical",
+    "preconditions": [],
+    "test_steps": [
+      "1. GET /api/v1/leads with no Authorization header",
+      "2. Assert HTTP status and error code"
+    ],
+    "test_data": {
+      "auth_header": "absent"
+    },
+    "expected_result": "HTTP 401; error.code='AUTH_REQUIRED'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR002-DI-01",
+    "test_name": "No duplicate (role_id, capability) entries exist in role_permissions",
+    "category": "Data Integrity",
+    "linked_fr": "FR-002",
+    "priority": "High",
+    "preconditions": [
+      "Database is seeded with all roles and their permissions"
+    ],
+    "test_steps": [
+      "1. Execute invariant SQL query checking for duplicate role_permissions rows",
+      "2. Assert zero rows returned"
+    ],
+    "test_data": {},
+    "expected_result": "Invariant query returns 0 rows",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT 1 FROM role_permissions LIMIT 1",
+      "action": "Run invariant query after seeding",
+      "invariant_query": "SELECT role_id, capability, COUNT(*) FROM role_permissions GROUP BY role_id, capability HAVING COUNT(*) > 1",
+      "cleanup": "N/A — read-only check"
+    }
+  },
+  {
+    "test_id": "TC-FR002-UI-01",
+    "test_name": "RM sees masked PAN on Lead 360 page — no Reveal button when canUnmask=false",
+    "category": "UI/E2E",
+    "linked_fr": "FR-002",
+    "priority": "High",
+    "preconditions": [
+      "RM 'priya.rm@nbfc.local' is logged in",
+      "Lead LD-2026-000101 exists with pan='ABCDE1234F' (raw) and is owned by this RM"
+    ],
+    "test_steps": [
+      "1. Login as priya.rm@nbfc.local",
+      "2. Navigate to /leads/LD-2026-000101",
+      "3. Locate the PAN field on the Lead 360 page",
+      "4. Assert displayed value is masked",
+      "5. Assert no Reveal button is present"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000101",
+      "raw_pan": "ABCDE1234F",
+      "expected_masked_pan": "ABCxxxx4F"
+    },
+    "expected_result": "PAN field displays 'ABCxxxx4F'; no button with aria-label containing 'Reveal' is present in the DOM",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/LD-2026-000101",
+      "locators": {
+        "pan_field": "getByTestId('masked-field-pan')",
+        "reveal_button": "queryByRole('button', { name: /reveal pan/i })"
+      },
+      "viewport": "1280x800",
+      "auth_state": "authenticated as RM",
+      "network_wait": "waitForResponse('/api/v1/leads/*')",
+      "visual_assert": "PAN shows as ABCxxxx4F",
+      "a11y": "axe scan — 0 violations"
+    }
+  },
+  {
+    "test_id": "TC-FR002-UI-02",
+    "test_name": "ADMIN navigating to /leads is shown a FORBIDDEN error state — not an empty list",
+    "category": "UI/E2E",
+    "linked_fr": "FR-002",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN user 'admin.sys@nbfc.local' is logged in with no break-glass grant"
+    ],
+    "test_steps": [
+      "1. Login as admin.sys@nbfc.local",
+      "2. Navigate to /leads",
+      "3. Assert the error state component is rendered"
+    ],
+    "test_data": {
+      "requesting_user_role": "ADMIN"
+    },
+    "expected_result": "Page renders ErrorState component with text like 'You don't have access to this.' — does not show empty table or loading spinner indefinitely",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads",
+      "locators": {
+        "error_state": "getByRole('alert')",
+        "error_text": "getByText(/don't have access/i)"
+      },
+      "viewport": "1280x800",
+      "auth_state": "authenticated as ADMIN",
+      "network_wait": "waitForResponse('/api/v1/leads')",
+      "visual_assert": "ErrorState visible; no data table rendered",
+      "a11y": "axe scan — 0 violations"
+    }
+  },
+  {
+    "test_id": "TC-FR003-01",
+    "test_name": "ADMIN creates a break-glass grant with valid four-eyes fields — grant created in pending/active state",
+    "category": "Happy Path",
+    "linked_fr": "FR-003",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN user 'admin.sys@nbfc.local' (user_id=ADMIN-A) is authenticated",
+      "DPO user 'dpo@nbfc.local' (user_id=DPO-B) exists and is active — will be approver",
+      "A third user ADMIN-C exists to be the grantee",
+      "BREAK_GLASS_MAX_WINDOW_HOURS=72 is configured"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/admin/break-glass with ADMIN-A's JWT and body { granteeId: ADMIN-C, approverId: DPO-B, reason: 'Incident INC-2026-0042: customer complaint audit required', scopeType: 'lead', scopeRef: '<lead_uuid>', validFrom: '<now>', validUntil: '<now+24h>' }",
+      "2. Assert HTTP 201 and response body",
+      "3. Query break_glass_grants in DB for the returned grant_id",
+      "4. Assert audit_logs has an event for the request"
+    ],
+    "test_data": {
+      "requesting_user": "admin.sys@nbfc.local",
+      "grantee": "admin-C-user-uuid",
+      "approver": "dpo-B-user-uuid",
+      "reason": "Incident INC-2026-0042: customer complaint audit required",
+      "scope_type": "lead",
+      "valid_window_hours": 24
+    },
+    "expected_result": "HTTP 201; data.status='pending' (awaiting approval); data.grantee_id=ADMIN-C; data.approver_id=DPO-B; DB row in break_glass_grants with same IDs; approver_id != grantee_id constraint satisfied",
+    "postconditions": [
+      "Grant row exists in break_glass_grants",
+      "Status is 'pending' until approved"
+    ]
+  },
+  {
+    "test_id": "TC-FR003-02",
+    "test_name": "Nominated approver activates the break-glass grant via approve endpoint",
+    "category": "Workflow",
+    "linked_fr": "FR-003",
+    "priority": "Critical",
+    "preconditions": [
+      "Grant from TC-FR003-01 created with approver_id=DPO-B",
+      "DPO-B 'dpo@nbfc.local' is authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/admin/break-glass/<grant_id>/approve with DPO-B's JWT",
+      "2. Assert HTTP 200 and grant status",
+      "3. Query DB for updated status"
+    ],
+    "test_data": {
+      "grant_id": "<from_prior_step>",
+      "approver": "dpo@nbfc.local"
+    },
+    "expected_result": "HTTP 200; data.status='active'; data.approver_id=DPO-B; DB shows grant_status='active'; audit_logs has action='break_glass_access' or 'grant_approved' with grant_id reference",
+    "postconditions": [
+      "Grant is now active and usable within valid_from..valid_until window"
+    ]
+  },
+  {
+    "test_id": "TC-FR003-03",
+    "test_name": "Self-approval attempt returns FORBIDDEN — four-eyes constraint enforced at request time",
+    "category": "Negative/Error",
+    "linked_fr": "FR-003",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN user 'admin.sys@nbfc.local' (user_id=ADMIN-A) is authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/admin/break-glass with body where approverId = granteeId = ADMIN-A",
+      "2. Assert HTTP status and error code",
+      "3. Confirm no row was inserted into break_glass_grants"
+    ],
+    "test_data": {
+      "requesting_user": "admin.sys@nbfc.local",
+      "grantee_id": "ADMIN-A-uuid",
+      "approver_id": "ADMIN-A-uuid",
+      "reason": "Self-approval test"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no row inserted into break_glass_grants",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR003-04",
+    "test_name": "Wrong approver attempting to approve grant returns FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-003",
+    "priority": "Critical",
+    "preconditions": [
+      "Grant created with approver_id=DPO-B",
+      "User DPO-C (a different DPO) is authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/admin/break-glass/<grant_id>/approve with DPO-C's JWT",
+      "2. Assert HTTP status and error code"
+    ],
+    "test_data": {
+      "grant_id": "<pending_grant>",
+      "approver_attempting": "dpo-C (not the nominated approver)"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; grant status remains 'pending' in DB",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR003-05",
+    "test_name": "VALIDATION_ERROR when break-glass window exceeds maximum configured hours",
+    "category": "Boundary",
+    "linked_fr": "FR-003",
+    "priority": "High",
+    "preconditions": [
+      "BREAK_GLASS_MAX_WINDOW_HOURS=72 is configured",
+      "ADMIN-A is authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/admin/break-glass with validFrom=now, validUntil=now+73 hours",
+      "2. Assert HTTP status and error fields"
+    ],
+    "test_data": {
+      "valid_from": "2026-06-17T10:00:00Z",
+      "valid_until": "2026-06-20T11:00:00Z",
+      "window_hours": 73,
+      "max_configured": 72
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains entry with field='validUntil' and message indicating the window exceeds the maximum allowed",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR003-06",
+    "test_name": "VALIDATION_ERROR when reason field is blank",
+    "category": "Negative/Error",
+    "linked_fr": "FR-003",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN-A is authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/admin/break-glass with reason='' (empty string)",
+      "2. Assert HTTP status and error fields"
+    ],
+    "test_data": {
+      "reason": "",
+      "grantee_id": "admin-C-uuid",
+      "approver_id": "dpo-B-uuid"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains entry with field='reason'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR003-07",
+    "test_name": "ADMIN accesses lead content with active break-glass grant — access is audited",
+    "category": "Integration",
+    "linked_fr": "FR-003",
+    "priority": "Critical",
+    "preconditions": [
+      "Active break-glass grant exists for ADMIN-A covering lead_id=LEAD-001",
+      "ADMIN-A is authenticated"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads/LEAD-001 with ADMIN-A's JWT",
+      "2. Assert HTTP 200 and lead data returned",
+      "3. Assert audit_logs has action='break_glass_access' with entity_id=LEAD-001 and detail.grant_id set"
+    ],
+    "test_data": {
+      "lead_id": "LEAD-001-uuid",
+      "grant_id": "<active_grant_uuid>",
+      "requesting_user": "admin.sys@nbfc.local"
+    },
+    "expected_result": "HTTP 200; lead data returned; audit_logs row with action='break_glass_access', entity_id=LEAD-001, detail.grant_id=<grant_uuid>; every access under the grant is individually audited",
+    "postconditions": [
+      "Audit trail preserved"
+    ]
+  },
+  {
+    "test_id": "TC-FR003-08",
+    "test_name": "Expired grant denies ADMIN lead access after valid_until passes",
+    "category": "Workflow",
+    "linked_fr": "FR-003",
+    "priority": "Critical",
+    "preconditions": [
+      "A grant was created with valid_until set 1 minute in the past",
+      "The expiry sweep job has run (or the grant's valid_until is used for real-time check)"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads/LEAD-001 with ADMIN-A's JWT (grant is expired)",
+      "2. Assert HTTP status and error code"
+    ],
+    "test_data": {
+      "grant_status": "expired",
+      "valid_until": "1 minute ago"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no lead data returned; no break_glass_access audit row for this request",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR003-09",
+    "test_name": "Revoked grant denies ADMIN lead access immediately after revocation",
+    "category": "Workflow",
+    "linked_fr": "FR-003",
+    "priority": "Critical",
+    "preconditions": [
+      "Active grant exists; revoke was called setting status='revoked'",
+      "ADMIN-A is authenticated"
+    ],
+    "test_steps": [
+      "1. Revoke the grant via POST /api/v1/admin/break-glass/<grant_id>/revoke",
+      "2. Immediately attempt GET /api/v1/leads/LEAD-001 with ADMIN-A's JWT",
+      "3. Assert HTTP 403"
+    ],
+    "test_data": {
+      "grant_status_after_revoke": "revoked"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; lead data not returned; revocation takes effect at next EntitlementService check",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR003-10",
+    "test_name": "RM cannot access /admin/break-glass endpoint — FORBIDDEN",
+    "category": "Permission",
+    "linked_fr": "FR-003",
+    "priority": "High",
+    "preconditions": [
+      "RM user 'priya.rm@nbfc.local' is authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/admin/break-glass with RM's JWT and any valid body",
+      "2. Assert HTTP status"
+    ],
+    "test_data": {
+      "requesting_user_role": "RM"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN' (RM role has no break_glass capability in auth-matrix.json)",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR003-DI-01",
+    "test_name": "break_glass_grants table never has a row where approver_id equals grantee_id",
+    "category": "Data Integrity",
+    "linked_fr": "FR-003",
+    "priority": "Critical",
+    "preconditions": [
+      "Several break-glass grants exist in the test DB including approved ones"
+    ],
+    "test_steps": [
+      "1. Execute invariant SQL against break_glass_grants",
+      "2. Assert zero rows returned"
+    ],
+    "test_data": {},
+    "expected_result": "0 rows returned — enforced by both application logic and DB CHECK constraint ck_break_glass_four_eyes",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO break_glass_grants (grant_id, org_id, grantee_id, approver_id, reason, scope_type, valid_from, valid_until, status, created_by, updated_by, created_at, updated_at) VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000001', gen_random_uuid(), gen_random_uuid(), 'test reason', 'lead', now(), now() + interval '1 hour', 'pending', gen_random_uuid(), gen_random_uuid(), now(), now())",
+      "action": "Create grants via API and then run invariant",
+      "invariant_query": "SELECT grant_id FROM break_glass_grants WHERE approver_id = grantee_id",
+      "cleanup": "DELETE FROM break_glass_grants WHERE created_at > :test_start"
+    }
+  },
+  {
+    "test_id": "TC-FR003-DI-02",
+    "test_name": "No active break-glass grant should have valid_until in the past after expiry sweep",
+    "category": "Data Integrity",
+    "linked_fr": "FR-003",
+    "priority": "High",
+    "preconditions": [
+      "Expiry sweep job has been triggered",
+      "At least one grant had valid_until set in the past"
+    ],
+    "test_steps": [
+      "1. Trigger the BreakGlassExpiryJob",
+      "2. Run invariant SQL query",
+      "3. Assert zero rows"
+    ],
+    "test_data": {},
+    "expected_result": "0 rows returned after sweep — all expired grants have status='expired', none remain 'active'",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "UPDATE break_glass_grants SET status='active', valid_until = now() - interval '5 minutes' WHERE grant_id = :test_grant_id",
+      "action": "Trigger expiry sweep job, then run invariant",
+      "invariant_query": "SELECT grant_id FROM break_glass_grants WHERE status = 'active' AND valid_until <= now()",
+      "cleanup": "DELETE FROM break_glass_grants WHERE grant_id = :test_grant_id"
+    }
+  },
+  {
+    "test_id": "TC-FR003-UI-01",
+    "test_name": "ADMIN successfully requests break-glass grant via UI modal — grant appears in approval queue",
+    "category": "UI/E2E",
+    "linked_fr": "FR-003",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN 'admin.sys@nbfc.local' is logged in",
+      "DPO 'dpo@nbfc.local' exists as a valid approver"
+    ],
+    "test_steps": [
+      "1. Navigate to /admin/break-glass (Compliance Console)",
+      "2. Click 'Request Grant' button",
+      "3. Fill grantee (ADMIN-C), approver (dpo@nbfc.local), reason='Incident INC-2026-0042', scope=lead, valid window=24h",
+      "4. Submit the form",
+      "5. Assert toast message and grant in pending queue"
+    ],
+    "test_data": {
+      "grantee": "admin-C@nbfc.local",
+      "approver": "dpo@nbfc.local",
+      "reason": "Incident INC-2026-0042: customer complaint audit required",
+      "window_hours": 24
+    },
+    "expected_result": "Toast 'Grant requested. Awaiting approver confirmation.' is visible; grant row appears in ApprovalQueueTable with status='pending'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/break-glass",
+      "locators": {
+        "request_button": "getByRole('button', { name: /request grant/i })",
+        "grantee_input": "getByTestId('grantee-select')",
+        "approver_input": "getByTestId('approver-select')",
+        "reason_input": "getByRole('textbox', { name: /reason/i })",
+        "submit_button": "getByRole('button', { name: /submit|request/i })",
+        "toast": "getByRole('status')",
+        "approval_queue_row": "getByTestId('approval-queue-table') getByRole('row')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "authenticated as ADMIN",
+      "network_wait": "waitForResponse('/api/v1/admin/break-glass')",
+      "visual_assert": "Toast visible; grant row in pending queue",
+      "a11y": "axe scan on modal — 0 violations"
+    }
+  },
+  {
+    "test_id": "TC-FR003-UI-02",
+    "test_name": "Break-glass form prevents self-approval with inline error — no network call made",
+    "category": "UI/E2E",
+    "linked_fr": "FR-003",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN 'admin.sys@nbfc.local' is logged in"
+    ],
+    "test_steps": [
+      "1. Open Request Grant modal on /admin/break-glass",
+      "2. Set grantee to the currently logged-in ADMIN user",
+      "3. Set approver to the same ADMIN user",
+      "4. Attempt to submit",
+      "5. Assert inline validation error and no network request fired"
+    ],
+    "test_data": {
+      "grantee": "admin.sys@nbfc.local (self)",
+      "approver": "admin.sys@nbfc.local (same as grantee)"
+    },
+    "expected_result": "Inline validation error visible: 'Approver must be different from grantee'; form not submitted; no POST /api/v1/admin/break-glass network request intercepted",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/break-glass",
+      "locators": {
+        "validation_error": "getByRole('alert')",
+        "error_text": "getByText(/approver must be different from grantee/i)"
+      },
+      "viewport": "375x667",
+      "auth_state": "authenticated as ADMIN",
+      "network_wait": null,
+      "visual_assert": "Error shown inline; no toast",
+      "a11y": null
+    }
+  },
+  {
+    "test_id": "TC-FR010-01",
+    "test_name": "RM creates a lead manually with all required fields — lead created in captured stage",
+    "category": "Happy Path",
+    "linked_fr": "FR-010",
+    "priority": "Critical",
+    "preconditions": [
+      "RM 'priya.rm@nbfc.local' authenticated",
+      "Active ProductConfig for product_code='CV' exists with pan_required_at='before_kyc'",
+      "Branch BRANCH-001 active"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with RM's JWT and body: { identity: { name: 'Ramesh Kumar', mobile: '9876543210' }, product_code: 'CV', source: { source: 'Branch' }, branch_id: 'BRANCH-001', consents: [{ purpose: 'lead_contact', state: 'granted' }] }",
+      "2. Assert HTTP 201 and response body",
+      "3. Assert lead_code format matches ^LD-\\d{4}-\\d{6}$",
+      "4. Query DB for leads, stage_history, source_attributions, lead_identities, event_outbox, audit_logs"
+    ],
+    "test_data": {
+      "name": "Ramesh Kumar",
+      "mobile": "9876543210",
+      "product_code": "CV",
+      "source": "Branch",
+      "branch_id": "BRANCH-001",
+      "consents": [{"purpose": "lead_contact", "state": "granted"}]
+    },
+    "expected_result": "HTTP 201; data.lead_code matches LD-2026-\\d{6}; data.stage='captured'; data.mobile_masked='98xxxxxx10'; DB: leads row with stage='captured'; stage_history row with from_stage=null and to_stage='captured'; source_attributions row; lead_identities row; event_outbox row with event_code='LEAD_CREATED'; audit_logs row with action='lead_create'",
+    "postconditions": [
+      "All 6 DB tables have exactly 1 new row for this lead",
+      "No raw mobile in API response"
+    ]
+  },
+  {
+    "test_id": "TC-FR010-02",
+    "test_name": "BM creates lead with source=DSA and valid partner_code — partner_id stored in source_attributions",
+    "category": "Happy Path",
+    "linked_fr": "FR-010",
+    "priority": "High",
+    "preconditions": [
+      "BM 'rajesh.bm@nbfc.local' authenticated",
+      "Active PARTNER record with code='DSA-PARTNER-001' and status='active' exists",
+      "ProductConfig for 'CAR' active"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with BM's JWT and body including source='DSA', partner_code='DSA-PARTNER-001'",
+      "2. Assert HTTP 201",
+      "3. Query source_attributions for the returned lead_id and confirm partner_id is set"
+    ],
+    "test_data": {
+      "name": "Sunita Patel",
+      "mobile": "8765432109",
+      "product_code": "CAR",
+      "source": "DSA",
+      "partner_code": "DSA-PARTNER-001",
+      "branch_id": "BRANCH-001"
+    },
+    "expected_result": "HTTP 201; data.stage='captured'; DB source_attributions.partner_id IS NOT NULL and references the DSA partner record; source='DSA'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR010-03",
+    "test_name": "Idempotent replay with same Idempotency-Key returns original lead without creating a duplicate",
+    "category": "Happy Path",
+    "linked_fr": "FR-010",
+    "priority": "Critical",
+    "preconditions": [
+      "RM 'priya.rm@nbfc.local' authenticated",
+      "No prior leads for mobile 9812345678"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with Idempotency-Key: 'idem-key-abc-123' — record returned lead_id",
+      "2. POST /api/v1/leads again with the same Idempotency-Key: 'idem-key-abc-123' and identical body",
+      "3. Assert HTTP 200 on second call",
+      "4. Assert second call returns same lead_id as first call",
+      "5. Query DB to confirm exactly 1 leads row for that mobile"
+    ],
+    "test_data": {
+      "idempotency_key": "idem-key-abc-123",
+      "name": "Deepak Singh",
+      "mobile": "9812345678",
+      "product_code": "TW",
+      "source": "Referral"
+    },
+    "expected_result": "First call: HTTP 201; second call: HTTP 200; data.lead_id is identical for both; DB has exactly 1 leads row for mobile '9812345678'; audit_logs count=1; event_outbox count=1",
+    "postconditions": [
+      "Exactly 1 lead row",
+      "Exactly 1 audit row",
+      "Exactly 1 outbox event"
+    ]
+  },
+  {
+    "test_id": "TC-FR010-04",
+    "test_name": "Public lead capture via /public/leads creates lead without JWT and sets channel=website",
+    "category": "Happy Path",
+    "linked_fr": "FR-010",
+    "priority": "High",
+    "preconditions": [
+      "No JWT; captcha mock returns valid response",
+      "Branch BRANCH-001 has pin_code='400001' in its service area"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/public/leads with no Authorization header, captcha token in X-Captcha-Token header, body: { name: 'Anita Sharma', mobile: '7654321098', product_code: 'HRM', pin_code: '400001', consents: [{ purpose: 'lead_contact', state: 'granted' }] }",
+      "2. Assert HTTP 201 and channel_created_by field"
+    ],
+    "test_data": {
+      "name": "Anita Sharma",
+      "mobile": "7654321098",
+      "product_code": "HRM",
+      "pin_code": "400001",
+      "captcha_token": "valid-captcha-mock-token"
+    },
+    "expected_result": "HTTP 201; data.stage='captured'; data.channel_created_by='website'; no authentication required; branch auto-assigned based on pin_code routing",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR010-05",
+    "test_name": "VALIDATION_ERROR when mobile is missing from lead create body",
+    "category": "Negative/Error",
+    "linked_fr": "FR-010",
+    "priority": "Critical",
+    "preconditions": [
+      "RM 'priya.rm@nbfc.local' authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with body that omits identity.mobile",
+      "2. Assert HTTP 400 and fields array"
+    ],
+    "test_data": {
+      "name": "Rohit Verma",
+      "product_code": "SBL",
+      "source": "Branch"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains entry with field='identity.mobile'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR010-06",
+    "test_name": "VALIDATION_ERROR when mobile starts with digit 1 (invalid Indian mobile format)",
+    "category": "Boundary",
+    "linked_fr": "FR-010",
+    "priority": "High",
+    "preconditions": [
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with identity.mobile='1234567890'",
+      "2. Assert HTTP 400"
+    ],
+    "test_data": {
+      "mobile": "1234567890",
+      "name": "Rohit Verma",
+      "product_code": "SBL",
+      "source": "Branch"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains identity.mobile; message indicates mobile must match ^[6-9][0-9]{9}$",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR010-07",
+    "test_name": "VALIDATION_ERROR when source=DSA but partner_code is absent",
+    "category": "Negative/Error",
+    "linked_fr": "FR-010",
+    "priority": "High",
+    "preconditions": [
+      "BM authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with source='DSA' and no partner_code field",
+      "2. Assert HTTP 400 and fields"
+    ],
+    "test_data": {
+      "name": "Amit Joshi",
+      "mobile": "9123456780",
+      "product_code": "CE",
+      "source": "DSA"
+    },
+    "expected_result": "HTTP 400; error.code='VALIDATION_ERROR'; error.fields contains entry with field='source.partner_code'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR010-08",
+    "test_name": "CONFLICT returned when duplicate detection blocks a strong duplicate (same PAN + mobile)",
+    "category": "Negative/Error",
+    "linked_fr": "FR-010",
+    "priority": "Critical",
+    "preconditions": [
+      "Existing lead LD-2026-000001 has mobile='9876543210' and pan_token='PQRST5678U'",
+      "Duplicate config action=blocked for strong confidence",
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with mobile='9876543210' and pan_token='PQRST5678U'",
+      "2. Assert HTTP 409 and error detail"
+    ],
+    "test_data": {
+      "name": "Ramesh Kumar",
+      "mobile": "9876543210",
+      "pan_token": "PQRST5678U",
+      "product_code": "CV",
+      "source": "Branch"
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; error.detail.reason='DUPLICATE_BLOCKED'; error.detail.matches is a non-empty array with confidence='strong'; no new lead row created in DB",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR010-09",
+    "test_name": "FORBIDDEN when PARTNER attempts to submit lead with a different partner's partner_code",
+    "category": "Permission",
+    "linked_fr": "FR-010",
+    "priority": "Critical",
+    "preconditions": [
+      "PARTNER user 'partner.dsa1@dsa.com' has partner_id=PARTNER-001",
+      "PARTNER-002 is a separate partner entity"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with PARTNER-001's JWT and partner_code belonging to PARTNER-002",
+      "2. Assert HTTP 403"
+    ],
+    "test_data": {
+      "requesting_partner_id": "PARTNER-001",
+      "partner_code_in_body": "PARTNER-002-code",
+      "mobile": "9000001111",
+      "product_code": "CAR",
+      "source": "DSA"
+    },
+    "expected_result": "HTTP 403; error.code='FORBIDDEN'; no lead row created",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR010-10",
+    "test_name": "Bulk import with partial failure creates valid rows and generates row-error CSV",
+    "category": "Happy Path",
+    "linked_fr": "FR-010",
+    "priority": "High",
+    "preconditions": [
+      "BM 'rajesh.bm@nbfc.local' authenticated",
+      "CSV file with 3 rows: rows 1 and 3 valid, row 2 has invalid mobile '0000000000'"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads/import with BM's JWT and the CSV as multipart/form-data",
+      "2. Assert HTTP 202 and import_job_id",
+      "3. Poll or await job completion",
+      "4. Assert import_job: success_rows=2, failed_rows=1",
+      "5. Assert error CSV GCS reference is set; download and verify row 2 entry"
+    ],
+    "test_data": {
+      "csv_rows": [
+        {"row": 1, "name": "Kavita Reddy", "mobile": "9001234567", "product_code": "CAR", "source": "Branch"},
+        {"row": 2, "name": "Invalid Row", "mobile": "0000000000", "product_code": "CAR", "source": "Branch"},
+        {"row": 3, "name": "Mohan Das", "mobile": "8901234567", "product_code": "CAR", "source": "Branch"}
+      ]
+    },
+    "expected_result": "HTTP 202; data.status='queued'; after completion: import_jobs.success_rows=2; import_jobs.failed_rows=1; error CSV contains row 2 with column='identity.mobile', code='VALIDATION_ERROR', message describing the invalid format; 2 new lead rows in DB",
+    "postconditions": [
+      "2 leads created",
+      "Error CSV available in GCS"
+    ]
+  },
+  {
+    "test_id": "TC-FR010-11",
+    "test_name": "Transaction rollback — no partial state when outbox emit fails mid-transaction",
+    "category": "Negative/Error",
+    "linked_fr": "FR-010",
+    "priority": "Critical",
+    "preconditions": [
+      "OutboxService.emit is mocked to throw an error",
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with valid body",
+      "2. OutboxService throws during the UnitOfWork transaction",
+      "3. Assert HTTP 500",
+      "4. Assert no rows in leads, lead_identities, source_attributions, stage_history for this attempt"
+    ],
+    "test_data": {
+      "name": "Test Rollback",
+      "mobile": "9199991111",
+      "product_code": "CV",
+      "source": "Branch"
+    },
+    "expected_result": "HTTP 500; error.code='INTERNAL_ERROR'; DB has zero rows for leads, lead_identities, source_attributions, stage_history, event_outbox, audit_logs for this mobile number",
+    "postconditions": [
+      "No partial state in DB"
+    ]
+  },
+  {
+    "test_id": "TC-FR010-12",
+    "test_name": "RATE_LIMITED on /public/leads after 10 requests from same IP within 60 seconds",
+    "category": "Boundary",
+    "linked_fr": "FR-010",
+    "priority": "High",
+    "preconditions": [
+      "10 successful requests made to /public/leads from the same IP within 60 seconds"
+    ],
+    "test_steps": [
+      "1. Send 11th POST /api/v1/public/leads from the same IP",
+      "2. Assert HTTP 429 and header"
+    ],
+    "test_data": {
+      "request_count": 11,
+      "window_seconds": 60
+    },
+    "expected_result": "HTTP 429; error.code='RATE_LIMITED'; Retry-After header present with positive integer value",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR010-DI-01",
+    "test_name": "Every lead created by FR-010 has exactly one source_attribution row",
+    "category": "Data Integrity",
+    "linked_fr": "FR-010",
+    "priority": "Critical",
+    "preconditions": [
+      "At least 3 leads created via POST /api/v1/leads in this test run"
+    ],
+    "test_steps": [
+      "1. Execute invariant SQL checking source_attribution count per lead",
+      "2. Assert zero rows returned"
+    ],
+    "test_data": {},
+    "expected_result": "0 rows returned — every lead has exactly 1 source_attribution",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT lead_id FROM leads ORDER BY created_at DESC LIMIT 5",
+      "action": "Create several leads, then run invariant",
+      "invariant_query": "SELECT l.lead_id FROM leads l WHERE l.created_at >= :test_start AND (SELECT COUNT(*) FROM source_attributions sa WHERE sa.source_attribution_id = l.source_attribution_id) <> 1",
+      "cleanup": "DELETE FROM leads WHERE created_at > :test_start AND org_id = '00000000-0000-0000-0000-000000000001'"
+    }
+  },
+  {
+    "test_id": "TC-FR010-DI-02",
+    "test_name": "No duplicate customer_profile rows for same org_id and primary_mobile",
+    "category": "Data Integrity",
+    "linked_fr": "FR-010",
+    "priority": "Critical",
+    "preconditions": [
+      "Multiple leads created for the same mobile number '9876543210'"
+    ],
+    "test_steps": [
+      "1. Create 3 leads for mobile '9876543210' (second and third will link to existing customer_profile)",
+      "2. Execute invariant SQL query",
+      "3. Assert zero rows (no duplicates)"
+    ],
+    "test_data": {
+      "mobile": "9876543210"
+    },
+    "expected_result": "0 rows returned — customer_profiles has exactly 1 row for (org_id, primary_mobile='9876543210') regardless of how many leads were created for that mobile",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT customer_profile_id FROM customer_profiles WHERE primary_mobile = '9876543210'",
+      "action": "Create multiple leads with same mobile, then run invariant",
+      "invariant_query": "SELECT org_id, primary_mobile, COUNT(*) AS cnt FROM customer_profiles GROUP BY org_id, primary_mobile HAVING COUNT(*) > 1",
+      "cleanup": "DELETE FROM customer_profiles WHERE primary_mobile = '9876543210' AND org_id = '00000000-0000-0000-0000-000000000001'"
+    }
+  },
+  {
+    "test_id": "TC-FR010-DI-03",
+    "test_name": "DSA and Dealer source leads always have non-null partner_id in source_attributions",
+    "category": "Data Integrity",
+    "linked_fr": "FR-010",
+    "priority": "High",
+    "preconditions": [
+      "Leads with source='DSA' and source='Dealer' created in this test run"
+    ],
+    "test_steps": [
+      "1. Create a lead with source='DSA' and partner_code='DSA-PARTNER-001'",
+      "2. Create a lead with source='Dealer' and partner_code='DEALER-001'",
+      "3. Execute invariant SQL",
+      "4. Assert zero rows"
+    ],
+    "test_data": {
+      "sources_checked": ["DSA", "Dealer"]
+    },
+    "expected_result": "0 rows returned — no DSA or Dealer lead has partner_id=NULL in source_attributions",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT sa.source_attribution_id FROM source_attributions sa WHERE sa.source IN ('DSA', 'Dealer') LIMIT 5",
+      "action": "Create DSA/Dealer leads then run invariant",
+      "invariant_query": "SELECT sa.source_attribution_id FROM source_attributions sa JOIN leads l ON l.source_attribution_id = sa.source_attribution_id WHERE sa.source IN ('DSA', 'Dealer') AND sa.partner_id IS NULL",
+      "cleanup": "N/A — checked in context of prior test data"
+    }
+  },
+  {
+    "test_id": "TC-FR010-UI-01",
+    "test_name": "RM completes quick-create form and lead appears in lead list",
+    "category": "UI/E2E",
+    "linked_fr": "FR-010",
+    "priority": "High",
+    "preconditions": [
+      "RM 'priya.rm@nbfc.local' is logged in"
+    ],
+    "test_steps": [
+      "1. Login as priya.rm@nbfc.local; navigate to /leads",
+      "2. Click 'Quick Create' button",
+      "3. Fill in: name='Kavita Reddy', mobile='9001234567', product='CV', source='Branch'",
+      "4. Submit the form",
+      "5. Assert success toast and lead appears in the leads list"
+    ],
+    "test_data": {
+      "name": "Kavita Reddy",
+      "mobile": "9001234567",
+      "product": "CV",
+      "source": "Branch"
+    },
+    "expected_result": "Toast 'Lead created successfully' visible; drawer/modal closes; lead with name 'Kavita Reddy' (or masked variant) appears in the leads list; mobile displayed as '90xxxxxx67'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads",
+      "locators": {
+        "quick_create_button": "getByRole('button', { name: /quick create|new lead/i })",
+        "name_input": "getByRole('textbox', { name: /name/i })",
+        "mobile_input": "getByRole('textbox', { name: /mobile/i })",
+        "product_select": "getByRole('combobox', { name: /product/i })",
+        "source_select": "getByRole('combobox', { name: /source/i })",
+        "submit_button": "getByRole('button', { name: /submit|create/i })",
+        "toast": "getByRole('status')",
+        "lead_in_list": "getByText('Kavita Reddy')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "authenticated as RM",
+      "network_wait": "waitForResponse('/api/v1/leads')",
+      "visual_assert": "Lead row visible in list after creation",
+      "a11y": "axe scan on form — 0 violations"
+    }
+  },
+  {
+    "test_id": "TC-FR010-UI-02",
+    "test_name": "Partner autocomplete becomes required when source=DSA is selected in capture form",
+    "category": "UI/E2E",
+    "linked_fr": "FR-010",
+    "priority": "Medium",
+    "preconditions": [
+      "BM 'rajesh.bm@nbfc.local' is logged in"
+    ],
+    "test_steps": [
+      "1. Navigate to lead capture form",
+      "2. Select source='DSA' from the source dropdown",
+      "3. Assert PartnerAutocomplete input becomes visible",
+      "4. Assert required indicator is shown on the partner field"
+    ],
+    "test_data": {
+      "source": "DSA"
+    },
+    "expected_result": "PartnerAutocomplete input appears conditionally after DSA is selected; required indicator (*) is visible; field is not shown when source='Branch'",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/new",
+      "locators": {
+        "source_select": "getByRole('combobox', { name: /source/i })",
+        "partner_autocomplete": "getByTestId('partner-autocomplete')",
+        "required_indicator": "getByText('*')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "authenticated as BM",
+      "network_wait": null,
+      "visual_assert": "Partner autocomplete visible only when DSA or Dealer selected",
+      "a11y": null
+    }
+  },
+  {
+    "test_id": "TC-FR010-UI-03",
+    "test_name": "Mobile field shows inline validation error for invalid format on form submit attempt",
+    "category": "UI/E2E",
+    "linked_fr": "FR-010",
+    "priority": "Medium",
+    "preconditions": [
+      "RM logged in; capture form open"
+    ],
+    "test_steps": [
+      "1. Open lead capture form",
+      "2. Enter mobile='123' in the mobile field",
+      "3. Click submit",
+      "4. Assert field-level error is shown below the mobile input without page navigation"
+    ],
+    "test_data": {
+      "mobile": "123"
+    },
+    "expected_result": "Inline error below mobile input is visible (role='alert' or aria-live); error message references mobile format; no page navigation; no network request fired",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/new",
+      "locators": {
+        "mobile_input": "getByRole('textbox', { name: /mobile/i })",
+        "mobile_error": "getByRole('alert')"
+      },
+      "viewport": "375x667",
+      "auth_state": "authenticated as RM",
+      "network_wait": null,
+      "visual_assert": "Error shown inline; form remains on screen",
+      "a11y": "axe scan on form with error — 0 violations"
+    }
+  },
+  {
+    "test_id": "TC-FR011-01",
+    "test_name": "Score and score_reasons are present in 201 response when lead is created with enriched fields",
+    "category": "Happy Path",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "RM 'priya.rm@nbfc.local' authenticated",
+      "Active scoring ConfigurationVersion with known weights exists",
+      "ProductConfig for CV active with pan_required_at='before_kyc'"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with body including: name='Ramesh Kumar', mobile='9876543210', product_code='CV', source='Branch', pin_code='400001', requested_amount=1500000, preferred_language='Hindi', employment_type='salaried'",
+      "2. Assert HTTP 201 and score fields",
+      "3. Confirm score is in range [0, 100]"
+    ],
+    "test_data": {
+      "name": "Ramesh Kumar",
+      "mobile": "9876543210",
+      "product_code": "CV",
+      "source": "Branch",
+      "pin_code": "400001",
+      "requested_amount": 1500000,
+      "preferred_language": "Hindi",
+      "employment_type": "salaried"
+    },
+    "expected_result": "HTTP 201; data.score is an integer in [0, 100]; data.score_reasons is a non-empty array of strings such as ['mobile_verified', 'pin_present', 'requested_amount_present', 'language_preference_set', 'employment_type_present']",
+    "postconditions": [
+      "leads.score and leads.score_reasons written to DB"
+    ]
+  },
+  {
+    "test_id": "TC-FR011-02",
+    "test_name": "Scoring failure does not block lead creation — score is null in response",
+    "category": "Negative/Error",
+    "linked_fr": "FR-011",
+    "priority": "Critical",
+    "preconditions": [
+      "ScoringService is mocked to throw an error",
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with valid body (ScoringService will throw internally)",
+      "2. Assert HTTP 201 (not 500)",
+      "3. Assert data.score is null and data.score_reasons is null",
+      "4. Confirm lead row exists in DB with score IS NULL"
+    ],
+    "test_data": {
+      "name": "Scoring Error Lead",
+      "mobile": "9100001111",
+      "product_code": "TW",
+      "source": "Branch"
+    },
+    "expected_result": "HTTP 201; data.score=null; data.score_reasons=null; lead row exists in DB; no 500 or INTERNAL_ERROR returned",
+    "postconditions": [
+      "Lead exists",
+      "Pino logger called with level='error' and lead_id"
+    ]
+  },
+  {
+    "test_id": "TC-FR011-03",
+    "test_name": "pan_missing_penalty reason applied when PAN absent and product requires PAN at_capture",
+    "category": "Boundary",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "ProductConfig for SBL has pan_required_at='at_capture' — wait, for scoring edge case, use a product where pan_missing_penalty applies when pan absent",
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with no pan_token, product_code='SBL', mobile='9200001111'",
+      "2. Assert score_reasons includes 'pan_missing_penalty'",
+      "3. Confirm score is lower than it would be with PAN present"
+    ],
+    "test_data": {
+      "name": "Vijay Nair",
+      "mobile": "9200001111",
+      "product_code": "SBL",
+      "pan_token": null
+    },
+    "expected_result": "HTTP 201; data.score_reasons includes 'pan_missing_penalty'; score is reduced relative to a lead with PAN present (at least 15 points lower based on default weight)",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR011-04",
+    "test_name": "source_high_rejection penalty applied for configured high-rejection source",
+    "category": "Negative/Error",
+    "linked_fr": "FR-011",
+    "priority": "Medium",
+    "preconditions": [
+      "ConfigurationVersion has 'Telecalling' in the high-rejection source list",
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with source='Telecalling', mobile='9300001111'",
+      "2. Assert score_reasons includes 'source_high_rejection'"
+    ],
+    "test_data": {
+      "name": "Meena Rajan",
+      "mobile": "9300001111",
+      "product_code": "CV",
+      "source": "Telecalling"
+    },
+    "expected_result": "HTTP 201; data.score_reasons includes 'source_high_rejection'; score reduced by 10 compared to a same-data lead with source='Branch'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR011-05",
+    "test_name": "Score is clamped to 0 — never negative — when all penalty factors apply simultaneously",
+    "category": "Boundary",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "All penalty conditions set: no PAN, high-rejection source, high-risk partner",
+      "ConfigurationVersion active with weights summing to more than 100 in penalties",
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with source='Telecalling' (high-rejection), partner=high-risk, no PAN, no optional fields",
+      "2. Assert score >= 0"
+    ],
+    "test_data": {
+      "name": "Low Score Lead",
+      "mobile": "9400001111",
+      "product_code": "CE",
+      "source": "Telecalling",
+      "pan_token": null
+    },
+    "expected_result": "HTTP 201; data.score >= 0 (floor clamping); data.score_reasons is non-empty; score is not negative",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR011-06",
+    "test_name": "Score is clamped to 100 — never exceeds maximum — when all positive factors apply",
+    "category": "Boundary",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "All positive scoring factors present: PAN, pin_code, requested_amount, preferred_language, employment_type, asset_type, good partner",
+      "RM authenticated"
+    ],
+    "test_steps": [
+      "1. POST /api/v1/leads with all enrichment fields filled: pan_token='ABCDE1234F', pin_code='560001', requested_amount=2500000, preferred_language='Kannada', employment_type='salaried', asset_type='new', source='Referral', partner quality_score=90",
+      "2. Assert score <= 100"
+    ],
+    "test_data": {
+      "name": "Full Score Lead",
+      "mobile": "9500001111",
+      "product_code": "TRACTOR",
+      "pan_token": "ABCDE1234F",
+      "pin_code": "560001",
+      "requested_amount": 2500000,
+      "preferred_language": "Kannada",
+      "employment_type": "salaried",
+      "asset_type": "new",
+      "source": "Referral"
+    },
+    "expected_result": "HTTP 201; data.score <= 100 (ceiling clamping); all positive reason codes present in data.score_reasons",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR011-07",
+    "test_name": "Score is re-evaluated and updated when a scoring-relevant field is PATCHed",
+    "category": "Happy Path",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "Lead LD-2026-000501 exists with score=40, version=1",
+      "RM owns this lead"
+    ],
+    "test_steps": [
+      "1. PATCH /api/v1/leads/<lead_id> with RM's JWT, body: { requested_amount: 2000000, expected_version: 1 }",
+      "2. Assert HTTP 200",
+      "3. Assert data.score > 40 (improved by high_amount factor)",
+      "4. Assert data.score_reasons contains 'high_amount' or 'requested_amount_present'"
+    ],
+    "test_data": {
+      "lead_id": "<lead_with_score_40>",
+      "requested_amount": 2000000,
+      "expected_version": 1
+    },
+    "expected_result": "HTTP 200; data.score is a new integer higher than 40; data.score_reasons includes a reason code related to amount; DB leads.score updated",
+    "postconditions": [
+      "DB score field updated"
+    ]
+  },
+  {
+    "test_id": "TC-FR011-08",
+    "test_name": "CONFLICT returned when PATCH uses stale expected_version (optimistic lock)",
+    "category": "Negative/Error",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "Lead exists with version=2 in DB",
+      "RM owns this lead"
+    ],
+    "test_steps": [
+      "1. PATCH /api/v1/leads/<lead_id> with expected_version=1 (stale)",
+      "2. Assert HTTP 409"
+    ],
+    "test_data": {
+      "expected_version": 1,
+      "actual_version_in_db": 2,
+      "requested_amount": 500000
+    },
+    "expected_result": "HTTP 409; error.code='CONFLICT'; data is null; leads row unchanged in DB",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR011-09",
+    "test_name": "PARTNER role cannot see score or score_reasons in lead response — fields are masked",
+    "category": "Permission",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "PARTNER 'partner.dsa1@dsa.com' authenticated",
+      "Lead LD-2026-000601 was submitted by this PARTNER and has score=72"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads/LD-2026-000601 with PARTNER's JWT",
+      "2. Assert HTTP 200",
+      "3. Assert score and score_reasons fields are absent from the response"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000601",
+      "requesting_role": "PARTNER",
+      "internal_score": 72
+    },
+    "expected_result": "HTTP 200; data does NOT contain 'score' field; data does NOT contain 'score_reasons' field (internal scoring information is masked from PARTNER role)",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR011-10",
+    "test_name": "BM can view score and score_reasons for leads in their branch",
+    "category": "Permission",
+    "linked_fr": "FR-011",
+    "priority": "Medium",
+    "preconditions": [
+      "BM 'rajesh.bm@nbfc.local' authenticated",
+      "Lead LD-2026-000701 in BM's branch has score=65"
+    ],
+    "test_steps": [
+      "1. GET /api/v1/leads/LD-2026-000701 with BM's JWT",
+      "2. Assert HTTP 200",
+      "3. Assert data.score is present and is 65",
+      "4. Assert data.score_reasons is a non-empty array"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000701",
+      "requesting_role": "BM",
+      "expected_score": 65
+    },
+    "expected_result": "HTTP 200; data.score=65; data.score_reasons is a non-empty array; BM can view internal scoring (has view_lead scope B)",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR011-DI-01",
+    "test_name": "No lead has a score outside the valid range [0, 100]",
+    "category": "Data Integrity",
+    "linked_fr": "FR-011",
+    "priority": "Critical",
+    "preconditions": [
+      "Multiple leads with various scoring conditions created in this test run"
+    ],
+    "test_steps": [
+      "1. Create leads with edge-case scoring inputs (all penalties, all bonuses)",
+      "2. Execute invariant SQL query",
+      "3. Assert zero rows"
+    ],
+    "test_data": {},
+    "expected_result": "0 rows returned — no lead has score < 0 or score > 100",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT lead_id, score FROM leads WHERE score IS NOT NULL ORDER BY created_at DESC LIMIT 10",
+      "action": "Create leads with various score-affecting conditions, then run invariant",
+      "invariant_query": "SELECT lead_id FROM leads WHERE score IS NOT NULL AND (score < 0 OR score > 100) LIMIT 1",
+      "cleanup": "N/A — read-only invariant; data from prior tests"
+    }
+  },
+  {
+    "test_id": "TC-FR011-DI-02",
+    "test_name": "No lead has score_reasons=null when score is non-null",
+    "category": "Data Integrity",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "Multiple leads with non-null scores exist in DB"
+    ],
+    "test_steps": [
+      "1. Execute invariant SQL query",
+      "2. Assert zero rows returned"
+    ],
+    "test_data": {},
+    "expected_result": "0 rows returned — every lead with a non-null score also has a non-null, non-empty score_reasons array",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT lead_id FROM leads WHERE score IS NOT NULL LIMIT 5",
+      "action": "Run invariant after scoring tests",
+      "invariant_query": "SELECT lead_id FROM leads WHERE score IS NOT NULL AND (score_reasons IS NULL OR jsonb_array_length(score_reasons) = 0) LIMIT 1",
+      "cleanup": "N/A — read-only"
+    }
+  },
+  {
+    "test_id": "TC-FR011-DI-03",
+    "test_name": "No lead has a score_reasons entry not in the known ScoreReasonCode enum",
+    "category": "Data Integrity",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "Several leads with score_reasons populated"
+    ],
+    "test_steps": [
+      "1. Execute invariant SQL query checking all reason codes",
+      "2. Assert zero rows"
+    ],
+    "test_data": {
+      "valid_reason_codes": [
+        "mobile_verified", "pin_present", "requested_amount_present", "high_amount",
+        "language_preference_set", "pan_present", "pan_missing_penalty",
+        "partner_quality_good", "partner_high_risk", "source_high_rejection",
+        "customer_type_business", "employment_type_present", "asset_details_present"
+      ]
+    },
+    "expected_result": "0 rows returned — all score_reason codes in all leads are from the known enum set",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "SELECT lead_id FROM leads WHERE score_reasons IS NOT NULL LIMIT 5",
+      "action": "Run after scoring creates entries, then run invariant",
+      "invariant_query": "SELECT lead_id, elem FROM leads, jsonb_array_elements_text(score_reasons) AS elem WHERE score_reasons IS NOT NULL AND elem NOT IN ('mobile_verified','pin_present','requested_amount_present','high_amount','language_preference_set','pan_present','pan_missing_penalty','partner_quality_good','partner_high_risk','source_high_rejection','customer_type_business','employment_type_present','asset_details_present') LIMIT 1",
+      "cleanup": "N/A — read-only"
+    }
+  },
+  {
+    "test_id": "TC-FR011-UI-01",
+    "test_name": "RM sees ScoreChip with correct colour (green for score >= 70) on Lead 360",
+    "category": "UI/E2E",
+    "linked_fr": "FR-011",
+    "priority": "Medium",
+    "preconditions": [
+      "RM logged in",
+      "Lead LD-2026-000801 owned by this RM has score=72"
+    ],
+    "test_steps": [
+      "1. Login as priya.rm@nbfc.local",
+      "2. Navigate to /leads/LD-2026-000801",
+      "3. Locate the score chip",
+      "4. Assert score displays '72' with green colour",
+      "5. Click the info icon on the chip",
+      "6. Assert popover opens with human-readable reason labels"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000801",
+      "score": 72,
+      "score_reasons": ["mobile_verified", "pin_present", "pan_present"]
+    },
+    "expected_result": "ScoreChip displays '72'; badge has green variant class; clicking info icon opens popover listing reason labels in English (not raw codes); popover is accessible",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/LD-2026-000801",
+      "locators": {
+        "score_chip": "getByTestId('score-chip')",
+        "score_value": "getByText('72')",
+        "info_icon": "getByRole('button', { name: /score info|reasons/i })",
+        "popover": "getByRole('tooltip')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "authenticated as RM",
+      "network_wait": "waitForResponse('/api/v1/leads/*')",
+      "visual_assert": "Green badge with '72'; popover opens on click",
+      "a11y": "axe scan on Lead 360 — 0 violations"
+    }
+  },
+  {
+    "test_id": "TC-FR011-UI-02",
+    "test_name": "ScoreChip displays em dash when score is null and shows unavailable tooltip",
+    "category": "UI/E2E",
+    "linked_fr": "FR-011",
+    "priority": "Medium",
+    "preconditions": [
+      "RM logged in",
+      "Lead LD-2026-000802 has score=null (scoring failed at capture)"
+    ],
+    "test_steps": [
+      "1. Login as priya.rm@nbfc.local",
+      "2. Navigate to /leads/LD-2026-000802 (score is null)",
+      "3. Locate score chip area",
+      "4. Assert '—' is displayed",
+      "5. Hover info icon and assert unavailable message"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000802",
+      "score": null
+    },
+    "expected_result": "ScoreChip shows '—' text; no numeric badge; tooltip or aria-label shows i18n key 'score.unavailable' resolved message; no colour variant applied",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/LD-2026-000802",
+      "locators": {
+        "score_chip": "getByTestId('score-chip')",
+        "null_indicator": "getByText('—')",
+        "tooltip": "getByRole('tooltip')"
+      },
+      "viewport": "375x667",
+      "auth_state": "authenticated as RM",
+      "network_wait": "waitForResponse('/api/v1/leads/*')",
+      "visual_assert": "'—' shown; no coloured badge",
+      "a11y": "axe scan — 0 violations"
+    }
+  },
+  {
+    "test_id": "TC-FR011-UI-03",
+    "test_name": "PARTNER user does not see ScoreChip on their submitted lead",
+    "category": "UI/E2E",
+    "linked_fr": "FR-011",
+    "priority": "High",
+    "preconditions": [
+      "PARTNER 'partner.dsa1@dsa.com' logged in",
+      "Lead LD-2026-000601 was submitted by this partner and has internal score=58"
+    ],
+    "test_steps": [
+      "1. Login as partner.dsa1@dsa.com",
+      "2. Navigate to /leads/LD-2026-000601",
+      "3. Assert ScoreChip is absent from the page"
+    ],
+    "test_data": {
+      "lead_code": "LD-2026-000601",
+      "requesting_role": "PARTNER"
+    },
+    "expected_result": "No ScoreChip element present in DOM; no score value visible; page renders lead details without score section",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/LD-2026-000601",
+      "locators": {
+        "score_chip": "queryByTestId('score-chip')"
+      },
+      "viewport": "1280x800",
+      "auth_state": "authenticated as PARTNER",
+      "network_wait": "waitForResponse('/api/v1/leads/*')",
+      "visual_assert": "Score section absent from UI",
+      "a11y": null
+    }
+  }
+]

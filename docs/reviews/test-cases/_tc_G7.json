@@ -1,0 +1,1827 @@
+[
+  {
+    "test_id": "TC-FR100-01",
+    "test_name": "RM creates a call task for own lead with valid payload",
+    "category": "Happy Path",
+    "linked_fr": "FR-100",
+    "priority": "Critical",
+    "preconditions": [
+      "RM user 'rm_arjun' is authenticated (JWT issued)",
+      "Lead 'lead-001' exists and is owned by 'rm_arjun' (same org)",
+      "SLA policy 'sla-policy-001' is active (is_active=true)",
+      "No existing task for this lead-type combination that would conflict"
+    ],
+    "test_steps": [
+      "POST /api/v1/tasks with Authorization: Bearer <RM_JWT>",
+      "Body: { \"lead_id\": \"lead-001\", \"type\": \"call\", \"owner_id\": \"rm_arjun_id\", \"due_at\": \"<now+24h>\", \"priority\": \"high\", \"sla_policy_id\": \"sla-policy-001\" }",
+      "Assert HTTP 201",
+      "Assert response envelope: data.status === 'open', data.task_id is UUID, data.type === 'call'",
+      "Query DB: SELECT * FROM tasks WHERE task_id = <returned_id>",
+      "Assert tasks row exists with status='open', type='call', owner_id='rm_arjun_id'",
+      "Query DB: SELECT * FROM audit_logs WHERE action='task_created' AND detail->>'task_id'=<returned_id>",
+      "Assert exactly 1 audit_log row exists"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id", "branch_id": "branch-mumbai" },
+      "lead_id": "lead-001",
+      "payload": { "lead_id": "lead-001", "type": "call", "owner_id": "rm_arjun_id", "due_at": "+24h", "priority": "high", "sla_policy_id": "sla-policy-001" }
+    },
+    "expected_result": "HTTP 201; { data: { status: 'open', type: 'call', priority: 'high', task_id: <uuid> }, meta: { ... }, error: null }; tasks row inserted; audit_logs row with action='task_created'",
+    "postconditions": [
+      "tasks row exists with status='open'",
+      "audit_logs row exists with action='task_created' and detail.task_id matching returned task_id",
+      "INV-03: no task without a corresponding audit_log (0 rows)",
+      "INV-05: tasks.lead_id references a valid lead row (0 orphans)"
+    ]
+  },
+  {
+    "test_id": "TC-FR100-02",
+    "test_name": "POST /tasks returns VALIDATION_ERROR when due_at is in the past",
+    "category": "Negative/Error",
+    "linked_fr": "FR-100",
+    "priority": "High",
+    "preconditions": [
+      "RM user authenticated",
+      "Lead 'lead-001' owned by RM exists"
+    ],
+    "test_steps": [
+      "POST /api/v1/tasks with Authorization: Bearer <RM_JWT>",
+      "Body: { \"lead_id\": \"lead-001\", \"type\": \"call\", \"owner_id\": \"rm_arjun_id\", \"due_at\": \"2026-01-01T00:00:00Z\", \"priority\": \"medium\" }",
+      "Assert HTTP 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains an entry with field='due_at'",
+      "Query DB: SELECT COUNT(*) FROM tasks WHERE lead_id='lead-001'",
+      "Assert count is 0 (no row inserted)"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "payload": { "lead_id": "lead-001", "type": "call", "owner_id": "rm_arjun_id", "due_at": "2026-01-01T00:00:00Z", "priority": "medium" }
+    },
+    "expected_result": "HTTP 400; { data: null, error: { code: 'VALIDATION_ERROR', fields: [{ field: 'due_at', issue: '...' }] } }; 0 rows inserted in tasks table",
+    "postconditions": [
+      "No tasks row inserted for this request",
+      "No audit_log row for task_created written"
+    ]
+  },
+  {
+    "test_id": "TC-FR100-03",
+    "test_name": "POST /tasks returns FORBIDDEN when RM creates task for another RM's lead",
+    "category": "Permission",
+    "linked_fr": "FR-100",
+    "priority": "Critical",
+    "preconditions": [
+      "RM-A ('rm_arjun') authenticated",
+      "Lead 'lead-rm-b-001' exists and is owned by RM-B ('rm_priya'), different from RM-A"
+    ],
+    "test_steps": [
+      "POST /api/v1/tasks with Authorization: Bearer <RM_A_JWT>",
+      "Body: { \"lead_id\": \"lead-rm-b-001\", \"type\": \"call\", \"owner_id\": \"rm_arjun_id\", \"due_at\": \"<now+24h>\", \"priority\": \"medium\" }",
+      "Assert HTTP 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Query DB: SELECT COUNT(*) FROM tasks WHERE lead_id='lead-rm-b-001'",
+      "Assert count is 0"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id", "scope": "O" },
+      "lead_id": "lead-rm-b-001",
+      "lead_owner": "rm_priya_id"
+    },
+    "expected_result": "HTTP 403; { data: null, error: { code: 'FORBIDDEN' }, meta: null }; no row inserted",
+    "postconditions": [
+      "tasks table unmodified",
+      "audit_logs table unmodified"
+    ]
+  },
+  {
+    "test_id": "TC-FR100-04",
+    "test_name": "PATCH /tasks/:id transitions open task to done with disposition",
+    "category": "Workflow",
+    "linked_fr": "FR-100",
+    "priority": "Critical",
+    "preconditions": [
+      "Task 'task-open-001' exists with status='open', type='call', owned by 'rm_arjun'",
+      "RM 'rm_arjun' authenticated"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-open-001 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"status\": \"done\", \"disposition\": \"connected\", \"result_note\": \"Spoke with customer, interested in home loan.\" }",
+      "Assert HTTP 200",
+      "Assert data.status === 'done'",
+      "Assert data.disposition === 'connected'",
+      "Query DB: SELECT status, disposition FROM tasks WHERE task_id='task-open-001'",
+      "Assert status='done', disposition='connected'",
+      "Query DB: SELECT * FROM audit_logs WHERE action='task_updated' AND detail->>'task_id'='task-open-001'",
+      "Assert 1 audit_log row exists"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "task_id": "task-open-001",
+      "seed": { "status": "open", "type": "call", "owner_id": "rm_arjun_id" },
+      "payload": { "status": "done", "disposition": "connected", "result_note": "Spoke with customer, interested in home loan." }
+    },
+    "expected_result": "HTTP 200; { data: { status: 'done', disposition: 'connected' }, error: null }; tasks row updated; audit_logs row with action='task_updated'",
+    "postconditions": [
+      "tasks.status='done' and tasks.disposition='connected'",
+      "audit_logs row written",
+      "INV-01: no future-due task has status='overdue' (0 rows)"
+    ]
+  },
+  {
+    "test_id": "TC-FR100-05",
+    "test_name": "PATCH /tasks/:id returns CONFLICT when transitioning done to open",
+    "category": "Workflow",
+    "linked_fr": "FR-100",
+    "priority": "High",
+    "preconditions": [
+      "Task 'task-done-001' exists with status='done'",
+      "RM 'rm_arjun' owns the task and is authenticated"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-done-001 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"status\": \"open\" }",
+      "Assert HTTP 409",
+      "Assert error.code === 'CONFLICT'",
+      "Query DB: SELECT status FROM tasks WHERE task_id='task-done-001'",
+      "Assert status remains 'done'"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "task_id": "task-done-001",
+      "seed": { "status": "done", "disposition": "connected" },
+      "payload": { "status": "open" }
+    },
+    "expected_result": "HTTP 409; { data: null, error: { code: 'CONFLICT' } }; tasks.status unchanged at 'done'",
+    "postconditions": [
+      "tasks row status still 'done'",
+      "No additional audit_log row for this attempted transition"
+    ]
+  },
+  {
+    "test_id": "TC-FR100-06",
+    "test_name": "PATCH /tasks/:id returns VALIDATION_ERROR when disposition absent on done update",
+    "category": "Negative/Error",
+    "linked_fr": "FR-100",
+    "priority": "High",
+    "preconditions": [
+      "Task 'task-open-002' exists with status='open'",
+      "RM owner authenticated"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-open-002 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"status\": \"done\" } (no disposition field)",
+      "Assert HTTP 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains entry with field='disposition'",
+      "Query DB: SELECT status FROM tasks WHERE task_id='task-open-002'",
+      "Assert status still 'open'"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "task_id": "task-open-002",
+      "seed": { "status": "open", "type": "call" },
+      "payload": { "status": "done" }
+    },
+    "expected_result": "HTTP 400; { error: { code: 'VALIDATION_ERROR', fields: [{ field: 'disposition' }] } }; task status unchanged",
+    "postconditions": [
+      "tasks.status remains 'open'",
+      "No audit_log for task_updated written"
+    ]
+  },
+  {
+    "test_id": "TC-FR100-07",
+    "test_name": "BM can reassign task owner_id within branch scope",
+    "category": "Permission",
+    "linked_fr": "FR-100",
+    "priority": "High",
+    "preconditions": [
+      "BM 'bm_raj' authenticated, branch='branch-mumbai'",
+      "Task 'task-open-003' owned by 'rm_arjun' (branch-mumbai)",
+      "RM 'rm_priya' also in 'branch-mumbai'"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-open-003 with Authorization: Bearer <BM_JWT>",
+      "Body: { \"owner_id\": \"rm_priya_id\" }",
+      "Assert HTTP 200",
+      "Assert data.owner_id === 'rm_priya_id'",
+      "Query DB: SELECT owner_id FROM tasks WHERE task_id='task-open-003'",
+      "Assert owner_id='rm_priya_id'",
+      "Query DB: SELECT * FROM audit_logs WHERE action='task_updated' AND detail->>'task_id'='task-open-003'",
+      "Assert 1 row"
+    ],
+    "test_data": {
+      "actor": { "role": "BM", "user_id": "bm_raj_id", "branch_id": "branch-mumbai", "scope": "B" },
+      "task_id": "task-open-003",
+      "seed": { "owner_id": "rm_arjun_id", "status": "open" },
+      "payload": { "owner_id": "rm_priya_id" }
+    },
+    "expected_result": "HTTP 200; tasks.owner_id updated to rm_priya_id; audit_log written",
+    "postconditions": [
+      "tasks.owner_id='rm_priya_id'",
+      "audit_logs row written"
+    ]
+  },
+  {
+    "test_id": "TC-FR100-08",
+    "test_name": "TaskOverdueSweepJob marks past-due open and in_progress tasks as overdue",
+    "category": "Workflow",
+    "linked_fr": "FR-100",
+    "priority": "Critical",
+    "preconditions": [
+      "Task 'task-overdue-001' exists: status='open', due_at=<now-1h>",
+      "Task 'task-overdue-002' exists: status='in_progress', due_at=<now-2h>",
+      "Task 'task-done-002' exists: status='done', due_at=<now-3h> (must not change)"
+    ],
+    "test_steps": [
+      "Trigger POST /api/v1/internal/tasks/overdue-sweep with Cloud Tasks OIDC header",
+      "Assert HTTP 200",
+      "Query DB: SELECT status FROM tasks WHERE task_id='task-overdue-001'",
+      "Assert status='overdue'",
+      "Query DB: SELECT status FROM tasks WHERE task_id='task-overdue-002'",
+      "Assert status='overdue'",
+      "Query DB: SELECT status FROM tasks WHERE task_id='task-done-002'",
+      "Assert status='done' (unchanged)",
+      "Query DB: SELECT COUNT(*) FROM event_outbox WHERE event_code='TASK_OVERDUE' AND aggregate_id IN ('task-overdue-001','task-overdue-002')",
+      "Assert count=2"
+    ],
+    "test_data": {
+      "seed_tasks": [
+        { "task_id": "task-overdue-001", "status": "open", "due_at": "-1h" },
+        { "task_id": "task-overdue-002", "status": "in_progress", "due_at": "-2h" },
+        { "task_id": "task-done-002", "status": "done", "due_at": "-3h" }
+      ]
+    },
+    "expected_result": "task-overdue-001 and task-overdue-002 → status='overdue'; task-done-002 unchanged; 2 TASK_OVERDUE events in event_outbox",
+    "postconditions": [
+      "INV-01: no future-due task has status='overdue' (0 rows)",
+      "Sweep is idempotent — running a second time produces no new duplicate events"
+    ]
+  },
+  {
+    "test_id": "TC-FR100-09",
+    "test_name": "Nurture task completion sets leads.nurture_next_at",
+    "category": "Workflow",
+    "linked_fr": "FR-100",
+    "priority": "High",
+    "preconditions": [
+      "Task 'task-nurture-001' exists: type='nurture', status='open', lead_id='lead-001'",
+      "leads.nurture_next_at is NULL for 'lead-001'",
+      "RM owner authenticated"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-nurture-001 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"status\": \"done\", \"disposition\": \"nurture_scheduled\", \"next_action_at\": \"2026-07-15T10:00:00Z\" }",
+      "Assert HTTP 200",
+      "Query DB: SELECT nurture_next_at FROM leads WHERE lead_id='lead-001'",
+      "Assert nurture_next_at = '2026-07-15T10:00:00Z'"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "task_id": "task-nurture-001",
+      "seed": { "type": "nurture", "status": "open", "lead_id": "lead-001" },
+      "payload": { "status": "done", "disposition": "nurture_scheduled", "next_action_at": "2026-07-15T10:00:00Z" }
+    },
+    "expected_result": "HTTP 200; leads.nurture_next_at='2026-07-15T10:00:00Z' updated atomically in same transaction",
+    "postconditions": [
+      "INV-06: leads.nurture_next_at equals last done nurture task's next_action_at (0 mismatches)"
+    ]
+  },
+  {
+    "test_id": "TC-FR100-10",
+    "test_name": "GET /tasks returns only RM's own scoped tasks, excluding other RM's tasks",
+    "category": "Permission",
+    "linked_fr": "FR-100",
+    "priority": "High",
+    "preconditions": [
+      "RM-A 'rm_arjun' has 3 tasks (task-a-1, task-a-2, task-a-3)",
+      "RM-B 'rm_priya' has 2 tasks (task-b-1, task-b-2)",
+      "Both RMs in same org; RM-A authenticated"
+    ],
+    "test_steps": [
+      "GET /api/v1/tasks with Authorization: Bearer <RM_A_JWT>",
+      "Assert HTTP 200",
+      "Assert data array contains exactly 3 items",
+      "Assert all returned task_ids are in ['task-a-1','task-a-2','task-a-3']",
+      "Assert 'task-b-1' and 'task-b-2' are NOT present in response"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id", "scope": "O" },
+      "rm_a_tasks": ["task-a-1", "task-a-2", "task-a-3"],
+      "rm_b_tasks": ["task-b-1", "task-b-2"]
+    },
+    "expected_result": "HTTP 200; data contains exactly 3 tasks all owned by rm_arjun; RM-B tasks absent; meta.total=3",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR100-UI-01",
+    "test_name": "RM creates a call task from the Tasks page and sees it in the list",
+    "category": "UI/E2E",
+    "linked_fr": "FR-100",
+    "priority": "High",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated in browser session",
+      "Lead 'lead-001' assigned to RM exists"
+    ],
+    "test_steps": [
+      "Navigate to /tasks",
+      "Click button with role='button' name='Create Task'",
+      "Select type=call from combobox",
+      "Select lead-001 from lead selector",
+      "Set due_at to tomorrow at 10:00",
+      "Select priority=high",
+      "Click submit button",
+      "Assert toast 'Task created' is visible",
+      "Assert new row with StatusChip text 'Open' appears in the task table"
+    ],
+    "test_data": {
+      "auth_state": { "role": "RM", "user": "rm_arjun" },
+      "task_type": "call",
+      "priority": "high",
+      "due_at": "+24h"
+    },
+    "expected_result": "New task row visible in table with status chip showing 'Open'; toast 'Task created' displayed",
+    "postconditions": [
+      "DB task row exists with status='open'"
+    ],
+    "ui_meta": {
+      "route": "/tasks",
+      "locators": {
+        "create_button": "getByRole('button', { name: 'Create Task' })",
+        "type_select": "getByRole('combobox', { name: 'Task Type' })",
+        "due_at_input": "getByTestId('due-at-input')",
+        "priority_select": "getByRole('combobox', { name: 'Priority' })",
+        "submit_button": "getByRole('button', { name: 'Submit' })",
+        "toast": "getByRole('status').getByText('Task created')",
+        "status_chip": "getByTestId('status-chip').filter({ hasText: 'Open' })"
+      },
+      "viewport": [
+        { "width": 1280, "height": 800 },
+        { "width": 375, "height": 667 }
+      ],
+      "auth_state": "rm_arjun_auth.json",
+      "network_wait": "waitForResponse('**/api/v1/tasks')",
+      "visual_assert": "expect(statusChip).toHaveText('Open')",
+      "a11y": "injectAxe(); checkA11y('#task-create-modal', { runOnly: ['wcag2a','wcag2aa'] })"
+    }
+  },
+  {
+    "test_id": "TC-FR100-DI-01",
+    "test_name": "UnitOfWork rolls back task insert when AuditAppender throws",
+    "category": "Data Integrity",
+    "linked_fr": "FR-100",
+    "priority": "Critical",
+    "preconditions": [
+      "AuditAppender is mocked to throw a DB error",
+      "Test database is clean (no tasks for lead-001)"
+    ],
+    "test_steps": [
+      "Call TaskService.create() with valid payload for lead-001",
+      "AuditAppender.append() throws during the transaction",
+      "Assert exception propagates as INTERNAL_ERROR (500)",
+      "Query DB (invariant): SELECT COUNT(*) FROM tasks WHERE lead_id='lead-001'",
+      "Assert count=0 (rolled back)"
+    ],
+    "test_data": {
+      "payload": { "lead_id": "lead-001", "type": "call", "owner_id": "rm_arjun_id", "due_at": "+24h" },
+      "mock": "AuditAppender.append() => throws new Error('DB write failed')"
+    },
+    "expected_result": "Task row absent from DB; no partial state; INTERNAL_ERROR propagated",
+    "postconditions": [
+      "tasks table has 0 rows for lead-001",
+      "audit_logs table has 0 rows for this attempt"
+    ],
+    "di_meta": {
+      "setup_sql": "DELETE FROM tasks WHERE lead_id = 'lead-001-test-di'; DELETE FROM audit_logs WHERE lead_id = 'lead-001-test-di';",
+      "action": "TaskService.create({ lead_id: 'lead-001-test-di', ... }) with mocked AuditAppender that throws",
+      "invariant_query": "SELECT COUNT(*) FROM tasks WHERE lead_id = 'lead-001-test-di' HAVING COUNT(*) > 0",
+      "cleanup": "DELETE FROM tasks WHERE lead_id = 'lead-001-test-di';"
+    }
+  },
+  {
+    "test_id": "TC-FR101-01",
+    "test_name": "ADMIN creates a communication template with draft status",
+    "category": "Happy Path",
+    "linked_fr": "FR-101",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN user 'admin_ops' authenticated",
+      "No existing template with code='DOC_REQUEST_SMS_EN' in org"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/templates with Authorization: Bearer <ADMIN_JWT>",
+      "Body: { \"code\": \"DOC_REQUEST_SMS_EN\", \"version\": 1, \"channel\": \"sms\", \"language\": \"English\", \"category\": \"transactional\", \"body\": \"Dear {{name}}, please upload your documents at {{link}}.\" }",
+      "Assert HTTP 201",
+      "Assert data.status === 'draft'",
+      "Assert data.template_id is a valid UUID",
+      "Query DB: SELECT * FROM communication_templates WHERE code='DOC_REQUEST_SMS_EN' AND status='draft'",
+      "Assert 1 row exists",
+      "Assert audit emit called with action='TEMPLATE_CREATED'"
+    ],
+    "test_data": {
+      "actor": { "role": "ADMIN", "user_id": "admin_ops_id" },
+      "payload": { "code": "DOC_REQUEST_SMS_EN", "version": 1, "channel": "sms", "language": "English", "category": "transactional", "body": "Dear {{name}}, please upload your documents at {{link}}." }
+    },
+    "expected_result": "HTTP 201; { data: { status: 'draft', template_id: <uuid>, code: 'DOC_REQUEST_SMS_EN' }, error: null }; DB row with status='draft'",
+    "postconditions": [
+      "INV-05: no template with status outside draft|active|retired (0 rows)",
+      "INV-03: no duplicate (code, channel, language, version) in same org (0 rows)"
+    ]
+  },
+  {
+    "test_id": "TC-FR101-02",
+    "test_name": "RM dispatches transactional SMS to own lead with granted consent",
+    "category": "Happy Path",
+    "linked_fr": "FR-101",
+    "priority": "Critical",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated; owns lead 'lead-001'",
+      "Active SMS template 'tmpl-sms-001' (status='active', category='transactional', channel='sms')",
+      "consent_records row: (lead_id='lead-001', purpose='lead_contact', state='granted')",
+      "No notification_preferences opt-out row for this (subject_ref, channel='sms', purpose='lead_contact')"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/lead-001/communications with Authorization: Bearer <RM_JWT>",
+      "Body: { \"template_id\": \"tmpl-sms-001\", \"channel\": \"sms\", \"consent_basis\": \"lead_contact\", \"recipient\": \"9876543210\" }",
+      "Assert HTTP 202",
+      "Assert data.status === 'queued'",
+      "Query DB: SELECT * FROM communication_logs WHERE lead_id='lead-001' AND status='queued'",
+      "Assert 1 row with template_id='tmpl-sms-001', channel='sms', consent_basis='lead_contact'"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id", "scope": "O" },
+      "lead_id": "lead-001",
+      "template_id": "tmpl-sms-001",
+      "payload": { "template_id": "tmpl-sms-001", "channel": "sms", "consent_basis": "lead_contact", "recipient": "9876543210" }
+    },
+    "expected_result": "HTTP 202; { data: { status: 'queued', communication_log_id: <uuid> }, error: null }; communication_logs row inserted with status='queued'; Cloud Tasks job enqueued",
+    "postconditions": [
+      "INV-01: no comm_log referencing non-existent template (0 rows)",
+      "INV-02: no comm_log with non-null lead_id referencing absent lead (0 rows)"
+    ]
+  },
+  {
+    "test_id": "TC-FR101-03",
+    "test_name": "Dispatch blocked when no ConsentRecord exists for purpose",
+    "category": "Negative/Error",
+    "linked_fr": "FR-101",
+    "priority": "Critical",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated; owns lead 'lead-no-consent'",
+      "Active template 'tmpl-sms-001' (transactional)",
+      "No consent_records row for (lead_id='lead-no-consent', purpose='lead_contact', state='granted')"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/lead-no-consent/communications with Authorization: Bearer <RM_JWT>",
+      "Body: { \"template_id\": \"tmpl-sms-001\", \"channel\": \"sms\", \"consent_basis\": \"lead_contact\", \"recipient\": \"9876543210\" }",
+      "Assert HTTP 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Assert error.detail.reason === 'CONSENT_MISSING'",
+      "Query DB: SELECT COUNT(*) FROM communication_logs WHERE lead_id='lead-no-consent'",
+      "Assert count=0"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "lead_id": "lead-no-consent",
+      "consent_records": []
+    },
+    "expected_result": "HTTP 403; { error: { code: 'FORBIDDEN', detail: { reason: 'CONSENT_MISSING' } } }; 0 communication_logs rows",
+    "postconditions": [
+      "No communication_logs row created",
+      "No Cloud Tasks job enqueued"
+    ]
+  },
+  {
+    "test_id": "TC-FR101-04",
+    "test_name": "Dispatch blocked when notification_preferences has opted_in=false",
+    "category": "Negative/Error",
+    "linked_fr": "FR-101",
+    "priority": "Critical",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated; owns lead 'lead-001'",
+      "consent_records: (lead_id='lead-001', purpose='lead_contact', state='granted')",
+      "notification_preferences: (subject_ref='cust-001', channel='sms', purpose='lead_contact', opted_in=false)"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/lead-001/communications with Authorization: Bearer <RM_JWT>",
+      "Body: { \"template_id\": \"tmpl-sms-001\", \"channel\": \"sms\", \"consent_basis\": \"lead_contact\", \"recipient\": \"9876543210\" }",
+      "Assert HTTP 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Assert error.detail.reason === 'CONSENT_MISSING'",
+      "Query DB: SELECT COUNT(*) FROM communication_logs WHERE lead_id='lead-001'",
+      "Assert count=0"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "consent_records": [{ "lead_id": "lead-001", "purpose": "lead_contact", "state": "granted" }],
+      "notification_preferences": [{ "subject_ref": "cust-001", "channel": "sms", "purpose": "lead_contact", "opted_in": false }]
+    },
+    "expected_result": "HTTP 403; FORBIDDEN with detail.reason='CONSENT_MISSING'; no communication_logs row",
+    "postconditions": [
+      "communication_logs table unchanged"
+    ]
+  },
+  {
+    "test_id": "TC-FR101-05",
+    "test_name": "Marketing template dispatch blocked when only lead_contact consent basis provided",
+    "category": "Negative/Error",
+    "linked_fr": "FR-101",
+    "priority": "Critical",
+    "preconditions": [
+      "Active template 'tmpl-mkt-001': category='marketing', channel='email'",
+      "consent_records: (lead_id='lead-001', purpose='lead_contact', state='granted')"
+    ],
+    "test_steps": [
+      "POST /api/v1/leads/lead-001/communications with Authorization: Bearer <RM_JWT>",
+      "Body: { \"template_id\": \"tmpl-mkt-001\", \"channel\": \"email\", \"consent_basis\": \"lead_contact\", \"recipient\": \"customer@example.com\" }",
+      "Assert HTTP 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Assert error.detail.reason === 'CONSENT_MISSING'"
+    ],
+    "test_data": {
+      "template": { "template_id": "tmpl-mkt-001", "category": "marketing", "channel": "email", "status": "active" },
+      "dto_consent_basis": "lead_contact"
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; marketing purpose requires explicit marketing consent, not lead_contact",
+    "postconditions": [
+      "No communication_logs row for marketing dispatch attempt"
+    ]
+  },
+  {
+    "test_id": "TC-FR101-06",
+    "test_name": "Non-ADMIN role cannot create communication templates",
+    "category": "Permission",
+    "linked_fr": "FR-101",
+    "priority": "High",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/templates with Authorization: Bearer <RM_JWT>",
+      "Body: { \"code\": \"TEST_TEMPLATE\", \"version\": 1, \"channel\": \"sms\", \"language\": \"English\", \"category\": \"transactional\", \"body\": \"Test.\" }",
+      "Assert HTTP 403",
+      "Assert error.code === 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" }
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; RM lacks 'configuration' capability required for template management",
+    "postconditions": [
+      "No template row inserted"
+    ]
+  },
+  {
+    "test_id": "TC-FR101-07",
+    "test_name": "Duplicate template version returns CONFLICT",
+    "category": "Boundary",
+    "linked_fr": "FR-101",
+    "priority": "High",
+    "preconditions": [
+      "Template with (code='DOC_REQUEST_SMS_EN', channel='sms', language='English', version=1) already exists",
+      "ADMIN authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/templates with Authorization: Bearer <ADMIN_JWT>",
+      "Body: { \"code\": \"DOC_REQUEST_SMS_EN\", \"version\": 1, \"channel\": \"sms\", \"language\": \"English\", \"category\": \"transactional\", \"body\": \"New body text.\" }",
+      "Assert HTTP 409",
+      "Assert error.code === 'CONFLICT'"
+    ],
+    "test_data": {
+      "existing": { "code": "DOC_REQUEST_SMS_EN", "version": 1, "channel": "sms", "language": "English" },
+      "payload": { "code": "DOC_REQUEST_SMS_EN", "version": 1, "channel": "sms", "language": "English", "category": "transactional", "body": "New body text." }
+    },
+    "expected_result": "HTTP 409; CONFLICT; INV-03 unique constraint violation surfaced as CONFLICT",
+    "postconditions": [
+      "Original template row unchanged",
+      "No new duplicate row inserted"
+    ]
+  },
+  {
+    "test_id": "TC-FR101-08",
+    "test_name": "Provider failure updates communication_log to failed with failure_reason",
+    "category": "Workflow",
+    "linked_fr": "FR-101",
+    "priority": "High",
+    "preconditions": [
+      "communication_logs row 'comm-log-001' seeded with status='queued'",
+      "MockChannelAdapter configured to throw UPSTREAM_UNAVAILABLE on send"
+    ],
+    "test_steps": [
+      "Execute DispatchCommunicationWorker.run({ communication_log_id: 'comm-log-001' })",
+      "Query DB: SELECT status, failure_reason FROM communication_logs WHERE communication_log_id='comm-log-001'",
+      "Assert status='failed'",
+      "Assert failure_reason IS NOT NULL",
+      "Assert no unhandled exception propagated from worker"
+    ],
+    "test_data": {
+      "comm_log_seed": { "communication_log_id": "comm-log-001", "status": "queued", "template_id": "tmpl-sms-001", "lead_id": "lead-001" },
+      "mock": "MockChannelAdapter.send() => throws { code: 'UPSTREAM_UNAVAILABLE' }"
+    },
+    "expected_result": "communication_logs.status='failed'; failure_reason set to provider error string; worker exits cleanly (Cloud Tasks will retry)",
+    "postconditions": [
+      "INV-04: delivered rows must have provider_ref (0 rows violating this)"
+    ]
+  },
+  {
+    "test_id": "TC-FR101-09",
+    "test_name": "Recipient mobile number is masked in communication_logs list response",
+    "category": "Data Integrity",
+    "linked_fr": "FR-101",
+    "priority": "High",
+    "preconditions": [
+      "communication_logs row for lead-001 with recipient='9876543210', channel='sms'",
+      "RM 'rm_arjun' authenticated and owns lead-001"
+    ],
+    "test_steps": [
+      "GET /api/v1/leads/lead-001/communications with Authorization: Bearer <RM_JWT>",
+      "Assert HTTP 200",
+      "Assert data[0].recipient matches pattern /^9[0-9]{0}[x]{5}[0-9]{2}[0-9]{2}$/ (e.g. '98xxxxxx10')",
+      "Assert raw string '9876543210' does NOT appear anywhere in response body"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "seed_comm_log": { "lead_id": "lead-001", "recipient": "9876543210", "channel": "sms", "status": "delivered" }
+    },
+    "expected_result": "Recipient serialized as '98xxxxxx10'; raw mobile absent from JSON response",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR101-10",
+    "test_name": "GET /admin/templates enforces pagination default of 25 and caps at 100",
+    "category": "Boundary",
+    "linked_fr": "FR-101",
+    "priority": "Medium",
+    "preconditions": [
+      "30 active templates seeded in DB",
+      "ADMIN authenticated"
+    ],
+    "test_steps": [
+      "GET /api/v1/admin/templates (no query params)",
+      "Assert HTTP 200",
+      "Assert data.length <= 25",
+      "Assert meta.limit === 25",
+      "Assert meta.page === 1",
+      "GET /api/v1/admin/templates?limit=999",
+      "Assert HTTP 200",
+      "Assert meta.limit === 100 (capped)"
+    ],
+    "test_data": {
+      "actor": { "role": "ADMIN" },
+      "seeded_templates": 30
+    },
+    "expected_result": "Default: limit=25 in meta, at most 25 rows returned. With limit=999: meta.limit capped at 100",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR101-UI-01",
+    "test_name": "ADMIN creates a communication template via template admin page",
+    "category": "UI/E2E",
+    "linked_fr": "FR-101",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN user authenticated in browser",
+      "No template with code='E2E_TEST_TEMPLATE' exists"
+    ],
+    "test_steps": [
+      "Navigate to /admin/templates",
+      "Click button with role='button' name='New Template'",
+      "Fill code input with 'E2E_TEST_TEMPLATE'",
+      "Fill version input with '1'",
+      "Select channel='sms'",
+      "Select language='English'",
+      "Select category='transactional'",
+      "Fill body textarea with 'Dear {{name}}, your application is progressing.'",
+      "Click Submit",
+      "Assert toast 'Template created successfully.' visible",
+      "Assert row with code='E2E_TEST_TEMPLATE' and status chip 'Draft' appears in table"
+    ],
+    "test_data": {
+      "code": "E2E_TEST_TEMPLATE",
+      "version": 1,
+      "channel": "sms",
+      "language": "English",
+      "category": "transactional",
+      "body": "Dear {{name}}, your application is progressing."
+    },
+    "expected_result": "Template row visible in table with Draft status chip; toast confirmed",
+    "postconditions": [
+      "communication_templates row with code='E2E_TEST_TEMPLATE' and status='draft' in DB"
+    ],
+    "ui_meta": {
+      "route": "/admin/templates",
+      "locators": {
+        "new_template_button": "getByRole('button', { name: 'New Template' })",
+        "code_input": "getByRole('textbox', { name: 'Template Code' })",
+        "version_input": "getByRole('spinbutton', { name: 'Version' })",
+        "channel_select": "getByRole('combobox', { name: 'Channel' })",
+        "language_select": "getByRole('combobox', { name: 'Language' })",
+        "category_select": "getByRole('combobox', { name: 'Category' })",
+        "body_textarea": "getByRole('textbox', { name: 'Body' })",
+        "submit_button": "getByRole('button', { name: 'Submit' })",
+        "toast": "getByRole('status').getByText('Template created successfully.')",
+        "template_row": "getByTestId('template-row').filter({ hasText: 'E2E_TEST_TEMPLATE' })",
+        "draft_chip": "getByTestId('status-chip').filter({ hasText: 'Draft' })"
+      },
+      "viewport": [
+        { "width": 1280, "height": 800 },
+        { "width": 375, "height": 667 }
+      ],
+      "auth_state": "admin_auth.json",
+      "network_wait": "waitForResponse('**/api/v1/admin/templates')",
+      "visual_assert": "expect(draftChip).toBeVisible()",
+      "a11y": "checkA11y('#template-create-modal', { runOnly: ['wcag2a','wcag2aa'] })"
+    }
+  },
+  {
+    "test_id": "TC-FR101-DI-01",
+    "test_name": "Transaction rollback prevents communication_log row when DB fails before commit",
+    "category": "Data Integrity",
+    "linked_fr": "FR-101",
+    "priority": "Critical",
+    "preconditions": [
+      "DB mock configured: INSERT INTO communication_logs succeeds then throws before commit",
+      "lead-001 exists with granted consent"
+    ],
+    "test_steps": [
+      "Call NotificationDispatchService.send() with valid inputs",
+      "DB mock throws after INSERT communication_logs, before transaction commit",
+      "Assert exception propagated",
+      "Query DB (invariant): SELECT COUNT(*) FROM communication_logs WHERE lead_id='lead-001' HAVING COUNT(*) > 0",
+      "Assert count=0 (rolled back)",
+      "Assert Cloud Tasks enqueue mock was NOT called"
+    ],
+    "test_data": {
+      "mock": "Kysely transaction fails after communication_logs INSERT"
+    },
+    "expected_result": "0 communication_logs rows persisted; no Cloud Tasks job enqueued; exception thrown",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "DELETE FROM communication_logs WHERE lead_id = 'lead-001-di-test';",
+      "action": "NotificationDispatchService.send() with mocked DB that fails mid-transaction",
+      "invariant_query": "SELECT COUNT(*) FROM communication_logs WHERE lead_id = 'lead-001-di-test' HAVING COUNT(*) > 0",
+      "cleanup": "DELETE FROM communication_logs WHERE lead_id = 'lead-001-di-test';"
+    }
+  },
+  {
+    "test_id": "TC-FR102-01",
+    "test_name": "RM logs connected call disposition on own open call task",
+    "category": "Happy Path",
+    "linked_fr": "FR-102",
+    "priority": "Critical",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated",
+      "Task 'task-call-001': type='call', status='open', owner_id='rm_arjun_id', lead_id='lead-001'"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-call-001 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"disposition\": \"connected\", \"result_note\": \"Spoke with customer. Interested in home loan.\" }",
+      "Assert HTTP 200",
+      "Assert data.status === 'done'",
+      "Assert data.disposition === 'connected'",
+      "Query DB: SELECT * FROM tasks WHERE task_id='task-call-001'",
+      "Assert status='done', disposition='connected'",
+      "Query DB: SELECT * FROM communication_logs WHERE lead_id='lead-001' AND channel='in_app' AND status='sent'",
+      "Assert 1 row exists",
+      "Query DB: SELECT * FROM audit_logs WHERE entity_type='tasks' AND entity_id='task-call-001'",
+      "Assert 1 row with action='lead_update'",
+      "Query DB: SELECT * FROM event_outbox WHERE aggregate_type='tasks' AND aggregate_id='task-call-001'",
+      "Assert 1 row (atomically committed)"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "task_id": "task-call-001",
+      "seed": { "type": "call", "status": "open", "owner_id": "rm_arjun_id", "lead_id": "lead-001" },
+      "payload": { "disposition": "connected", "result_note": "Spoke with customer. Interested in home loan." }
+    },
+    "expected_result": "HTTP 200; task done; communication_logs in_app row inserted; audit_log written; event_outbox row present; all in one transaction",
+    "postconditions": [
+      "INV-01 (FR-102): no done+dispositioned task without matching communication_log (0 rows)",
+      "INV-02 (FR-102): no done+dispositioned task without audit_log (0 rows)"
+    ]
+  },
+  {
+    "test_id": "TC-FR102-02",
+    "test_name": "RM logs visit disposition with geotagged location",
+    "category": "Happy Path",
+    "linked_fr": "FR-102",
+    "priority": "High",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated",
+      "Task 'task-visit-001': type='visit', status='open', owner_id='rm_arjun_id'"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-visit-001 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"disposition\": \"visited\", \"geo\": { \"lat\": 19.076, \"lng\": 72.877, \"accuracy_m\": 10 }, \"result_note\": \"Customer was available at home.\" }",
+      "Assert HTTP 200",
+      "Assert data.status === 'done'",
+      "Assert data.geo.lat === 19.076",
+      "Assert data.geo.lng === 72.877",
+      "Query DB: SELECT geo FROM tasks WHERE task_id='task-visit-001'",
+      "Assert geo JSONB contains lat=19.076 and lng=72.877"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "task_id": "task-visit-001",
+      "seed": { "type": "visit", "status": "open" },
+      "payload": { "disposition": "visited", "geo": { "lat": 19.076, "lng": 72.877, "accuracy_m": 10 }, "result_note": "Customer was available at home." }
+    },
+    "expected_result": "HTTP 200; tasks.geo JSONB stored; tasks.status='done'; same atomic side-effects as TC-FR102-01",
+    "postconditions": [
+      "INV-03 (FR-102): geo only stored on call/visit tasks (0 violations)"
+    ]
+  },
+  {
+    "test_id": "TC-FR102-03",
+    "test_name": "Visit disposition accepted without geo when location permission denied",
+    "category": "Boundary",
+    "linked_fr": "FR-102",
+    "priority": "High",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated",
+      "Task 'task-visit-002': type='visit', status='open'"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-visit-002 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"disposition\": \"visited\", \"result_note\": \"Location not available.\" } (no geo field)",
+      "Assert HTTP 200",
+      "Assert data.status === 'done'",
+      "Assert data.geo is null or absent"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" },
+      "task_id": "task-visit-002",
+      "payload": { "disposition": "visited", "result_note": "Location not available." }
+    },
+    "expected_result": "HTTP 200; geo optional; task done without geo; no VALIDATION_ERROR",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR102-04",
+    "test_name": "FORBIDDEN when RM attempts to disposition another RM's task",
+    "category": "Permission",
+    "linked_fr": "FR-102",
+    "priority": "Critical",
+    "preconditions": [
+      "RM-A 'rm_arjun' authenticated",
+      "Task 'task-call-rm-b-001' owned by RM-B 'rm_priya'"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-call-rm-b-001 with Authorization: Bearer <RM_A_JWT>",
+      "Body: { \"disposition\": \"connected\" }",
+      "Assert HTTP 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Query DB: SELECT status, disposition FROM tasks WHERE task_id='task-call-rm-b-001'",
+      "Assert no DB writes occurred"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id", "scope": "O" },
+      "task_id": "task-call-rm-b-001",
+      "task_owner": "rm_priya_id"
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; no DB writes to tasks, communication_logs, or audit_logs",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR102-05",
+    "test_name": "CONFLICT when attempting to disposition an already-done task",
+    "category": "Workflow",
+    "linked_fr": "FR-102",
+    "priority": "High",
+    "preconditions": [
+      "Task 'task-done-call-001' status='done', disposition='connected'",
+      "RM owner authenticated"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-done-call-001 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"disposition\": \"not_reachable\" }",
+      "Assert HTTP 409",
+      "Assert error.code === 'CONFLICT'",
+      "Query DB: SELECT disposition FROM tasks WHERE task_id='task-done-call-001'",
+      "Assert disposition still 'connected'",
+      "Query DB: SELECT COUNT(*) FROM communication_logs WHERE lead_id='lead-001' AND created_at > <test_start>",
+      "Assert count=0 (no duplicate comm_log)"
+    ],
+    "test_data": {
+      "task_id": "task-done-call-001",
+      "seed": { "status": "done", "disposition": "connected" },
+      "payload": { "disposition": "not_reachable" }
+    },
+    "expected_result": "HTTP 409; CONFLICT; no duplicate communication_log inserted; task unchanged",
+    "postconditions": [
+      "Idempotency: task.disposition remains 'connected'; no extra side-effects"
+    ]
+  },
+  {
+    "test_id": "TC-FR102-06",
+    "test_name": "VALIDATION_ERROR when geo sent on a non-call/visit task type",
+    "category": "Negative/Error",
+    "linked_fr": "FR-102",
+    "priority": "Medium",
+    "preconditions": [
+      "Task 'task-doc-req-001': type='doc_request', status='open'",
+      "RM owner authenticated"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-doc-req-001 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"disposition\": \"connected\", \"geo\": { \"lat\": 19.076, \"lng\": 72.877, \"accuracy_m\": 5 } }",
+      "Assert HTTP 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains entry with field='geo'"
+    ],
+    "test_data": {
+      "task_id": "task-doc-req-001",
+      "seed": { "type": "doc_request", "status": "open" },
+      "payload": { "disposition": "connected", "geo": { "lat": 19.076, "lng": 72.877, "accuracy_m": 5 } }
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR with field='geo'; INV-03: no geo stored on doc_request tasks",
+    "postconditions": [
+      "INV-03 (FR-102): geo only on call/visit tasks (0 violations)"
+    ]
+  },
+  {
+    "test_id": "TC-FR102-07",
+    "test_name": "VALIDATION_ERROR when rescheduled disposition missing next_action_at",
+    "category": "Boundary",
+    "linked_fr": "FR-102",
+    "priority": "High",
+    "preconditions": [
+      "Task 'task-call-003': type='call', status='open'",
+      "RM owner authenticated"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-call-003 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"disposition\": \"rescheduled\" } (no next_action_at)",
+      "Assert HTTP 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains entry with field='next_action_at'"
+    ],
+    "test_data": {
+      "payload": { "disposition": "rescheduled" }
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; next_action_at is required when disposition='rescheduled'",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR102-08",
+    "test_name": "Overdue task can be dispositioned to done",
+    "category": "Workflow",
+    "linked_fr": "FR-102",
+    "priority": "High",
+    "preconditions": [
+      "Task 'task-overdue-call-001': type='call', status='overdue'",
+      "RM owner authenticated"
+    ],
+    "test_steps": [
+      "PATCH /api/v1/tasks/task-overdue-call-001 with Authorization: Bearer <RM_JWT>",
+      "Body: { \"disposition\": \"connected\", \"result_note\": \"Finally reached customer.\" }",
+      "Assert HTTP 200",
+      "Assert data.status === 'done'"
+    ],
+    "test_data": {
+      "task_id": "task-overdue-call-001",
+      "seed": { "status": "overdue", "type": "call" },
+      "payload": { "disposition": "connected", "result_note": "Finally reached customer." }
+    },
+    "expected_result": "HTTP 200; overdue task transitions to done; same side-effects as normal completion",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR102-UI-01",
+    "test_name": "Mobile visit log UI captures geo and submits with success toast",
+    "category": "UI/E2E",
+    "linked_fr": "FR-102",
+    "priority": "High",
+    "preconditions": [
+      "RM authenticated on mobile viewport",
+      "Task 'task-visit-e2e-001': type='visit', status='open'",
+      "Playwright navigator.geolocation mocked to resolve { lat: 19.076, lng: 72.877 }"
+    ],
+    "test_steps": [
+      "Navigate to /visits/task-visit-e2e-001",
+      "Click button 'Capture Location'",
+      "Assert geo preview shows lat/lng values",
+      "Select disposition='visited'",
+      "Click 'Submit'",
+      "Assert network request body contains geo object",
+      "Assert toast 'Outcome logged' appears",
+      "Assert task card disposition label updated"
+    ],
+    "test_data": {
+      "task_id": "task-visit-e2e-001",
+      "mocked_geo": { "lat": 19.076, "lng": 72.877 }
+    },
+    "expected_result": "Geo captured and submitted; success toast visible; HTTP 200 from API",
+    "postconditions": [
+      "tasks.geo JSONB stored in DB"
+    ],
+    "ui_meta": {
+      "route": "/visits/task-visit-e2e-001",
+      "locators": {
+        "capture_location_button": "getByRole('button', { name: 'Capture Location' })",
+        "geo_preview": "getByTestId('geo-preview')",
+        "disposition_select": "getByRole('combobox', { name: 'Outcome' })",
+        "submit_button": "getByRole('button', { name: 'Submit' })",
+        "toast": "getByRole('status').getByText('Outcome logged')"
+      },
+      "viewport": [
+        { "width": 375, "height": 667 }
+      ],
+      "auth_state": "rm_arjun_auth.json",
+      "network_wait": "waitForResponse('**/api/v1/tasks/task-visit-e2e-001')",
+      "visual_assert": "expect(toast).toBeVisible()",
+      "a11y": "checkA11y('#visit-log-form', { runOnly: ['wcag2a','wcag2aa'] })"
+    }
+  },
+  {
+    "test_id": "TC-FR102-UI-02",
+    "test_name": "Mobile visit log gracefully degrades when geolocation permission denied",
+    "category": "UI/E2E",
+    "linked_fr": "FR-102",
+    "priority": "High",
+    "preconditions": [
+      "RM authenticated on mobile viewport",
+      "Task 'task-visit-e2e-002': type='visit', status='open'",
+      "Playwright navigator.geolocation mocked to reject with PERMISSION_DENIED"
+    ],
+    "test_steps": [
+      "Navigate to /visits/task-visit-e2e-002",
+      "Click button 'Capture Location'",
+      "Assert StatusChip text contains 'Location unavailable'",
+      "Assert 'Submit' button is still enabled",
+      "Select disposition='visited'",
+      "Click Submit",
+      "Assert HTTP 200; assert network request body has no geo field",
+      "Assert success toast visible"
+    ],
+    "test_data": {
+      "task_id": "task-visit-e2e-002",
+      "mocked_geo": "reject with PERMISSION_DENIED"
+    },
+    "expected_result": "UI degrades gracefully; Submit still works; request sent without geo; 200 OK",
+    "postconditions": [
+      "tasks.geo is null in DB"
+    ],
+    "ui_meta": {
+      "route": "/visits/task-visit-e2e-002",
+      "locators": {
+        "location_status_chip": "getByTestId('geo-status-chip')",
+        "submit_button": "getByRole('button', { name: 'Submit' })",
+        "toast": "getByRole('status')"
+      },
+      "viewport": [
+        { "width": 375, "height": 667 }
+      ],
+      "auth_state": "rm_arjun_auth.json",
+      "network_wait": "waitForResponse('**/api/v1/tasks/task-visit-e2e-002')",
+      "visual_assert": "expect(locationStatusChip).toHaveText(/Location unavailable/)",
+      "a11y": "checkA11y('#visit-log-form', { runOnly: ['wcag2a','wcag2aa'] })"
+    }
+  },
+  {
+    "test_id": "TC-FR102-DI-01",
+    "test_name": "Transaction rolls back both tasks UPDATE and communication_logs INSERT on OutboxService failure",
+    "category": "Data Integrity",
+    "linked_fr": "FR-102",
+    "priority": "Critical",
+    "preconditions": [
+      "Task 'task-call-di-001': status='open', type='call'",
+      "OutboxService.emit mocked to throw after task UPDATE and communication_logs INSERT"
+    ],
+    "test_steps": [
+      "Call TaskService.logDisposition({ task_id: 'task-call-di-001', disposition: 'connected' })",
+      "OutboxService.emit() throws during UnitOfWork transaction",
+      "Assert exception propagated",
+      "Query DB (invariant): SELECT status FROM tasks WHERE task_id='task-call-di-001'",
+      "Assert status='open' (unchanged, rolled back)",
+      "Query DB: SELECT COUNT(*) FROM communication_logs WHERE lead_id='lead-001' AND created_at > <test_start>",
+      "Assert count=0"
+    ],
+    "test_data": {
+      "seed_task": { "task_id": "task-call-di-001", "status": "open", "type": "call", "lead_id": "lead-001" },
+      "mock": "OutboxService.emit() => throws Error('outbox failure')"
+    },
+    "expected_result": "tasks.status unchanged at 'open'; 0 new communication_logs rows; full rollback",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "INSERT INTO tasks (task_id, status, type, lead_id, owner_id, due_at) VALUES ('task-call-di-001', 'open', 'call', 'lead-001', 'rm_arjun_id', now() + interval '1 day');",
+      "action": "TaskService.logDisposition with mocked OutboxService that throws",
+      "invariant_query": "SELECT COUNT(*) FROM tasks WHERE task_id = 'task-call-di-001' AND status != 'open' HAVING COUNT(*) > 0",
+      "cleanup": "DELETE FROM tasks WHERE task_id = 'task-call-di-001'; DELETE FROM communication_logs WHERE lead_id = 'lead-001' AND created_at > now() - interval '1 minute';"
+    }
+  },
+  {
+    "test_id": "TC-FR103-01",
+    "test_name": "BM upserts marketing opt-out for customer via internal endpoint",
+    "category": "Happy Path",
+    "linked_fr": "FR-103",
+    "priority": "Critical",
+    "preconditions": [
+      "BM 'bm_raj' authenticated, branch='branch-mumbai'",
+      "Customer 'cust-001' has lead owned by BM's branch",
+      "No existing notification_preferences row for (cust-001, whatsapp, marketing)"
+    ],
+    "test_steps": [
+      "PUT /api/v1/preferences with Authorization: Bearer <BM_JWT>",
+      "Body: { \"subject_type\": \"customer\", \"subject_ref\": \"cust-001\", \"preferences\": [{ \"channel\": \"whatsapp\", \"purpose\": \"marketing\", \"opted_in\": false }] }",
+      "Assert HTTP 200",
+      "Assert data.preferences[0].opted_in === false",
+      "Assert data.preferences[0].channel === 'whatsapp'",
+      "Query DB: SELECT opted_in FROM notification_preferences WHERE subject_ref='cust-001' AND channel='whatsapp' AND purpose='marketing'",
+      "Assert opted_in=false",
+      "Query DB: SELECT * FROM audit_logs WHERE entity_type='notification_preferences' AND actor_id='bm_raj_id'",
+      "Assert 1 audit row"
+    ],
+    "test_data": {
+      "actor": { "role": "BM", "user_id": "bm_raj_id", "scope": "B", "branch_id": "branch-mumbai" },
+      "payload": { "subject_type": "customer", "subject_ref": "cust-001", "preferences": [{ "channel": "whatsapp", "purpose": "marketing", "opted_in": false }] }
+    },
+    "expected_result": "HTTP 200; notification_preferences row with opted_in=false; audit_log written",
+    "postconditions": [
+      "INV-01 (FR-103): no duplicate preference rows per unique key (0 rows)",
+      "INV-02 (FR-103): audit log written on preference upsert (>=1)"
+    ]
+  },
+  {
+    "test_id": "TC-FR103-02",
+    "test_name": "Customer upserts own preferences via customer link token",
+    "category": "Happy Path",
+    "linked_fr": "FR-103",
+    "priority": "Critical",
+    "preconditions": [
+      "Valid, active customer link token 'tok-cust-001' for customer_profile_id='cust-001'",
+      "OTP step-up completed for token"
+    ],
+    "test_steps": [
+      "PUT /api/v1/c/tok-cust-001/preferences (no JWT, opaque token auth)",
+      "Body: { \"subject_type\": \"customer\", \"subject_ref\": \"cust-001\", \"preferences\": [{ \"channel\": \"sms\", \"purpose\": \"marketing\", \"opted_in\": false }] }",
+      "Assert HTTP 200",
+      "Assert data.preferences[0].opted_in === false",
+      "Query DB: SELECT opted_in FROM notification_preferences WHERE subject_ref='cust-001' AND channel='sms' AND purpose='marketing'",
+      "Assert opted_in=false"
+    ],
+    "test_data": {
+      "token": "tok-cust-001",
+      "customer_profile_id": "cust-001",
+      "payload": { "subject_type": "customer", "subject_ref": "cust-001", "preferences": [{ "channel": "sms", "purpose": "marketing", "opted_in": false }] }
+    },
+    "expected_result": "HTTP 200; customer self-service opt-out persisted; audit row written",
+    "postconditions": [
+      "INV-05 (FR-103): subject_ref maps to existing customer_profile_id (0 orphans)"
+    ]
+  },
+  {
+    "test_id": "TC-FR103-03",
+    "test_name": "Opt-out immediately blocks FR-101 marketing dispatch",
+    "category": "Workflow",
+    "linked_fr": "FR-103",
+    "priority": "Critical",
+    "preconditions": [
+      "Customer 'cust-001' has (sms, marketing) opted_in=true initially",
+      "Marketing SMS template 'tmpl-mkt-002' active with marketing category",
+      "consent_records: (lead_id='lead-001', purpose='marketing', state='granted')"
+    ],
+    "test_steps": [
+      "Step 1 — Opt out: PUT /api/v1/preferences with BM JWT; set (sms, marketing) opted_in=false",
+      "Assert HTTP 200",
+      "Step 2 — Attempt dispatch: POST /api/v1/leads/lead-001/communications",
+      "Body: { \"template_id\": \"tmpl-mkt-002\", \"channel\": \"sms\", \"consent_basis\": \"marketing\", \"recipient\": \"9876543210\" }",
+      "Assert HTTP 403",
+      "Assert error.detail.reason === 'CONSENT_MISSING'",
+      "Assert immediate effect — no queuing delay"
+    ],
+    "test_data": {
+      "initial_pref": { "channel": "sms", "purpose": "marketing", "opted_in": true },
+      "opt_out_payload": { "channel": "sms", "purpose": "marketing", "opted_in": false }
+    },
+    "expected_result": "Opt-out immediately reflected; subsequent dispatch blocked with CONSENT_MISSING",
+    "postconditions": [
+      "No communication_logs row for the blocked dispatch"
+    ]
+  },
+  {
+    "test_id": "TC-FR103-04",
+    "test_name": "Transactional opt-out returns warning in meta but saves successfully",
+    "category": "Boundary",
+    "linked_fr": "FR-103",
+    "priority": "High",
+    "preconditions": [
+      "BM 'bm_raj' authenticated",
+      "Customer 'cust-001' exists"
+    ],
+    "test_steps": [
+      "PUT /api/v1/preferences with Authorization: Bearer <BM_JWT>",
+      "Body: { \"subject_type\": \"customer\", \"subject_ref\": \"cust-001\", \"preferences\": [{ \"channel\": \"email\", \"purpose\": \"document_processing\", \"opted_in\": false }] }",
+      "Assert HTTP 200",
+      "Assert meta.warnings is a non-empty array",
+      "Assert meta.warnings[0] references document processing delay",
+      "Query DB: SELECT opted_in FROM notification_preferences WHERE subject_ref='cust-001' AND channel='email' AND purpose='document_processing'",
+      "Assert opted_in=false (saved despite warning)"
+    ],
+    "test_data": {
+      "actor": { "role": "BM", "user_id": "bm_raj_id" },
+      "payload": { "subject_type": "customer", "subject_ref": "cust-001", "preferences": [{ "channel": "email", "purpose": "document_processing", "opted_in": false }] }
+    },
+    "expected_result": "HTTP 200; meta.warnings non-empty with document-delay message; preference saved with opted_in=false",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR103-05",
+    "test_name": "FORBIDDEN when expired customer link token used",
+    "category": "Permission",
+    "linked_fr": "FR-103",
+    "priority": "High",
+    "preconditions": [
+      "Customer link token 'tok-expired-001' has expires_at < now()"
+    ],
+    "test_steps": [
+      "PUT /api/v1/c/tok-expired-001/preferences",
+      "Body: { \"subject_type\": \"customer\", \"subject_ref\": \"cust-001\", \"preferences\": [{ \"channel\": \"sms\", \"purpose\": \"marketing\", \"opted_in\": false }] }",
+      "Assert HTTP 403",
+      "Assert error.code === 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "token": "tok-expired-001",
+      "token_state": { "expires_at": "2026-01-01T00:00:00Z" }
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; CustomerLinkGuard rejects expired token; no DB write",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR103-06",
+    "test_name": "FORBIDDEN when subject_ref in body mismatches customer link token's customer_profile_id",
+    "category": "Permission",
+    "linked_fr": "FR-103",
+    "priority": "High",
+    "preconditions": [
+      "Valid token 'tok-cust-001' resolves to customer_profile_id='cust-001'",
+      "Body contains subject_ref='cust-002' (different customer)"
+    ],
+    "test_steps": [
+      "PUT /api/v1/c/tok-cust-001/preferences",
+      "Body: { \"subject_type\": \"customer\", \"subject_ref\": \"cust-002\", \"preferences\": [{ \"channel\": \"sms\", \"purpose\": \"marketing\", \"opted_in\": false }] }",
+      "Assert HTTP 403",
+      "Assert error.code === 'FORBIDDEN'"
+    ],
+    "test_data": {
+      "token": "tok-cust-001",
+      "token_customer": "cust-001",
+      "body_subject_ref": "cust-002"
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; subject_ref mismatch guard rejects; no DB write for either cust-001 or cust-002",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR103-07",
+    "test_name": "Idempotent re-upsert: second opt-out then opt-in preserves last-write-wins",
+    "category": "Data Integrity",
+    "linked_fr": "FR-103",
+    "priority": "High",
+    "preconditions": [
+      "BM authenticated",
+      "No existing preference for (cust-001, sms, marketing)"
+    ],
+    "test_steps": [
+      "PUT /api/v1/preferences: opted_in=false for (cust-001, sms, marketing)",
+      "Assert HTTP 200; opted_in=false",
+      "PUT /api/v1/preferences: opted_in=true for same key",
+      "Assert HTTP 200; data shows opted_in=true",
+      "Query DB: SELECT opted_in FROM notification_preferences WHERE subject_ref='cust-001' AND channel='sms' AND purpose='marketing'",
+      "Assert opted_in=true (last write)",
+      "Query DB: SELECT COUNT(*) FROM notification_preferences WHERE subject_ref='cust-001' AND channel='sms' AND purpose='marketing'",
+      "Assert exactly 1 row (upsert, not duplicate insert)",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE actor_id='bm_raj_id' AND entity_type='notification_preferences'",
+      "Assert count=2 (one per request)"
+    ],
+    "test_data": {
+      "actor": { "role": "BM", "user_id": "bm_raj_id" },
+      "key": { "subject_ref": "cust-001", "channel": "sms", "purpose": "marketing" }
+    },
+    "expected_result": "1 DB row; final opted_in=true; 2 audit rows; INV-01 unique constraint satisfied",
+    "postconditions": [
+      "INV-01 (FR-103): 0 duplicate preference rows"
+    ]
+  },
+  {
+    "test_id": "TC-FR103-08",
+    "test_name": "VALIDATION_ERROR for invalid channel enum in preferences array",
+    "category": "Negative/Error",
+    "linked_fr": "FR-103",
+    "priority": "Medium",
+    "preconditions": [
+      "BM authenticated"
+    ],
+    "test_steps": [
+      "PUT /api/v1/preferences with Authorization: Bearer <BM_JWT>",
+      "Body: { \"subject_type\": \"customer\", \"subject_ref\": \"cust-001\", \"preferences\": [{ \"channel\": \"postal\", \"purpose\": \"marketing\", \"opted_in\": false }] }",
+      "Assert HTTP 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains entry with field='preferences[0].channel'"
+    ],
+    "test_data": {
+      "payload": { "subject_type": "customer", "subject_ref": "cust-001", "preferences": [{ "channel": "postal", "purpose": "marketing", "opted_in": false }] }
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; error.fields[0].field='preferences[0].channel'; no DB write",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR103-UI-01",
+    "test_name": "RM opts customer out of WhatsApp marketing via lead preferences tab",
+    "category": "UI/E2E",
+    "linked_fr": "FR-103",
+    "priority": "High",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated",
+      "Lead 'lead-001' with customer 'cust-001' assigned to RM",
+      "WhatsApp marketing toggle currently on (opted_in=true)"
+    ],
+    "test_steps": [
+      "Navigate to lead 360 view for lead-001",
+      "Click 'Preferences' tab",
+      "Assert (whatsapp, marketing) toggle is checked",
+      "Click the (whatsapp, marketing) toggle to uncheck it",
+      "Click 'Save Changes'",
+      "Assert success toast appears",
+      "Reload page",
+      "Assert (whatsapp, marketing) toggle is still unchecked",
+      "Query DB: SELECT opted_in FROM notification_preferences WHERE subject_ref='cust-001' AND channel='whatsapp' AND purpose='marketing'",
+      "Assert opted_in=false"
+    ],
+    "test_data": {
+      "lead_id": "lead-001",
+      "customer_id": "cust-001",
+      "toggle_key": "(whatsapp, marketing)"
+    },
+    "expected_result": "Toggle persisted as unchecked across page reload; DB row opted_in=false; toast visible",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/leads/lead-001/360",
+      "locators": {
+        "preferences_tab": "getByRole('tab', { name: 'Preferences' })",
+        "whatsapp_marketing_toggle": "getByTestId('pref-toggle-whatsapp-marketing')",
+        "save_button": "getByRole('button', { name: 'Save Changes' })",
+        "success_toast": "getByRole('status').filter({ hasText: /saved|success/i })"
+      },
+      "viewport": [
+        { "width": 1280, "height": 800 },
+        { "width": 375, "height": 667 }
+      ],
+      "auth_state": "rm_arjun_auth.json",
+      "network_wait": "waitForResponse('**/api/v1/preferences')",
+      "visual_assert": "expect(whatsappMarketingToggle).not.toBeChecked()",
+      "a11y": "checkA11y('#preferences-panel', { runOnly: ['wcag2a','wcag2aa'] })"
+    }
+  },
+  {
+    "test_id": "TC-FR103-DI-01",
+    "test_name": "Batch preference upsert rolls back all rows on mid-batch DB failure",
+    "category": "Data Integrity",
+    "linked_fr": "FR-103",
+    "priority": "Critical",
+    "preconditions": [
+      "DB mock: fails on second of three upsert statements inside UnitOfWork",
+      "No pre-existing preferences for cust-di-001"
+    ],
+    "test_steps": [
+      "Call PreferencesService with 3 preference items for cust-di-001",
+      "DB throws after second upsert within the transaction",
+      "Assert INTERNAL_ERROR exception propagated",
+      "Query DB (invariant): SELECT COUNT(*) FROM notification_preferences WHERE subject_ref='cust-di-001'",
+      "Assert count=0 (all three rolled back)",
+      "Query DB: SELECT COUNT(*) FROM audit_logs WHERE entity_type='notification_preferences' AND detail->>'subject_ref'='cust-di-001'",
+      "Assert count=0"
+    ],
+    "test_data": {
+      "subject_ref": "cust-di-001",
+      "preferences": [
+        { "channel": "sms", "purpose": "marketing", "opted_in": false },
+        { "channel": "whatsapp", "purpose": "marketing", "opted_in": false },
+        { "channel": "email", "purpose": "document_processing", "opted_in": false }
+      ],
+      "mock": "Kysely upsert fails on second item"
+    },
+    "expected_result": "0 notification_preferences rows for cust-di-001; 0 audit rows; atomic rollback",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "DELETE FROM notification_preferences WHERE subject_ref = 'cust-di-001'; DELETE FROM audit_logs WHERE detail->>'subject_ref' = 'cust-di-001';",
+      "action": "PreferencesService.upsert([3 items]) with mocked DB failure on second item",
+      "invariant_query": "SELECT COUNT(*) FROM notification_preferences WHERE subject_ref = 'cust-di-001' HAVING COUNT(*) > 0",
+      "cleanup": "DELETE FROM notification_preferences WHERE subject_ref = 'cust-di-001';"
+    }
+  },
+  {
+    "test_id": "TC-FR104-01",
+    "test_name": "ADMIN creates an SLA policy — policy created as inactive pending maker-checker approval",
+    "category": "Happy Path",
+    "linked_fr": "FR-104",
+    "priority": "Critical",
+    "preconditions": [
+      "ADMIN 'admin_ops' authenticated (configuration scope=A)",
+      "No existing active SLA policy with name='First Contact - Mumbai Branch' and applies_to='first_contact'"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/sla-policies with Authorization: Bearer <ADMIN_JWT>",
+      "Body: { \"name\": \"First Contact - Mumbai Branch\", \"applies_to\": \"first_contact\", \"threshold_minutes\": 240, \"business_hours_only\": true, \"escalation_chain\": [{ \"at_minutes\": 120, \"notify_roles\": [\"BM\"], \"action\": \"notify\" }, { \"at_minutes\": 240, \"notify_roles\": [\"SM\"], \"action\": \"reassign\" }] }",
+      "Assert HTTP 201",
+      "Assert data envelope: { data: { sla_policy_id: <uuid>, is_active: false }, error: null }",
+      "Query DB: SELECT is_active FROM sla_policies WHERE name='First Contact - Mumbai Branch'",
+      "Assert is_active=false",
+      "Query DB: SELECT status, config_type, maker_id FROM configuration_versions WHERE config_type='sla_policy' AND config_ref=<sla_policy_id>",
+      "Assert status='pending', maker_id='admin_ops_id'",
+      "Query DB: SELECT * FROM audit_logs WHERE action='config_change' AND detail->>'config_type'='sla_policy'",
+      "Assert 1 audit row"
+    ],
+    "test_data": {
+      "actor": { "role": "ADMIN", "user_id": "admin_ops_id" },
+      "payload": { "name": "First Contact - Mumbai Branch", "applies_to": "first_contact", "threshold_minutes": 240, "business_hours_only": true, "escalation_chain": [{ "at_minutes": 120, "notify_roles": ["BM"], "action": "notify" }, { "at_minutes": 240, "notify_roles": ["SM"], "action": "reassign" }] }
+    },
+    "expected_result": "HTTP 201; sla_policies row with is_active=false; configuration_versions row with status='pending'; audit_log written",
+    "postconditions": [
+      "INV (FR-104): no active SLA policy without approved configuration_versions row (0 rows)",
+      "INV (FR-104): no negative threshold_minutes (0 rows)"
+    ]
+  },
+  {
+    "test_id": "TC-FR104-02",
+    "test_name": "SLA engine computes business-hours-aware due_at skipping closing time and weekend",
+    "category": "Workflow",
+    "linked_fr": "FR-104",
+    "priority": "Critical",
+    "preconditions": [
+      "SlaEngine unit test context",
+      "BusinessCalendar: Mon–Sat 09:30–18:30 IST, Saturday is working, Sunday is holiday",
+      "now = Friday 17:00 IST",
+      "threshold_minutes = 240 (4 business hours)"
+    ],
+    "test_steps": [
+      "Call SlaEngine.computeDueAt('first_contact', lead) with now=Friday 17:00",
+      "Assert result is Saturday ~12:30 IST (not Friday+4h wall-clock which would be 21:00)",
+      "Verify: 1h remaining Friday (17:00–18:00 counts; 18:00–18:30 = 30min), then Saturday 09:30 onwards for remaining ~2.5h",
+      "Assert result does NOT fall on a closed/holiday period"
+    ],
+    "test_data": {
+      "now": "2026-06-19T17:00:00+05:30",
+      "threshold_minutes": 240,
+      "calendar": { "working_days": ["Mon","Tue","Wed","Thu","Fri","Sat"], "hours": "09:30-18:30", "timezone": "Asia/Kolkata" }
+    },
+    "expected_result": "computeDueAt returns 2026-06-20T12:00:00+05:30 (approx); does not return 2026-06-19T21:00:00+05:30",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR104-03",
+    "test_name": "SLA engine resolves BusinessCalendar in branch → region → default order",
+    "category": "Workflow",
+    "linked_fr": "FR-104",
+    "priority": "High",
+    "preconditions": [
+      "Three calendars seeded: branch-specific (branch-mumbai), region-specific (region-west), org-default",
+      "Lead 'lead-001' in branch-mumbai"
+    ],
+    "test_steps": [
+      "Call BusinessCalendarService.resolve(lead.branch_id)",
+      "Assert branch-mumbai calendar is returned (highest priority)",
+      "Remove branch-specific calendar; call resolve again",
+      "Assert region-west calendar is returned",
+      "Remove region-specific calendar; call resolve again",
+      "Assert org-default calendar is returned",
+      "Remove all calendars; call resolve",
+      "Assert hardcoded Mon–Sat IST fallback used and warning logged"
+    ],
+    "test_data": {
+      "calendars": [
+        { "scope": "branch", "branch_id": "branch-mumbai" },
+        { "scope": "region", "region_id": "region-west" },
+        { "scope": "default" }
+      ]
+    },
+    "expected_result": "Resolution order: branch > region > default > hardcoded-fallback; warning logged when no calendar configured",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR104-04",
+    "test_name": "VALIDATION_ERROR when SLA policy threshold_minutes is zero or negative",
+    "category": "Boundary",
+    "linked_fr": "FR-104",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/sla-policies with Authorization: Bearer <ADMIN_JWT>",
+      "Body: { \"name\": \"Invalid Policy\", \"applies_to\": \"first_contact\", \"threshold_minutes\": 0, \"escalation_chain\": [{ \"at_minutes\": 30, \"notify_roles\": [\"BM\"], \"action\": \"notify\" }] }",
+      "Assert HTTP 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains entry with field='threshold_minutes'",
+      "Repeat with threshold_minutes=-60",
+      "Assert same 400 VALIDATION_ERROR response"
+    ],
+    "test_data": {
+      "payloads": [
+        { "threshold_minutes": 0 },
+        { "threshold_minutes": -60 }
+      ]
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; threshold_minutes must be > 0; no sla_policies row inserted",
+    "postconditions": [
+      "INV (FR-104): no sla_policies row with threshold_minutes <= 0 (0 rows)"
+    ]
+  },
+  {
+    "test_id": "TC-FR104-05",
+    "test_name": "VALIDATION_ERROR when escalation_chain is empty",
+    "category": "Boundary",
+    "linked_fr": "FR-104",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/sla-policies with Authorization: Bearer <ADMIN_JWT>",
+      "Body: { \"name\": \"No Chain Policy\", \"applies_to\": \"first_contact\", \"threshold_minutes\": 240, \"escalation_chain\": [] }",
+      "Assert HTTP 400",
+      "Assert error.code === 'VALIDATION_ERROR'",
+      "Assert error.fields contains entry with field='escalation_chain'"
+    ],
+    "test_data": {
+      "payload": { "name": "No Chain Policy", "applies_to": "first_contact", "threshold_minutes": 240, "escalation_chain": [] }
+    },
+    "expected_result": "HTTP 400; VALIDATION_ERROR; escalation_chain must be non-empty",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR104-06",
+    "test_name": "FORBIDDEN when RM attempts to create SLA policy (lacks configuration capability)",
+    "category": "Permission",
+    "linked_fr": "FR-104",
+    "priority": "High",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated (no configuration capability in auth-matrix)"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/sla-policies with Authorization: Bearer <RM_JWT>",
+      "Body: valid CreateSlaPolicyDto",
+      "Assert HTTP 403",
+      "Assert error.code === 'FORBIDDEN'",
+      "Query DB: SELECT COUNT(*) FROM sla_policies WHERE name='Test Policy'",
+      "Assert count=0"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" }
+    },
+    "expected_result": "HTTP 403; FORBIDDEN; EntitlementService.can(RM, 'configuration', ...) returns false; no row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR104-07",
+    "test_name": "CONFLICT when creating duplicate active SLA policy with same name and applies_to",
+    "category": "Negative/Error",
+    "linked_fr": "FR-104",
+    "priority": "High",
+    "preconditions": [
+      "Active SLA policy already exists with name='First Contact Standard' and applies_to='first_contact'",
+      "ADMIN authenticated"
+    ],
+    "test_steps": [
+      "POST /api/v1/admin/sla-policies with Authorization: Bearer <ADMIN_JWT>",
+      "Body: { \"name\": \"First Contact Standard\", \"applies_to\": \"first_contact\", \"threshold_minutes\": 480, \"escalation_chain\": [{ \"at_minutes\": 240, \"notify_roles\": [\"BM\"], \"action\": \"notify\" }] }",
+      "Assert HTTP 409",
+      "Assert error.code === 'CONFLICT'"
+    ],
+    "test_data": {
+      "existing_policy": { "name": "First Contact Standard", "applies_to": "first_contact", "is_active": true },
+      "payload": { "name": "First Contact Standard", "applies_to": "first_contact", "threshold_minutes": 480, "escalation_chain": [{ "at_minutes": 240, "notify_roles": ["BM"], "action": "notify" }] }
+    },
+    "expected_result": "HTTP 409; CONFLICT; existing active policy detected; no new row inserted",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR104-08",
+    "test_name": "SLA breach sweep emits FIRST_CONTACT_BREACH event and triggers reassignment",
+    "category": "Workflow",
+    "linked_fr": "FR-104",
+    "priority": "Critical",
+    "preconditions": [
+      "Lead 'lead-001': stage='first_contact_pending', sla_first_contact_due_at=<now-1h>",
+      "Active SLA policy for first_contact with escalation chain: [{ at_minutes: 240, action: 'reassign', target_role: 'BM' }]",
+      "BM 'bm_raj' is branch manager for lead-001's branch"
+    ],
+    "test_steps": [
+      "Trigger POST /api/v1/internal/sla/sweep with Cloud Tasks OIDC header",
+      "Assert HTTP 200",
+      "Query DB: SELECT * FROM event_outbox WHERE event_code='FIRST_CONTACT_BREACH' AND aggregate_id='lead-001'",
+      "Assert 1 row exists",
+      "Query DB: SELECT owner_id FROM leads WHERE lead_id='lead-001'",
+      "Assert owner_id reassigned to 'bm_raj_id'",
+      "Query DB: SELECT * FROM audit_logs WHERE action='reassign' AND detail->>'reason'='sla_breach' AND lead_id='lead-001'",
+      "Assert 1 row (all in one transaction)"
+    ],
+    "test_data": {
+      "lead_id": "lead-001",
+      "seed": { "stage": "first_contact_pending", "sla_first_contact_due_at": "<now-1h>" },
+      "sla_policy": { "applies_to": "first_contact", "threshold_minutes": 240, "escalation_chain": [{ "at_minutes": 240, "action": "reassign", "notify_roles": ["SM"] }] }
+    },
+    "expected_result": "FIRST_CONTACT_BREACH event in event_outbox; lead reassigned to BM; audit_log with reason='sla_breach'; all in one DB transaction",
+    "postconditions": [
+      "INV (FR-104): no FIRST_CONTACT_BREACH events for leads in terminal stage (0 rows)",
+      "Sweep is idempotent: second run produces no new breach event for same lead"
+    ]
+  },
+  {
+    "test_id": "TC-FR104-09",
+    "test_name": "SLA sweep approaching threshold emits FIRST_CONTACT_DUE without reassignment",
+    "category": "Workflow",
+    "linked_fr": "FR-104",
+    "priority": "High",
+    "preconditions": [
+      "Lead 'lead-002': stage='first_contact_pending', sla_first_contact_due_at=<now+20min>",
+      "SLA policy approaching threshold = 30 minutes"
+    ],
+    "test_steps": [
+      "Trigger POST /api/v1/internal/sla/sweep with Cloud Tasks OIDC header",
+      "Query DB: SELECT event_code FROM event_outbox WHERE aggregate_id='lead-002'",
+      "Assert FIRST_CONTACT_DUE event present",
+      "Assert NO FIRST_CONTACT_BREACH event for lead-002",
+      "Query DB: SELECT owner_id FROM leads WHERE lead_id='lead-002'",
+      "Assert owner_id unchanged (no reassignment for approaching, only breach)"
+    ],
+    "test_data": {
+      "lead_id": "lead-002",
+      "seed": { "stage": "first_contact_pending", "sla_first_contact_due_at": "+20min" }
+    },
+    "expected_result": "FIRST_CONTACT_DUE event emitted; no reassignment; owner unchanged",
+    "postconditions": []
+  },
+  {
+    "test_id": "TC-FR104-10",
+    "test_name": "SLA sweep excludes leads in terminal stages from breach detection",
+    "category": "Boundary",
+    "linked_fr": "FR-104",
+    "priority": "High",
+    "preconditions": [
+      "Lead 'lead-003': stage='handed_off', sla_first_contact_due_at=<now-2h>",
+      "Lead 'lead-004': stage='rejected', sla_first_contact_due_at=<now-2h>"
+    ],
+    "test_steps": [
+      "Trigger POST /api/v1/internal/sla/sweep with Cloud Tasks OIDC header",
+      "Query DB: SELECT * FROM event_outbox WHERE event_code IN ('FIRST_CONTACT_DUE','FIRST_CONTACT_BREACH') AND aggregate_id IN ('lead-003','lead-004')",
+      "Assert 0 rows (terminal leads excluded)"
+    ],
+    "test_data": {
+      "terminal_leads": [
+        { "lead_id": "lead-003", "stage": "handed_off", "sla_first_contact_due_at": "<now-2h>" },
+        { "lead_id": "lead-004", "stage": "rejected", "sla_first_contact_due_at": "<now-2h>" }
+      ]
+    },
+    "expected_result": "0 SLA events emitted for terminal-stage leads; sweep correctly scopes to active-stage leads only",
+    "postconditions": [
+      "INV (FR-104): no FIRST_CONTACT_* events for terminal-stage leads (0 rows)"
+    ]
+  },
+  {
+    "test_id": "TC-FR104-11",
+    "test_name": "Internal sweep endpoint rejects user JWT (InternalTaskGuard)",
+    "category": "Permission",
+    "linked_fr": "FR-104",
+    "priority": "Critical",
+    "preconditions": [
+      "RM 'rm_arjun' authenticated with valid user JWT"
+    ],
+    "test_steps": [
+      "POST /api/v1/internal/sla/sweep with Authorization: Bearer <RM_JWT>",
+      "Assert HTTP 401 or 403 (InternalTaskGuard rejects user JWTs)",
+      "Assert endpoint only accepts Cloud Tasks OIDC service-account token"
+    ],
+    "test_data": {
+      "actor": { "role": "RM", "user_id": "rm_arjun_id" }
+    },
+    "expected_result": "HTTP 401/403; InternalTaskGuard rejects non-service-account tokens; no sweep executed",
+    "postconditions": [
+      "No SLA events emitted from this rejected call"
+    ]
+  },
+  {
+    "test_id": "TC-FR104-UI-01",
+    "test_name": "ADMIN views SLA policy list with status chips and can create new policy",
+    "category": "UI/E2E",
+    "linked_fr": "FR-104",
+    "priority": "High",
+    "preconditions": [
+      "ADMIN authenticated in browser",
+      "At least 2 SLA policies seeded: 1 active, 1 pending approval"
+    ],
+    "test_steps": [
+      "Navigate to /admin/sla-policies",
+      "Assert DataTable renders with policy rows",
+      "Assert StatusChip shows 'Active' for active policy",
+      "Assert StatusChip shows 'Pending Approval' for pending policy",
+      "Click 'New Policy' button",
+      "Fill form: name='E2E SLA Test', applies_to='first_contact', threshold_minutes=120",
+      "Add escalation step: at_minutes=60, notify_roles=['BM'], action='notify'",
+      "Submit",
+      "Assert ConfirmDialog appears mentioning maker-checker",
+      "Confirm",
+      "Assert success Toast visible",
+      "Assert new policy row appears with 'Pending Approval' chip"
+    ],
+    "test_data": {
+      "new_policy": { "name": "E2E SLA Test", "applies_to": "first_contact", "threshold_minutes": 120 }
+    },
+    "expected_result": "Policy list renders; new policy created with 'Pending Approval' status; maker-checker confirm dialog shown",
+    "postconditions": [
+      "sla_policies row with is_active=false",
+      "configuration_versions row with status='pending'"
+    ],
+    "ui_meta": {
+      "route": "/admin/sla-policies",
+      "locators": {
+        "new_policy_button": "getByRole('button', { name: 'New Policy' })",
+        "name_input": "getByRole('textbox', { name: 'Policy Name' })",
+        "threshold_input": "getByRole('spinbutton', { name: 'Threshold (minutes)' })",
+        "submit_button": "getByRole('button', { name: 'Submit' })",
+        "confirm_dialog": "getByRole('dialog')",
+        "confirm_button": "getByRole('button', { name: 'Confirm' })",
+        "toast": "getByRole('status')",
+        "pending_chip": "getByTestId('status-chip').filter({ hasText: 'Pending Approval' })",
+        "active_chip": "getByTestId('status-chip').filter({ hasText: 'Active' })"
+      },
+      "viewport": [
+        { "width": 1280, "height": 800 },
+        { "width": 375, "height": 667 }
+      ],
+      "auth_state": "admin_auth.json",
+      "network_wait": "waitForResponse('**/api/v1/admin/sla-policies')",
+      "visual_assert": "expect(pendingChip).toBeVisible()",
+      "a11y": "checkA11y('#sla-policy-form', { runOnly: ['wcag2a','wcag2aa'] })"
+    }
+  },
+  {
+    "test_id": "TC-FR104-UI-02",
+    "test_name": "SLA policy form shows inline error for zero threshold and BM sees read-only view",
+    "category": "UI/E2E",
+    "linked_fr": "FR-104",
+    "priority": "Medium",
+    "preconditions": [
+      "ADMIN authenticated for error test",
+      "BM 'bm_raj' authenticated for read-only test"
+    ],
+    "test_steps": [
+      "Part A (ADMIN): Navigate to /admin/sla-policies, click 'New Policy', enter threshold=0, submit",
+      "Assert inline field error under threshold input (aria-describedby set)",
+      "Assert form not submitted (network request not fired)",
+      "Part B (BM): Login as BM, navigate to /admin/sla-policies",
+      "Assert no 'New Policy' button visible",
+      "Assert no deactivate/edit action buttons in table rows"
+    ],
+    "test_data": {
+      "admin_actor": { "role": "ADMIN" },
+      "bm_actor": { "role": "BM", "user_id": "bm_raj_id" }
+    },
+    "expected_result": "Part A: field error visible, form blocked. Part B: BM sees read-only list, no write actions",
+    "postconditions": [],
+    "ui_meta": {
+      "route": "/admin/sla-policies",
+      "locators": {
+        "threshold_input": "getByRole('spinbutton', { name: 'Threshold (minutes)' })",
+        "threshold_error": "getByRole('alert').filter({ hasText: /threshold/i })",
+        "new_policy_button": "getByRole('button', { name: 'New Policy' })"
+      },
+      "viewport": [
+        { "width": 1280, "height": 800 },
+        { "width": 375, "height": 667 }
+      ],
+      "auth_state": "admin_auth.json",
+      "network_wait": null,
+      "visual_assert": "expect(thresholdError).toBeVisible()",
+      "a11y": "checkA11y('#sla-policy-form', { runOnly: ['wcag2a','wcag2aa'] })"
+    }
+  },
+  {
+    "test_id": "TC-FR104-DI-01",
+    "test_name": "Transaction rollback: sla_policies and configuration_versions both absent when audit_logs insert fails",
+    "category": "Data Integrity",
+    "linked_fr": "FR-104",
+    "priority": "Critical",
+    "preconditions": [
+      "AuditAppender mocked to throw after sla_policies INSERT and configuration_versions INSERT",
+      "No existing policy named 'Rollback Test Policy'"
+    ],
+    "test_steps": [
+      "Call SlaPolicyService.create() with valid payload",
+      "AuditAppender.append() throws during the UnitOfWork transaction",
+      "Assert INTERNAL_ERROR exception propagated",
+      "Query DB (invariant): SELECT COUNT(*) FROM sla_policies WHERE name='Rollback Test Policy'",
+      "Assert count=0",
+      "Query DB: SELECT COUNT(*) FROM configuration_versions WHERE config_type='sla_policy' AND NOT EXISTS (SELECT 1 FROM sla_policies sp WHERE sp.sla_policy_id = configuration_versions.config_ref)",
+      "Assert count=0 (no orphaned config_version)"
+    ],
+    "test_data": {
+      "payload": { "name": "Rollback Test Policy", "applies_to": "first_contact", "threshold_minutes": 240, "escalation_chain": [{ "at_minutes": 120, "notify_roles": ["BM"], "action": "notify" }] },
+      "mock": "AuditAppender.append() => throws Error('audit write failed')"
+    },
+    "expected_result": "0 sla_policies rows; 0 configuration_versions rows; no partial state",
+    "postconditions": [],
+    "di_meta": {
+      "setup_sql": "DELETE FROM sla_policies WHERE name = 'Rollback Test Policy'; DELETE FROM configuration_versions WHERE config_type = 'sla_policy' AND config_ref NOT IN (SELECT sla_policy_id FROM sla_policies);",
+      "action": "SlaPolicyService.create() with mocked AuditAppender that throws",
+      "invariant_query": "SELECT COUNT(*) FROM sla_policies WHERE name = 'Rollback Test Policy' HAVING COUNT(*) > 0",
+      "cleanup": "DELETE FROM sla_policies WHERE name = 'Rollback Test Policy';"
+    }
+  }
+]
