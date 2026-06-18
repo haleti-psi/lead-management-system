@@ -24,6 +24,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         tone="primary"
         to="/leads?filter[stage][ne]=handed_off&filter[stage][ne]=rejected"
         description="Leads in progress"
+        index={0}
       />
       <KpiCard
         title="Captured Today"
@@ -32,6 +33,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         tone="neutral"
         to="/leads?filter[sla_state]=none"
         description="New leads today"
+        index={1}
       />
       <KpiCard
         title="Hot Leads"
@@ -40,6 +42,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         tone="hot"
         to="/leads?filter[is_hot]=true"
         description="Score ≥ 75"
+        index={2}
       />
       <KpiCard
         title="SLA Breached"
@@ -49,6 +52,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         to="/leads?filter[stage]=first_contact_pending&filter[sla_breached]=true"
         description="Overdue first contact"
         alert
+        index={3}
       />
       <KpiCard
         title="Consent Coverage"
@@ -58,6 +62,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         unit="%"
         to="/leads?filter[consent_status]=pending"
         description="% with consent"
+        index={4}
       />
       <KpiCard
         title="Handed Off"
@@ -66,6 +71,7 @@ export function KpiCardRow({ kpi }: KpiCardRowProps): ReactElement {
         tone="positive"
         to="/leads?filter[stage]=handed_off"
         description="This month"
+        index={5}
       />
     </div>
   );

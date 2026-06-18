@@ -173,9 +173,9 @@ export function DataTable<T>({
       ) : rows.length === 0 ? (
         <EmptyState title={emptyTitle ?? 'No results'} message={emptyMessage} />
       ) : (
-        <div className="rounded-md border">
+        <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
           <Table>
-            <TableHeader className="sticky top-0 bg-card">
+            <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
               <TableRow>
                 {selectable ? (
                   <TableHead className="w-10">
@@ -200,11 +200,17 @@ export function DataTable<T>({
                         ? ChevronDown
                         : ChevronsUpDown;
                   return (
-                    <TableHead key={column.id} className={column.className}>
+                    <TableHead
+                      key={column.id}
+                      className={cn(
+                        'whitespace-nowrap text-xs font-semibold uppercase tracking-wide',
+                        column.className,
+                      )}
+                    >
                       {column.sortable && onSortChange ? (
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 hover:text-foreground"
+                          className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
                           onClick={() => onHeaderSort(column)}
                           aria-label={`Sort by ${column.header}`}
                         >
@@ -224,7 +230,7 @@ export function DataTable<T>({
                 const id = getRowId(row);
                 const isSelected = selected.has(id);
                 return (
-                  <TableRow key={id} data-state={isSelected ? 'selected' : undefined}>
+                  <TableRow key={id} data-state={isSelected ? 'selected' : undefined} className="[&>td]:py-3">
                     {selectable ? (
                       <TableCell className="w-10">
                         <label className="inline-flex items-center justify-center p-2 -m-2 cursor-pointer">

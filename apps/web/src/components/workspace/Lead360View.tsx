@@ -75,15 +75,27 @@ export function Lead360View({ leadId }: { leadId: string }): ReactElement {
 /** Header card: identity (masked), key chips, owner/branch/team placement. */
 export function LeadSummaryCard({ lead }: { lead: Lead360Response }): ReactElement {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <CardTitle>{lead.identity.name}</CardTitle>
-          {lead.isHot ? <StatusChip status="hot" tone="negative" label="Priority" /> : null}
-          <StatusChip status={lead.stage} label="Stage" />
-          <StatusChip status={lead.kycStatus} label="KYC status" />
-          <StatusChip status={lead.consentStatus} label="Consent status" />
-          <StatusChip status={lead.duplicateStatus} label="Duplicate status" />
+    <Card className="overflow-hidden">
+      <CardHeader className="pb-3">
+        <div className="flex items-start gap-4">
+          <span
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-gradient text-base font-semibold text-white shadow-sm"
+            aria-hidden
+          >
+            {leadInitials(lead.identity.name)}
+          </span>
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle className="text-xl">{lead.identity.name}</CardTitle>
+              {lead.isHot ? <StatusChip status="hot" tone="negative" label="Priority" /> : null}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <StatusChip status={lead.stage} label="Stage" />
+              <StatusChip status={lead.kycStatus} label="KYC status" />
+              <StatusChip status={lead.consentStatus} label="Consent status" />
+              <StatusChip status={lead.duplicateStatus} label="Duplicate status" />
+            </div>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
@@ -527,4 +539,14 @@ function CountGrid({ counts }: { counts: readonly (readonly [string, number])[] 
 
 function formatDateTime(iso: string): string {
   return format(new Date(iso), 'dd MMM yyyy, HH:mm');
+}
+
+/** Up to two initials from the (possibly masked) lead name for the avatar. */
+function leadInitials(name: string): string {
+  const letters = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.match(/[A-Za-z0-9]/)?.[0] ?? '')
+    .filter(Boolean);
+  return `${letters[0] ?? ''}${letters[1] ?? ''}` || '—';
 }

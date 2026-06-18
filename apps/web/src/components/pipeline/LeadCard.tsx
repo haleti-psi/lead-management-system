@@ -68,7 +68,7 @@ export function LeadCard({ card, onDragStart, onMoveClick }: LeadCardProps): Rea
       aria-label={`Lead ${card.leadCode}`}
       draggable
       onDragStart={onDragStart ? (e) => onDragStart(e, card) : undefined}
-      className="cursor-grab select-none transition-colors hover:border-foreground/20 hover:bg-accent/40 active:cursor-grabbing"
+      className="cursor-grab select-none transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:bg-accent/40 hover:shadow-md active:translate-y-0 active:cursor-grabbing"
       data-testid="lead-card"
       data-lead-id={card.leadId}
     >

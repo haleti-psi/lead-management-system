@@ -9,7 +9,7 @@
  * success (list of LeadCards). All four states are covered per ui.md §States.
  */
 
-import type { DragEvent, ReactElement } from 'react';
+import { useState, type DragEvent, type ReactElement } from 'react';
 
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
 import { ErrorState } from '@/components/common/ErrorState';
@@ -72,13 +72,22 @@ export function KanbanColumn({
   onDrop,
   onMoveClick,
 }: KanbanColumnProps): ReactElement {
+  const [isOver, setIsOver] = useState(false);
+
   function handleDragOver(e: DragEvent<HTMLDivElement>): void {
     e.preventDefault(); // allow drop
     e.dataTransfer.dropEffect = 'move';
+    if (!isOver) setIsOver(true);
+  }
+
+  function handleDragLeave(e: DragEvent<HTMLDivElement>): void {
+    // Only clear when the pointer truly leaves the column (not a child element).
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setIsOver(false);
   }
 
   function handleDrop(e: DragEvent<HTMLDivElement>): void {
     e.preventDefault();
+    setIsOver(false);
     onDrop?.(e, stage);
   }
 
@@ -88,8 +97,12 @@ export function KanbanColumn({
   return (
     <section
       aria-label={`${label} column`}
-      className={cn('flex w-[85vw] sm:w-64 shrink-0 flex-col overflow-hidden rounded-lg border bg-muted/40')}
+      className={cn(
+        'flex w-[85vw] shrink-0 flex-col overflow-hidden rounded-lg border bg-muted/40 transition-colors sm:w-64',
+        isOver && 'border-primary/50 bg-primary/5 ring-2 ring-inset ring-primary/40',
+      )}
       onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {/* Column header */}

@@ -24,20 +24,24 @@ function formatValue(value: string): string {
   return Number.isFinite(n) ? INR_COMPACT.format(n) : '—';
 }
 
-/** Inline SVG sparkline of daily counts (stretches to width; crisp stroke). */
+/** Inline SVG sparkline of daily counts (stretches to width; crisp stroke) with
+ * a soft gradient area fill. No chart dependency; low-bandwidth friendly. */
 function Sparkline({ series }: { series: CapturePoint[] }): ReactElement {
   const W = 240;
   const H = 40;
   const pad = 2;
   const max = Math.max(1, ...series.map((p) => p.count));
   const n = series.length;
-  const points = series
-    .map((p, i) => {
-      const x = n <= 1 ? pad : (i / (n - 1)) * (W - pad * 2) + pad;
-      const y = H - pad - (p.count / max) * (H - pad * 2);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
+  const xy = series.map((p, i) => {
+    const x = n <= 1 ? pad : (i / (n - 1)) * (W - pad * 2) + pad;
+    const y = H - pad - (p.count / max) * (H - pad * 2);
+    return [x, y] as const;
+  });
+  const line = xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const baseline = (H - pad).toFixed(1);
+  const firstX = (xy[0]?.[0] ?? pad).toFixed(1);
+  const lastX = (xy[xy.length - 1]?.[0] ?? W - pad).toFixed(1);
+  const area = `${firstX},${baseline} ${line} ${lastX},${baseline}`;
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
@@ -46,8 +50,15 @@ function Sparkline({ series }: { series: CapturePoint[] }): ReactElement {
       role="img"
       aria-label="Captures over the last 14 days"
     >
+      <defs>
+        <linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="currentColor" stopOpacity={0.22} />
+          <stop offset="100%" stopColor="currentColor" stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      {xy.length > 1 ? <polygon points={area} fill="url(#sparkfill)" stroke="none" /> : null}
       <polyline
-        points={points}
+        points={line}
         fill="none"
         stroke="currentColor"
         strokeWidth="1.5"
