@@ -55,8 +55,8 @@ This is a **re-review** of a mature codebase (49/49 FRs, already passed Stage 8 
 | # | Sev | Domain(s) | Location | Issue | Status |
 | --- | --- | --- | --- | --- | --- |
 | 1 | **CRITICAL** | Infra | `docs/data-model/migrations/V3__*` ×2 | Two `V3__` migrations + `validateOnMigrate=true` → `flyway migrate` aborts; schema never deploys | ✅ FIXED (→ V6) |
-| 2 | **HIGH** | Infra | `retention-policy.controller.ts:198`, `env.schema.ts` | `RETENTION_CRON_SCHEDULE` documented (env-contract, FR-115) but no autonomous trigger wired; apply runs only inline behind a user JWT → DPDP scheduled-purge gap | ⏸ DEFERRED — decision needed |
-| 3 | **HIGH** | Infra | `.github/workflows` (absent) | No CI/CD: nothing runs the 2233-test suite, builds/scans images, or deploys on push | ⏸ DEFERRED — decision needed |
+| 2 | **HIGH** | Infra | `retention-policy.controller.ts:198`, `env.schema.ts` | `RETENTION_CRON_SCHEDULE` documented (env-contract, FR-115) but no autonomous trigger wired; apply runs only inline behind a user JWT → DPDP scheduled-purge gap | ✅ FIXED (all-orgs sweep) |
+| 3 | **HIGH** | Infra | `.github/workflows` (absent) | No CI/CD: nothing runs the test suite, builds/scans images, or deploys on push | ✅ FIXED (build+test) |
 | 4 | MEDIUM | Quality | `use-eligibility.ts:40` | `.catch(()=>null)` collapses transport/5xx into the empty state; `isError` never trips → load-failure indistinguishable from no-data | Backlog |
 | 5 | MEDIUM | Infra | `apps/api/package.json:25`, `Dockerfile:8` | `argon2` native addon on `node:20-slim` (no build toolchain) — relies on prebuilds; unverified (build not yet exercised) | Backlog (verify on first `docker build`) |
 | 6 | MEDIUM | Infra | `health.controller.ts:11` | `/health` is liveness-only (static `ok`); no DB readiness probe | Backlog |
@@ -87,7 +87,9 @@ This is a **re-review** of a mature codebase (49/49 FRs, already passed Stage 8 
 
 | Finding | Fix | Files | Verification |
 | --- | --- | --- | --- |
-| #1 CRITICAL — duplicate V3 | Renamed `V3__widen_documents_file_type.sql` → `V6__…` (kept doc-referenced scoring seed at V3; `widen` is a standalone metadata-only `ALTER` with no dependency on V3–V5 and no filename references in code/tests/docs). Updated the file's internal header comment to match. | `docs/data-model/migrations/V6__widen_documents_file_type.sql` (renamed via `git mv`) | `ls` confirms V1–V6 unique → `validateOnMigrate` passes. No TS/code changed; 2233-test baseline unaffected. |
+| #1 CRITICAL — duplicate V3 | Renamed `V3__widen_documents_file_type.sql` → `V6__…` (kept doc-referenced scoring seed at V3; `widen` is a standalone metadata-only `ALTER` with no dependency on V3–V5 and no filename references in code/tests/docs). Updated the file's internal header comment to match. | `docs/data-model/migrations/V6__widen_documents_file_type.sql` (renamed via `git mv`) | `ls` confirms V1–V6 unique → `validateOnMigrate` passes. No TS/code changed; test baseline unaffected. |
+| #2 HIGH — retention cron | Wired the autonomous **all-orgs** sweep: `RetentionSweepController` (`POST /internal/jobs/retention-sweep`, `@Public()` + `InternalTaskGuard`, mirrors `GrievanceEscalationJob`) → `RetentionEngine.sweepAllOrgs` (enumerates distinct orgs with active policies, bounded by `ORG_SWEEP_LIMIT`, per-org resilient); added `RETENTION_CRON_SCHEDULE`/`RETENTION_BATCH_SIZE` to the env schema; module + auth-matrix registration; engine + controller specs. | `retention.engine.ts`, `retention-sweep.controller.ts` (+spec), `compliance.module.ts`, `env.schema.ts`, `auth-matrix.json`, `retention.engine.spec.ts` | `nest build` clean; API suite **1849 passed / 163 suites**. |
+| #3 HIGH — no CI/CD | Added a GitHub Actions build+test workflow (`npm ci` → `npm run build` → `npm test`, on push to master + PRs, concurrency-cancel). Image build + Cloud Run deploy deferred until the `project.config.yaml` GCP placeholders are filled. | `.github/workflows/ci.yml` | api `test` = jest (unit), web `test` = `vitest run` — no Docker needed; mirrors the green local run. |
 
 ---
 
@@ -99,7 +101,7 @@ Coding Standards Review:  COMPLIANT          (1 P3)
 UI Review:                GO                 (substance PASS; P3/P4 only)
 Quality Review:           SOLID              (1 P2, rest P3)
 Security Review:          SECURE             (1 P3)
-Infra Review:             CONDITIONAL        (P0 FIXED; 2 P1 deferred; P2/P3)
+Infra Review:             CONDITIONAL        (P0 + both P1 FIXED; P2 polish + deploy TODOs remain)
 BRD Coverage:             COMPLIANT (reused) (49/49 DONE)
 Sanity Check:             CLEAN
 
@@ -107,27 +109,27 @@ Component Substance:      PASS (0 skeletons)
 
 CONSOLIDATED
   Total findings:   1 CRITICAL, 2 HIGH, 4 MEDIUM, 9 LOW
-  Fixed:            1 / 1 CRITICAL  (HIGH deferred to a decision — see §8)
-  Remaining:        2 HIGH (decision), 4 MEDIUM, 9 LOW (backlog)
-  Commits:          1 (CRITICAL tier)
-  Final verdict:    CONDITIONAL
+  Fixed:            1 CRITICAL + 2 HIGH  (every CRITICAL + HIGH resolved)
+  Remaining:        4 MEDIUM, 9 LOW (backlog) + expected project.config.yaml pre-deploy TODOs
+  Commits:          3 (CRITICAL migration; retention sweep; CI workflow) + report
+  Final verdict:    CONDITIONAL (no CRITICAL/HIGH open; MEDIUM/LOW + pre-deploy config remain)
 ```
 
 ---
 
-## 8. Unresolved Findings (decision required)
+## 8. HIGH Findings — Resolved (decision taken 2026-06-19)
 
-Both are HIGH but require a product/architecture decision, not a mechanical fix:
+Both HIGH items required a decision (each is net-new infra, not a mechanical fix); both were surfaced to the user, approved, and implemented in this pass. No CRITICAL or HIGH finding remains open.
 
-### #2 — Wire the autonomous retention sweep (DPDP scheduled purge)
-- **Gap:** `RETENTION_CRON_SCHEDULE`/`RETENTION_BATCH_SIZE` are in `environment-contract.md` + `FR-115.md` but absent from `env.schema.ts`; no `InternalTaskGuard`-protected sweep exists. The purge **logic** already exists and is tested (`RetentionEngine.applyRun`) — only the autonomous trigger is missing.
-- **Decision needed:** how should a no-user sweep scope orgs? (a) global all-orgs (`SELECT DISTINCT org_id` → loop `applyRun`, mirroring how `SlaEngine.sweep` runs system-wide), or (b) single configured org per deployment.
-- **Remediation once decided (mirrors `sla-sweep`):** add `POST /internal/retention/run` (`@Public()` + `InternalTaskGuard`), add the two env vars to `env.schema.ts`, add a sweep method to the engine, register the controller, add a spec; drive it from Cloud Scheduler → Cloud Tasks.
+### #2 — Autonomous retention sweep ✅ RESOLVED (chosen: all-orgs)
+- **Gap:** `RETENTION_CRON_SCHEDULE`/`RETENTION_BATCH_SIZE` were in `environment-contract.md` + `FR-115.md` but absent from `env.schema.ts`; no `InternalTaskGuard`-protected sweep existed. The purge **logic** already existed and was tested (`RetentionEngine.applyRun`) — only the autonomous trigger was missing.
+- **Decision (user):** global **all-orgs** sweep — enumerate distinct orgs with active policies and loop `applyRun` per org (the per-org engine has no system-wide variant; this mirrors how the codebase's internal jobs run without a user).
+- **Done:** added `RetentionSweepController` (`POST /internal/jobs/retention-sweep`, `@Public()` + `InternalTaskGuard`, mirrors `GrievanceEscalationJob`) → `RetentionEngine.sweepAllOrgs` (distinct-org enumeration bounded by `ORG_SWEEP_LIMIT`=1000, one org's failure logged and skipped); added both env vars; registered in `compliance.module.ts` + `auth-matrix.json` (`service_to_service_only`); engine + controller specs (sweep enumeration, per-org resilience, empty no-op, run-id delegation). Drive from Cloud Scheduler → Cloud Tasks. Verified: `nest build` clean, API suite 1849 green.
 
-### #3 — Add CI/CD
-- **Gap:** no `.github/workflows` or `cloudbuild.yaml`; releases are manual.
-- **Decision needed:** GitHub Actions (repo is on GitHub) or Cloud Build (matches the GCP deploy target)? Build+test-only to start, or include image build + Cloud Run deploy (the latter needs the `project.config.yaml` TODOs filled first)?
-- **Note:** a build+test workflow is CI-safe — `npm run test -w @lms/api` is plain `jest` (unit, mocked); Testcontainers integration tests run only under the separate `test:e2e` config, so no Docker/Postgres service is required in CI.
+### #3 — CI/CD ✅ RESOLVED (chosen: GitHub Actions, build+test)
+- **Gap:** no `.github/workflows` or `cloudbuild.yaml`; releases were manual.
+- **Decision (user):** GitHub Actions, build+test scope (repo already on GitHub).
+- **Done:** added `.github/workflows/ci.yml` — checkout → setup-node@20 (npm cache) → `npm ci` → `npm run build` (shared→api→web) → `npm test` (api jest + web `vitest run`), on push to master + PRs, with concurrency cancellation. CI-safe: no Docker/Postgres needed (the Testcontainers suite runs only under the separate `test:e2e` config). Image build + Cloud Run deploy intentionally deferred until the `project.config.yaml` GCP placeholders are filled.
 
 ---
 
@@ -135,4 +137,4 @@ Both are HIGH but require a product/architecture decision, not a mechanical fix:
 
 **CONDITIONAL.**
 
-The deploy-blocking CRITICAL (duplicate Flyway version) is **fixed**. Every domain is positive — SECURE, SOLID, GO, COMPLIANT, COMPLIANT — with **zero skeleton components** and the full 2233-test suite green. Infra remains **CONDITIONAL** on two HIGH items that are deliberately surfaced for a decision (autonomous retention sweep; CI/CD) plus the expected `project.config.yaml` pre-deploy TODOs, and a short MEDIUM/LOW polish backlog. None of the remaining items block the application from building, running, or being deployed manually.
+The deploy-blocking CRITICAL (duplicate Flyway version) and **both HIGH items are now fixed**: the autonomous all-orgs retention sweep is wired (FR-115) and a GitHub Actions build+test CI workflow is in place. Every domain is positive — SECURE, SOLID, GO, COMPLIANT, COMPLIANT — with **zero skeleton components** and the full suite green (**API 1849 + web 393**). Infra remains **CONDITIONAL** only on MEDIUM polish (argon2-on-slim build verification, a readiness probe, nginx security headers) and the expected `project.config.yaml` pre-deploy TODOs. No CRITICAL or HIGH finding is open; nothing remaining blocks the application from building, running, or being deployed.
