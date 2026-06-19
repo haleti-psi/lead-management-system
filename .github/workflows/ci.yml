@@ -1,0 +1,40 @@
+name: CI
+
+# Build + unit-test gate for the monorepo. Runs the api (jest) and web (vitest)
+# unit suites — neither needs Docker/Postgres (the Testcontainers integration
+# suite runs only under the separate `test:e2e` jest config, not `npm test`).
+# Image build + Cloud Run deploy are intentionally out of scope here until the
+# project.config.yaml GCP placeholders are filled.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (shared -> api -> web)
+        run: npm run build
+
+      - name: Test (api + web unit suites)
+        run: npm test
