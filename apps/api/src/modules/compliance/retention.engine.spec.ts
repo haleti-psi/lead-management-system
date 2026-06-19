@@ -757,3 +757,57 @@ describe('ListRetentionPoliciesQuery', () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ──────────────────────────── all-orgs autonomous sweep (FR-115) ──
+
+describe('RetentionEngine.sweepAllOrgs', () => {
+  const ORG_1 = '00000000-0000-0000-0000-000000000001';
+  const ORG_2 = '00000000-0000-0000-0000-000000000002';
+
+  // db mock for findOrgIdsWithActivePolicies():
+  // selectFrom('retention_policies').select('org_id').distinct().where().orderBy().limit().execute()
+  function buildOrgEnumDb(orgIds: string[]): KyselyDb {
+    const chain: Record<string, jest.Mock> = {};
+    for (const m of ['select', 'distinct', 'where', 'orderBy', 'limit']) {
+      chain[m] = jest.fn().mockReturnThis();
+    }
+    chain['execute'] = jest.fn().mockResolvedValue(orgIds.map((org_id) => ({ org_id })));
+    return { selectFrom: jest.fn().mockReturnValue(chain) } as unknown as KyselyDb;
+  }
+
+  it('enumerates orgs with active policies and runs applyRun once per org', async () => {
+    const engine = buildEngine({ db: buildOrgEnumDb([ORG_1, ORG_2]) });
+    const applySpy = jest.spyOn(engine, 'applyRun').mockResolvedValue(undefined);
+
+    const result = await engine.sweepAllOrgs('run-1');
+
+    expect(result.orgsSwept).toBe(2);
+    expect(applySpy).toHaveBeenCalledTimes(2);
+    expect(applySpy).toHaveBeenCalledWith('run-1', ORG_1);
+    expect(applySpy).toHaveBeenCalledWith('run-1', ORG_2);
+  });
+
+  it('continues to the next org when one org fails (sweep resilience)', async () => {
+    const engine = buildEngine({ db: buildOrgEnumDb([ORG_1, ORG_2]) });
+    const applySpy = jest
+      .spyOn(engine, 'applyRun')
+      .mockRejectedValueOnce(new Error('org 1 boom'))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await engine.sweepAllOrgs('run-2');
+
+    // ORG_1 threw but ORG_2 still ran; only successfully-swept orgs are counted
+    expect(applySpy).toHaveBeenCalledTimes(2);
+    expect(result.orgsSwept).toBe(1);
+  });
+
+  it('is a no-op when no org has an active policy', async () => {
+    const engine = buildEngine({ db: buildOrgEnumDb([]) });
+    const applySpy = jest.spyOn(engine, 'applyRun').mockResolvedValue(undefined);
+
+    const result = await engine.sweepAllOrgs('run-3');
+
+    expect(applySpy).not.toHaveBeenCalled();
+    expect(result.orgsSwept).toBe(0);
+  });
+});

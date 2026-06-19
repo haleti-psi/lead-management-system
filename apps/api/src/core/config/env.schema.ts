@@ -71,6 +71,14 @@ export const envSchema = z.object({
     .default('true')
     .transform((v) => v === 'true'),
 
+  // ── FR-115 Data retention (environment-contract.md §Retention) ──
+  // RETENTION_CRON_SCHEDULE drives Cloud Scheduler → Cloud Tasks for the
+  // autonomous retention sweep (POST /internal/jobs/retention-sweep); validated
+  // and documented here so the schema mirrors the contract. RETENTION_BATCH_SIZE
+  // bounds the per-policy candidate batch processed by RetentionEngine.
+  RETENTION_CRON_SCHEDULE: z.string().min(1).default('0 20 * * *'),
+  RETENTION_BATCH_SIZE: intFrom(100, { min: 1 }),
+
   // ── Provider variables (environment-contract.md §Provider variables) ──
   // Optional in the schema: required only where the real provider/inbound
   // webhook is enabled (prod). Dev/test run with mock adapters (LOS_MOCK=true)

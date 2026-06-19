@@ -28,6 +28,7 @@ import { GrievanceSlaWriterAdapter } from './grievance-sla-writer.adapter';
 import { RetentionEngine } from './retention.engine';
 import { RetentionPolicyController } from './retention-policy.controller';
 import { RetentionPolicyRepository } from './retention-policy.repository';
+import { RetentionSweepController } from './retention-sweep.controller';
 
 /**
  * M12 Compliance — FR-110 (purpose-wise consent ledger) + FR-111 (data
@@ -80,6 +81,8 @@ import { RetentionPolicyRepository } from './retention-policy.repository';
     GrievanceEscalationJob,
     // FR-115 — retention policy CRUD + run trigger
     RetentionPolicyController,
+    // FR-115 — autonomous all-orgs retention sweep (Cloud Scheduler → Cloud Tasks)
+    RetentionSweepController,
   ],
   providers: [
     // FR-110 — consent (CUSTOMER_LINK_PORT now provided by @Global SelfServiceModule)

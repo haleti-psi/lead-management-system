@@ -20,6 +20,12 @@ export const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000';
 /** Default batch size if env var is absent. */
 const DEFAULT_BATCH_SIZE = 100;
 
+/**
+ * Upper bound on the number of orgs enumerated in one autonomous sweep — keeps
+ * the org-enumeration query bounded (never an unlimited scan).
+ */
+const ORG_SWEEP_LIMIT = 1000;
+
 /** Terminal lead stages by outcome (per LLD §Data Operations). */
 const OUTCOME_STAGE_MAP: Record<LeadOutcome, LeadStage[]> = {
   [LeadOutcome.REJECTED]: ['rejected'],
@@ -177,6 +183,58 @@ export class RetentionEngine {
       { runId, orgId, processed, failed },
       'Retention apply-run complete',
     );
+  }
+
+  // ───────────────────────────────────────────────── all-orgs sweep ──
+
+  /**
+   * Autonomous retention sweep across every org that has an active policy.
+   *
+   * Driven by Cloud Scheduler → Cloud Tasks (see `RetentionSweepController`) with
+   * NO user context, so it enumerates the orgs itself (bounded by
+   * {@link ORG_SWEEP_LIMIT}) and runs the per-org {@link applyRun} for each. One
+   * org failing is logged and never aborts the rest of the sweep — mirroring the
+   * per-lead resilience already inside `applyRun`. Returns how many orgs were
+   * swept successfully.
+   */
+  async sweepAllOrgs(runId: string): Promise<{ orgsSwept: number }> {
+    const orgIds = await this.findOrgIdsWithActivePolicies();
+    let orgsSwept = 0;
+
+    for (const orgId of orgIds) {
+      try {
+        await this.applyRun(runId, orgId);
+        orgsSwept++;
+      } catch (err) {
+        this.logger.error(
+          { runId, orgId, err },
+          'Retention sweep failed for org; continuing to next org',
+        );
+      }
+    }
+
+    this.logger.info(
+      { runId, orgsSwept, orgsFound: orgIds.length },
+      'Retention all-orgs sweep complete',
+    );
+    return { orgsSwept };
+  }
+
+  /**
+   * Distinct org_ids that have at least one active retention policy. Bounded by
+   * {@link ORG_SWEEP_LIMIT} so the enumeration is never an unlimited scan.
+   */
+  private async findOrgIdsWithActivePolicies(): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom('retention_policies')
+      .select('org_id')
+      .distinct()
+      .where('is_active', '=', true)
+      .orderBy('org_id')
+      .limit(ORG_SWEEP_LIMIT)
+      .execute();
+
+    return rows.map((r) => r.org_id);
   }
 
   // ─────────────────────────────────────────── Per-lead transaction ──
