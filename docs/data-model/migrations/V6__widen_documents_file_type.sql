@@ -1,5 +1,5 @@
 -- =============================================================
--- V3__widen_documents_file_type.sql  —  FR-070 (Document Checklist & Upload)
+-- V6__widen_documents_file_type.sql  —  FR-070 (Document Checklist & Upload)
 -- Module: M8 KYC & Documents.  source_fr: FR-070 (Tier 3).
 --
 -- documents.file_type stores the document's MIME type (e.g. 'application/pdf',
