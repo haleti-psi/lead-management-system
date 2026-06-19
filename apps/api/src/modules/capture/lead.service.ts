@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { sql } from 'kysely';
 
 import {
+  ApprovalDecision,
+  ApprovalStatus,
   AuditAction,
   DupAction,
   DupStatus,
@@ -9,6 +11,7 @@ import {
   EventCode,
   LeadStage,
   type AllocationMethod,
+  type ApprovalDecision as ApprovalDecisionType,
   type ConsentStatus,
   type CreationChannel,
   type HotReasonCode,
@@ -141,6 +144,15 @@ export interface UnmergeLeadsInput {
 export interface MergeLeadsResult {
   duplicate_version: number;
   master_version: number;
+}
+
+/** Result returned by {@link LeadService.recordApprovalDecision} (FR-055). */
+export interface ApprovalDecisionResult {
+  lead_id: string;
+  lead_code: string;
+  stage: LeadStage;
+  approval_status: string;
+  version: number;
 }
 
 /**
@@ -1109,6 +1121,113 @@ export class LeadService {
    * serialises against concurrent master edits. Audit (`lead_merge`,
    * `detail.action='unmerged'`) + `LEAD_STAGE_CHANGED` ride the same tx.
    */
+  /**
+   * FR-055 — approval decision write (§11.2 pinned mutator; sole writer of
+   * `leads` on the approval path). In ONE transaction (passed by caller):
+   *  1. UPDATE leads SET stage=<toStage>, approval_status=<status>, version++
+   *  2. INSERT stage_history (from pending_approval → toStage)
+   *  3. AuditAppender.append stage_transition
+   *  4. OutboxService.emit LEAD_APPROVED | LEAD_REJECTED
+   *
+   * @param leadId    Target lead UUID (must be in `pending_approval` — caller asserts)
+   * @param decision  The request verb ('approve'|'reject')
+   * @param reason    Rejection reason (required by Zod when rejecting)
+   * @param actorId   Actor who approved / rejected
+   * @param tx        Ambient UnitOfWork transaction (all 4 writes share it)
+   */
+  async recordApprovalDecision(
+    leadId: string,
+    decision: ApprovalDecisionType,
+    reason: string | null,
+    actorId: string,
+    tx: DbTransaction,
+  ): Promise<ApprovalDecisionResult> {
+    const toStage = decision === ApprovalDecision.APPROVE
+      ? LeadStage.READY_FOR_HANDOFF
+      : LeadStage.REJECTED;
+    const approvalStatus = decision === ApprovalDecision.APPROVE
+      ? ApprovalStatus.APPROVED
+      : ApprovalStatus.REJECTED;
+
+    // Step 1: UPDATE leads (stage + approval_status + version bump).
+    const updated = await tx
+      .updateTable('leads')
+      .set((eb) => ({
+        stage: toStage,
+        approval_status: approvalStatus,
+        version: eb('version', '+', 1),
+        updated_at: new Date(),
+        updated_by: actorId,
+      }))
+      .where('lead_id', '=', leadId)
+      .where('deleted_at', 'is', null)
+      .returning(['lead_id', 'lead_code', 'stage', 'approval_status', 'version', 'org_id'])
+      .executeTakeFirst();
+
+    if (!updated) {
+      throw new DomainException(ERROR_CODES.NOT_FOUND);
+    }
+
+    // Step 2: Append stage_history row.
+    await this.appendStageHistory(
+      {
+        org_id: updated.org_id,
+        lead_id: leadId,
+        from_stage: LeadStage.PENDING_APPROVAL,
+        to_stage: toStage,
+        actor_id: actorId,
+        reason,
+      },
+      tx,
+    );
+
+    // Step 3: Audit.
+    await this.audit.append(
+      {
+        action: AuditAction.STAGE_TRANSITION,
+        entity_type: LEADS_RESOURCE_TYPE,
+        entity_id: leadId,
+        actor_id: actorId,
+        org_id: updated.org_id,
+        lead_id: leadId,
+        detail: {
+          from_stage: LeadStage.PENDING_APPROVAL,
+          to_stage: toStage,
+          decision,
+          reason,
+        },
+      },
+      tx,
+    );
+
+    // Step 4: Outbox event.
+    const eventCode = decision === ApprovalDecision.APPROVE
+      ? EventCode.LEAD_APPROVED
+      : EventCode.LEAD_REJECTED;
+    await this.outbox.emit(
+      {
+        event_code: eventCode,
+        aggregate_type: LEADS_RESOURCE_TYPE,
+        aggregate_id: leadId,
+        payload: {
+          leadId,
+          decision,
+          decidedBy: actorId,
+          occurredAt: new Date().toISOString(),
+        },
+      },
+      tx,
+    );
+
+    return {
+      lead_id: updated.lead_id,
+      lead_code: updated.lead_code,
+      stage: updated.stage,
+      approval_status: updated.approval_status,
+      version: updated.version,
+    };
+  }
+
   async unmerge(
     duplicateId: string,
     masterId: string,

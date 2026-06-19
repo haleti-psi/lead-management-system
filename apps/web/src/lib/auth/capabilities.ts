@@ -20,6 +20,7 @@ export type Capability =
   | 'kyc_signoff'
   | 'move_stage'
   | 'hand_off'
+  | 'approve_lead'
   | 'allocate'
   | 'bulk_action'
   | 'customer_comm'
@@ -33,9 +34,9 @@ export type Capability =
 
 export const ROLE_CAPABILITIES: Readonly<Record<RoleCode, readonly Capability[]>> = {
   RM: ['create_lead', 'view_lead', 'edit_lead', 'upload_doc', 'verify_doc', 'move_stage', 'hand_off', 'customer_comm', 'reports', 'export', 'consent_ledger', 'audit_trail'],
-  BM: ['create_lead', 'view_lead', 'edit_lead', 'upload_doc', 'verify_doc', 'kyc_signoff', 'move_stage', 'hand_off', 'allocate', 'bulk_action', 'customer_comm', 'reports', 'export', 'consent_ledger', 'audit_trail', 'configuration'],
-  SM: ['create_lead', 'view_lead', 'edit_lead', 'move_stage', 'allocate', 'bulk_action', 'customer_comm', 'reports', 'export', 'consent_ledger', 'audit_trail'],
-  HEAD: ['create_lead', 'view_lead', 'allocate', 'bulk_action', 'reports', 'export', 'consent_ledger', 'audit_trail', 'configuration'],
+  BM: ['create_lead', 'view_lead', 'edit_lead', 'upload_doc', 'verify_doc', 'kyc_signoff', 'move_stage', 'hand_off', 'approve_lead', 'allocate', 'bulk_action', 'customer_comm', 'reports', 'export', 'consent_ledger', 'audit_trail', 'configuration'],
+  SM: ['create_lead', 'view_lead', 'edit_lead', 'move_stage', 'approve_lead', 'allocate', 'bulk_action', 'customer_comm', 'reports', 'export', 'consent_ledger', 'audit_trail'],
+  HEAD: ['create_lead', 'view_lead', 'approve_lead', 'allocate', 'bulk_action', 'reports', 'export', 'consent_ledger', 'audit_trail', 'configuration'],
   KYC: ['view_lead', 'edit_lead', 'upload_doc', 'verify_doc', 'kyc_signoff', 'move_stage', 'hand_off', 'bulk_action', 'customer_comm', 'reports', 'export', 'consent_ledger', 'audit_trail', 'configuration'],
   DPO: ['view_lead', 'kyc_signoff', 'hand_off', 'reports', 'export', 'consent_ledger', 'audit_trail', 'configuration', 'break_glass'],
   PARTNER: ['create_lead', 'view_lead', 'edit_lead', 'upload_doc', 'move_stage', 'customer_comm', 'reports', 'export', 'consent_ledger', 'audit_trail'],

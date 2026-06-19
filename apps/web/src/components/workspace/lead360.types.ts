@@ -1,4 +1,5 @@
 import type {
+  ApprovalStatus,
   ConsentPurpose,
   ConsentState,
   ConsentStatus,
@@ -152,6 +153,7 @@ export interface Lead360Response {
   leadId: string;
   leadCode: string;
   stage: LeadStage;
+  approvalStatus: ApprovalStatus;
   priority: Priority;
   isHot: boolean;
   score: number | null;

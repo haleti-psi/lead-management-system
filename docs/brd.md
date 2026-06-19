@@ -1868,6 +1868,39 @@ Priority labels: **MVP-Must**, **MVP-Should**, **Phase 1.5**, **Phase 2**. Every
 | Dependencies | FR-002, FR-050 |
 | Test guidance | API: scope filter, masking, top-N cap. E2E: cmd-k navigate |
 
+#### FR-055: Lead approval before hand-off
+**Module:** M6 · **Priority:** MVP-Must · **Roles:** BM, SM, HEAD
+**User story:** As a Branch Manager, I want to approve or reject a lead before it is handed off to the LOS so that only credit-ready leads proceed and every decision is audited.
+**Acceptance criteria**
+1. After eligibility (eligibility_requested → pending_approval) a lead waits for an approver decision; the `pending_approval` stage is an active stage eligible for the generic dormancy path.
+2. Approver (BM/SM/HEAD, `approve_lead` capability, within their scope) calls `POST /leads/{id}/approval` with `{ decision: "approve"|"reject", reason? }`.
+3. Approve → stage moves to `ready_for_handoff`; leads.approval_status set to `approved`.
+4. Reject → stage moves to `rejected` (reason required, 5–500 chars); leads.approval_status set to `rejected`.
+5. Every decision writes one row to `lead_approvals` (decision, reason, decided_by, decided_at).
+6. A `stage_history` row and `audit_logs` entry (action `stage_transition`) are written in the same transaction.
+7. An outbox event (`LEAD_APPROVED` or `LEAD_REJECTED`) is emitted in the same transaction.
+8. The existing FR-081 hand-off (`ready_for_handoff → handed_off`) is unchanged and executes after approval.
+9. RM and PARTNER roles do not hold `approve_lead` and receive 403 on any attempt.
+10. A reject without a reason string returns 400 `VALIDATION_ERROR`.
+**Business rules:**
+- `pending_approval` is inserted into `ACTIVE_STAGES`; any active-stage-to-dormant guard applies to it.
+- The transition `eligibility_requested → ready_for_handoff` is re-pointed to `eligibility_requested → pending_approval` (same guards: `eligibility_received`, `docs_kyc_ready`).
+- v1 has no four-eyes self-approval block (noted as a follow-up).
+- All four writes (lead_approvals INSERT, leads UPDATE, stage_history INSERT, event_outbox INSERT via OutboxService) are atomic inside one `UnitOfWork` transaction.
+**Edge cases:** lead not in `pending_approval` → 409 `CONFLICT`; lead not found → 404; actor out of scope → 403.
+
+| LLD area | Guidance |
+|---|---|
+| Components | ApprovalsPage (`/approvals`), Approve/Reject panel in Lead360View |
+| Backend flow | `POST /leads/{id}/approval` → `ApprovalService.decide` → `UnitOfWork` (lead_approvals INSERT + `LeadService.recordApprovalDecision` + outbox) |
+| Data ops | INSERT `lead_approvals`; UPDATE `leads` (stage, approval_status, version); INSERT `stage_history`; INSERT `event_outbox`; INSERT `audit_logs` |
+| Validation | `ApprovalDto`: decision ∈ ApprovalDecision enum; reason required + 5–500 chars when reject |
+| Authorization | `@Requires('approve_lead', scopeResolver)` — BM scope B, SM scope T, HEAD scope A |
+| State/side effects | `pending_approval → ready_for_handoff` (approve) or `→ rejected` (reject); `leads.approval_status` updated |
+| Failure handling | Lead not in `pending_approval` → 409; missing/too-short reason on reject → 400; scope mismatch → 403 |
+| Dependencies | FR-081 (hand-off), FR-052 (stage-guard matrix), FR-030 (scope resolver pattern) |
+| Test guidance | API: approve happy, reject happy, reject-without-reason 400, not-in-pending_approval 409, wrong role 403. Invariant: lead_approvals row + approval_status + stage move + event — all-or-nothing. |
+
 ### M7 — Customer Self-Service
 
 #### FR-060: Secure customer action link

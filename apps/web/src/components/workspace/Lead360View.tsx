@@ -1,15 +1,19 @@
-import { useState, type ReactElement, type ReactNode } from 'react';
+import { useState, useEffect, useRef, type ReactElement, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { format } from 'date-fns';
+import { toast } from 'sonner';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { MaskedField } from '@/components/ui/MaskedField';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { isApiClientError } from '@/lib/api';
+import { useCan } from '@/lib/auth/capabilities';
+import { useLeadApproval, approvalErrorMessage } from '@/hooks/use-lead-approval';
 import { SectionTabs } from './SectionTabs';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { useLead360 } from './use-lead360';
@@ -48,6 +52,8 @@ export function Lead360View({ leadId }: { leadId: string }): ReactElement {
     );
   }
 
+  const can = useCan();
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -55,6 +61,9 @@ export function Lead360View({ leadId }: { leadId: string }): ReactElement {
         title={data.leadCode}
       />
       <LeadSummaryCard lead={data} />
+      {data.stage === 'pending_approval' && can('approve_lead') ? (
+        <ApprovalPanel leadId={data.leadId} leadCode={data.leadCode} />
+      ) : null}
       <SectionTabs
         ariaLabel="Lead sections"
         tabs={[
@@ -501,6 +510,149 @@ function NotesTimeline({ notes }: { notes: Lead360Response['notes'] }): ReactEle
           )}
         </CardContent>
       ) : null}
+    </Card>
+  );
+}
+
+// ── FR-055: Approval panel ───────────────────────────────────────────────────
+
+/**
+ * Inline approve / reject panel rendered inside Lead360View when the lead is
+ * in `pending_approval` and the current user has the `approve_lead` capability.
+ * Rejects require a reason (5–500 chars).
+ *
+ * WCAG 2.1 AA: explicit label association, role="alert" for errors, focus
+ * management when the reason panel expands.
+ */
+function ApprovalPanel({ leadId, leadCode }: { leadId: string; leadCode: string }): ReactElement {
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const reasonRef = useRef<HTMLInputElement>(null);
+  const mutation = useLeadApproval(leadId);
+
+  useEffect(() => {
+    if (rejectOpen) {
+      reasonRef.current?.focus();
+    }
+  }, [rejectOpen]);
+
+  const handleApprove = (): void => {
+    mutation.mutate(
+      { decision: 'approve' },
+      {
+        onSuccess: () => toast.success(`${leadCode} approved.`),
+        onError: (error) => toast.error(approvalErrorMessage(error)),
+      },
+    );
+  };
+
+  const handleReject = (): void => {
+    const trimmed = reason.trim();
+    if (trimmed.length < 5) {
+      setValidationError('Reason must be at least 5 characters.');
+      return;
+    }
+    if (trimmed.length > 500) {
+      setValidationError('Reason must not exceed 500 characters.');
+      return;
+    }
+    setValidationError(null);
+    mutation.mutate(
+      { decision: 'reject', reason: trimmed },
+      {
+        onSuccess: () => {
+          toast.success(`${leadCode} rejected.`);
+          setRejectOpen(false);
+          setReason('');
+        },
+        onError: (error) => toast.error(approvalErrorMessage(error)),
+      },
+    );
+  };
+
+  return (
+    <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/20">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base text-amber-900 dark:text-amber-100">
+          Pending approval
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-amber-800 dark:text-amber-200">
+          This lead is awaiting your approval decision.
+        </p>
+        {!rejectOpen ? (
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={handleApprove}
+              disabled={mutation.isPending}
+              aria-label={`Approve lead ${leadCode}`}
+            >
+              Approve
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRejectOpen(true);
+                setValidationError(null);
+                setReason('');
+              }}
+              disabled={mutation.isPending}
+              aria-label={`Reject lead ${leadCode}`}
+            >
+              Reject
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <label htmlFor={`approval-reason-${leadId}`} className="text-sm font-medium">
+              Rejection reason <span aria-hidden>*</span>
+            </label>
+            <Input
+              id={`approval-reason-${leadId}`}
+              ref={reasonRef}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Reason for rejection (5–500 characters)"
+              maxLength={500}
+              aria-required="true"
+              aria-invalid={validationError != null}
+              aria-describedby={validationError ? `approval-reason-error-${leadId}` : undefined}
+            />
+            {validationError ? (
+              <p
+                id={`approval-reason-error-${leadId}`}
+                role="alert"
+                className="text-xs text-destructive"
+              >
+                {validationError}
+              </p>
+            ) : null}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="destructive"
+                onClick={handleReject}
+                disabled={mutation.isPending}
+                aria-label={`Confirm rejection of lead ${leadCode}`}
+              >
+                {mutation.isPending ? 'Submitting…' : 'Confirm reject'}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setRejectOpen(false);
+                  setReason('');
+                  setValidationError(null);
+                }}
+                disabled={mutation.isPending}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
     </Card>
   );
 }

@@ -41,6 +41,7 @@ export const Capability = {
   KYC_SIGNOFF: 'kyc_signoff',
   MOVE_STAGE: 'move_stage',
   HAND_OFF: 'hand_off',
+  APPROVE_LEAD: 'approve_lead',
   ALLOCATE: 'allocate',
   BULK_ACTION: 'bulk_action',
   CUSTOMER_COMM: 'customer_comm',
@@ -80,6 +81,7 @@ export const LeadStage = {
   DOCUMENTS_PENDING: 'documents_pending',
   KYC_IN_PROGRESS: 'kyc_in_progress',
   ELIGIBILITY_REQUESTED: 'eligibility_requested',
+  PENDING_APPROVAL: 'pending_approval',
   READY_FOR_HANDOFF: 'ready_for_handoff',
   HANDED_OFF: 'handed_off',
   REJECTED: 'rejected',
@@ -130,6 +132,20 @@ export const DupStatus = {
   MERGED: 'merged',
 } as const;
 export type DupStatus = typeof DupStatus[keyof typeof DupStatus];
+
+export const ApprovalStatus = {
+  NOT_REQUIRED: 'not_required',
+  PENDING: 'pending',
+  APPROVED: 'approved',
+  REJECTED: 'rejected',
+} as const;
+export type ApprovalStatus = typeof ApprovalStatus[keyof typeof ApprovalStatus];
+
+export const ApprovalDecision = {
+  APPROVE: 'approve',
+  REJECT: 'reject',
+} as const;
+export type ApprovalDecision = typeof ApprovalDecision[keyof typeof ApprovalDecision];
 
 // ── 3. Duplicate detection ────────────────────────────────────
 export const MatchConfidence = {
@@ -673,6 +689,8 @@ export const EventCode = {
   HANDOFF_READY: 'HANDOFF_READY',
   HANDOFF_FAILED: 'HANDOFF_FAILED',
   LEAD_HANDED_OFF: 'LEAD_HANDED_OFF',
+  LEAD_APPROVED: 'LEAD_APPROVED',
+  LEAD_REJECTED: 'LEAD_REJECTED',
   LEAD_STAGE_CHANGED: 'LEAD_STAGE_CHANGED',
   GRIEVANCE_CREATED: 'GRIEVANCE_CREATED',
   DATA_RIGHT_REQUEST: 'DATA_RIGHT_REQUEST',

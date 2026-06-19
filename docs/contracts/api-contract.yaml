@@ -33,6 +33,7 @@ x-fr-coverage:
   FR-052: "PATCH /leads/{id}/stage"
   FR-053: "GET /dashboard"
   FR-054: "GET /search"
+  FR-055: "POST /leads/{id}/approval"
   FR-060: "POST /leads/{id}/customer-link, GET /c/{token}, POST /c/{token}/otp, POST /c/{token}/documents, POST /c/{token}/consent"
   FR-061: "POST /c/{token}/grievance"
   FR-062: "GET /c/{token}/status, POST /c/{token}/callback"
@@ -174,6 +175,28 @@ paths:
     post: { summary: "Unmerge within the merge window (BM/SM; restores E3 relinked children)", operationId: unmergeLead, tags: [Leads], x-frs: [FR-021], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
   /leads/{id}/reassign:
     post: { summary: "Reassign owner (reason, audited)", operationId: reassignLead, tags: [Leads], x-frs: [FR-030], parameters: [{ $ref: '#/components/parameters/PathId' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
+  /leads/{id}/approval:
+    post:
+      summary: "Approve or reject a lead in pending_approval (BM/SM/HEAD)"
+      operationId: approveRejectLead
+      tags: [Leads]
+      x-frs: [FR-055]
+      parameters: [{ $ref: '#/components/parameters/PathId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApprovalDecisionRequest' }
+      responses:
+        "200":
+          description: "Decision recorded; returns updated lead summary"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApprovalDecisionEnvelope' }
+        "400": { $ref: '#/components/responses/ValidationError' }    # VALIDATION_ERROR (reason missing/too-short when reject)
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }           # CONFLICT — lead not in pending_approval
   /leads/bulk-action:
     post: { summary: "Bulk action over scoped leads (reassign/stage/tag); one audit per lead", operationId: leadsBulkAction, tags: [Leads], x-frs: [FR-050], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { "200": { $ref: '#/components/responses/Ok' }, "400": { $ref: '#/components/responses/ValidationError' }, "403": { $ref: '#/components/responses/Forbidden' }, "409": { $ref: '#/components/responses/Conflict' } } }
   /saved-views:
@@ -467,6 +490,35 @@ components:
       type: object
       properties:
         data: { type: object, properties: { import_job_id: { type: string, format: uuid }, status: { type: string } } }
+    ApprovalDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [approve, reject]
+          description: "The approval verb — 'approve' moves lead to ready_for_handoff; 'reject' moves to rejected"
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+          description: "Required when decision='reject'; 5–500 chars"
+    ApprovalDecisionEnvelope:
+      type: object
+      properties:
+        data:
+          type: object
+          required: [lead_id, lead_code, stage, approval_status, decision, decided_by, decided_at]
+          properties:
+            lead_id:       { type: string, format: uuid }
+            lead_code:     { type: string }
+            stage:         { type: string, description: "ready_for_handoff or rejected" }
+            approval_status: { type: string, enum: [approved, rejected] }
+            decision:      { type: string, enum: [approve, reject] }
+            decided_by:    { type: string, format: uuid }
+            decided_at:    { type: string, format: date-time }
+        meta:  { $ref: '#/components/schemas/Meta' }
+        error: { type: object, nullable: true, example: null }
 
   responses:
     Ok:

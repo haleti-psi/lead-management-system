@@ -22,17 +22,31 @@ import { SavedViewRepository } from './saved-view.repository';
 import { SavedViewService } from './saved-view.service';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
+// FR-055 — Lead Approval
+import { ApprovalController } from './approval/approval.controller';
+import { ApprovalRepository } from './approval/approval.repository';
+import { ApprovalService } from './approval/approval.service';
 
 /**
  * M6 Workspace — FR-050 (lead list, saved work queues, bulk-action gate) +
  * FR-051 (Lead-360 read aggregate) + FR-052 (pipeline board + stage transitions)
- * + FR-053 (role-based dashboard & home) + FR-054 (global search).
+ * + FR-053 (role-based dashboard & home) + FR-054 (global search) +
+ * FR-055 (lead approval gate).
  * READ-ONLY on `leads` (owner-writes §11: mutations delegate to the @Global
- * CaptureModule's `LeadService`); sole writer of `saved_views`.
+ * CaptureModule's `LeadService`); sole writer of `saved_views` and `lead_approvals`.
  * `StageGuardService` and `LeadService` are available from the @Global CaptureModule.
  */
 @Module({
-  controllers: [LeadListController, Lead360Controller, SavedViewController, PipelineBoardController, PipelineBoardReadController, DashboardController, SearchController],
+  controllers: [
+    LeadListController,
+    Lead360Controller,
+    SavedViewController,
+    PipelineBoardController,
+    PipelineBoardReadController,
+    DashboardController,
+    SearchController,
+    ApprovalController,
+  ],
   providers: [
     LeadScopeService,
     LeadListRepository,
@@ -50,6 +64,9 @@ import { SearchService } from './search.service';
     PartnerSearchRepository,
     TaskSearchRepository,
     SearchService,
+    // FR-055 — Lead Approval
+    ApprovalRepository,
+    ApprovalService,
   ],
 })
 export class WorkspaceModule {}

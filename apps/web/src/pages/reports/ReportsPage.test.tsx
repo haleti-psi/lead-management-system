@@ -3,7 +3,7 @@
 // FR-120 §UI tests (U-01 – U-06) for ReportsPage, ReportFilterBar, ReportViewer.
 // `useReport` and `useAuth` are mocked so components run without a network/server.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 // ── mock hooks before any component import ────────────────────────────────────
@@ -341,7 +341,8 @@ describe('FR-121 — ReportViewer: differentiator columns', () => {
         errorCode={null}
       />,
     );
-    expect(screen.getByText('dsa')).toBeDefined();
+    // scope to the detail table — the source label also appears in the new chart
+    expect(within(screen.getByRole('table')).getByText('dsa')).toBeDefined();
     expect(screen.getAllByText('–').length).toBeGreaterThanOrEqual(1);
   });
 

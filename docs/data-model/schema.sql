@@ -17,17 +17,19 @@ CREATE EXTENSION IF NOT EXISTS "btree_gin";   -- composite/JSONB GIN indexes
 -- Identity & access
 CREATE TYPE role_code            AS ENUM ('RM','BM','SM','HEAD','KYC','DPO','PARTNER','ADMIN','CUSTOMER');
 CREATE TYPE data_scope           AS ENUM ('O','T','B','R','A','P','C','M','X');
-CREATE TYPE capability           AS ENUM ('create_lead','view_lead','edit_lead','upload_doc','verify_doc','kyc_signoff','move_stage','hand_off','allocate','bulk_action','customer_comm','reports','export','consent_ledger','audit_trail','user_mgmt','configuration','break_glass');
+CREATE TYPE capability           AS ENUM ('create_lead','view_lead','edit_lead','upload_doc','verify_doc','kyc_signoff','move_stage','hand_off','approve_lead','allocate','bulk_action','customer_comm','reports','export','consent_ledger','audit_trail','user_mgmt','configuration','break_glass');
 CREATE TYPE user_status          AS ENUM ('active','inactive','locked');
 CREATE TYPE grant_status         AS ENUM ('pending','active','expired','revoked');
 
 -- Lead lifecycle & capture
-CREATE TYPE lead_stage           AS ENUM ('captured','consent_pending','assigned','first_contact_pending','contacted','qualified','documents_pending','kyc_in_progress','eligibility_requested','ready_for_handoff','handed_off','rejected','dormant');
+CREATE TYPE lead_stage           AS ENUM ('captured','consent_pending','assigned','first_contact_pending','contacted','qualified','documents_pending','kyc_in_progress','eligibility_requested','pending_approval','ready_for_handoff','handed_off','rejected','dormant');
 CREATE TYPE priority             AS ENUM ('low','normal','high');
 CREATE TYPE creation_channel     AS ENUM ('manual','bulk','api','qr','partner','website','telecalling','missed_call');
 CREATE TYPE consent_status       AS ENUM ('pending','partial','captured','withdrawn');
 CREATE TYPE kyc_status           AS ENUM ('not_started','in_progress','verified','exception','waived');
 CREATE TYPE dup_status           AS ENUM ('none','flagged','linked','merged');
+CREATE TYPE approval_status      AS ENUM ('not_required','pending','approved','rejected');
+CREATE TYPE approval_decision    AS ENUM ('approved','rejected');
 
 -- Identity resolution
 CREATE TYPE match_confidence     AS ENUM ('strong','medium','weak');
@@ -108,7 +110,7 @@ CREATE TYPE outbox_status        AS ENUM ('pending','published','failed');
 -- Misc reference
 CREATE TYPE customer_type        AS ENUM ('individual','business');
 CREATE TYPE lang                 AS ENUM ('English','Hindi','Marathi','Tamil','Telugu','Kannada','Gujarati','Bengali');  -- §5.5 "language"
-CREATE TYPE event_code           AS ENUM ('LEAD_CREATED','LEAD_ASSIGNED','HOT_LEAD','FIRST_CONTACT_DUE','FIRST_CONTACT_BREACH','DOC_REQUEST','DOC_UPLOADED','DOC_MISMATCH','CONSENT_PENDING','CONSENT_WITHDRAWN','KYC_EXCEPTION','ELIGIBILITY_RECEIVED','HANDOFF_READY','HANDOFF_FAILED','LEAD_HANDED_OFF','LEAD_STAGE_CHANGED','GRIEVANCE_CREATED','DATA_RIGHT_REQUEST','EXPORT_COMPLETED','CONFIG_CHANGED','DUPLICATE_FLAGGED','TASK_OVERDUE');
+CREATE TYPE event_code           AS ENUM ('LEAD_CREATED','LEAD_ASSIGNED','HOT_LEAD','FIRST_CONTACT_DUE','FIRST_CONTACT_BREACH','DOC_REQUEST','DOC_UPLOADED','DOC_MISMATCH','CONSENT_PENDING','CONSENT_WITHDRAWN','KYC_EXCEPTION','ELIGIBILITY_RECEIVED','HANDOFF_READY','HANDOFF_FAILED','LEAD_HANDED_OFF','LEAD_APPROVED','LEAD_REJECTED','LEAD_STAGE_CHANGED','GRIEVANCE_CREATED','DATA_RIGHT_REQUEST','EXPORT_COMPLETED','CONFIG_CHANGED','DUPLICATE_FLAGGED','TASK_OVERDUE');
 CREATE TYPE audit_action         AS ENUM ('login','logout','login_failed','mfa_failed','lead_create','lead_update','lead_merge','lead_override','attribution_change','consent_grant','consent_withdraw','consent_expire','doc_upload','doc_view','doc_download','doc_verify','doc_waive','doc_delete','kyc_request','kyc_response','kyc_exception','stage_transition','rejection','reopen','nurture','allocate','reassign','link_create','link_open','link_revoke','comm_send','eligibility_request','handoff_attempt','handoff_success','handoff_failure','export_generate','export_download','config_change','user_change','role_change','break_glass_access','abac_deny','view_sensitive');
 
 -- ── 2. Shared trigger function ────────────────────────────────
@@ -583,6 +585,7 @@ CREATE TABLE leads (
   consent_status           consent_status NOT NULL DEFAULT 'pending',
   kyc_status               kyc_status NOT NULL DEFAULT 'not_started',
   duplicate_status         dup_status NOT NULL DEFAULT 'none',
+  approval_status          approval_status NOT NULL DEFAULT 'not_required',
   master_lead_id           UUID,
   sla_first_contact_due_at TIMESTAMPTZ,
   rejection_reason_id      UUID,
@@ -978,6 +981,26 @@ CREATE TABLE stage_history (
   CONSTRAINT fk_stage_history_lead_id FOREIGN KEY (lead_id) REFERENCES leads(lead_id) ON DELETE CASCADE,
   CONSTRAINT fk_stage_history_actor_id FOREIGN KEY (actor_id) REFERENCES users(user_id) ON DELETE RESTRICT
 );
+
+-- 3.39b lead_approvals (M6) — APPEND-ONLY approval log — source_fr: FR-055
+CREATE TABLE lead_approvals (
+  approval_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id      UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001' REFERENCES orgs(id),
+  lead_id     UUID NOT NULL,
+  decision    approval_decision NOT NULL,
+  reason      VARCHAR(500),
+  decided_by  UUID NOT NULL,
+  decided_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by  UUID NOT NULL,
+  updated_by  UUID NOT NULL,
+  CONSTRAINT fk_lead_approvals_lead_id  FOREIGN KEY (lead_id)    REFERENCES leads(lead_id) ON DELETE CASCADE,
+  CONSTRAINT fk_lead_approvals_decided  FOREIGN KEY (decided_by) REFERENCES users(user_id),
+  CONSTRAINT ck_lead_approvals_reject_reason CHECK (decision <> 'rejected' OR reason IS NOT NULL)
+);
+CREATE INDEX ix_lead_approvals_lead ON lead_approvals (lead_id);
+CREATE INDEX ix_lead_approvals_decided_at ON lead_approvals (org_id, decided_at DESC);
 
 -- 3.40 notes (M6) — source_fr: FR-051
 CREATE TABLE notes (

@@ -13,7 +13,11 @@ export type AttributionStatus = "merged_into" | "original" | "reassigned";
 
 export type AuditAction = "abac_deny" | "allocate" | "attribution_change" | "break_glass_access" | "comm_send" | "config_change" | "consent_expire" | "consent_grant" | "consent_withdraw" | "doc_delete" | "doc_download" | "doc_upload" | "doc_verify" | "doc_view" | "doc_waive" | "eligibility_request" | "export_download" | "export_generate" | "handoff_attempt" | "handoff_failure" | "handoff_success" | "kyc_exception" | "kyc_request" | "kyc_response" | "lead_create" | "lead_merge" | "lead_override" | "lead_update" | "link_create" | "link_open" | "link_revoke" | "login" | "login_failed" | "logout" | "mfa_failed" | "nurture" | "reassign" | "rejection" | "reopen" | "role_change" | "stage_transition" | "user_change" | "view_sensitive";
 
-export type Capability = "allocate" | "audit_trail" | "break_glass" | "bulk_action" | "configuration" | "consent_ledger" | "create_lead" | "customer_comm" | "edit_lead" | "export" | "hand_off" | "kyc_signoff" | "move_stage" | "reports" | "upload_doc" | "user_mgmt" | "verify_doc" | "view_lead";
+export type ApprovalDecision = "approved" | "rejected";
+
+export type ApprovalStatus = "approved" | "not_required" | "pending" | "rejected";
+
+export type Capability = "allocate" | "approve_lead" | "audit_trail" | "break_glass" | "bulk_action" | "configuration" | "consent_ledger" | "create_lead" | "customer_comm" | "edit_lead" | "export" | "hand_off" | "kyc_signoff" | "move_stage" | "reports" | "upload_doc" | "user_mgmt" | "verify_doc" | "view_lead";
 
 export type CommCategory = "marketing" | "transactional";
 
@@ -59,7 +63,7 @@ export type DupStatus = "flagged" | "linked" | "merged" | "none";
 
 export type EligibilityStatus = "failed" | "pending" | "received";
 
-export type EventCode = "CONFIG_CHANGED" | "CONSENT_PENDING" | "CONSENT_WITHDRAWN" | "DATA_RIGHT_REQUEST" | "DOC_MISMATCH" | "DOC_REQUEST" | "DOC_UPLOADED" | "DUPLICATE_FLAGGED" | "ELIGIBILITY_RECEIVED" | "EXPORT_COMPLETED" | "FIRST_CONTACT_BREACH" | "FIRST_CONTACT_DUE" | "GRIEVANCE_CREATED" | "HANDOFF_FAILED" | "HANDOFF_READY" | "HOT_LEAD" | "KYC_EXCEPTION" | "LEAD_ASSIGNED" | "LEAD_CREATED" | "LEAD_HANDED_OFF" | "LEAD_STAGE_CHANGED" | "TASK_OVERDUE";
+export type EventCode = "CONFIG_CHANGED" | "CONSENT_PENDING" | "CONSENT_WITHDRAWN" | "DATA_RIGHT_REQUEST" | "DOC_MISMATCH" | "DOC_REQUEST" | "DOC_UPLOADED" | "DUPLICATE_FLAGGED" | "ELIGIBILITY_RECEIVED" | "EXPORT_COMPLETED" | "FIRST_CONTACT_BREACH" | "FIRST_CONTACT_DUE" | "GRIEVANCE_CREATED" | "HANDOFF_FAILED" | "HANDOFF_READY" | "HOT_LEAD" | "KYC_EXCEPTION" | "LEAD_APPROVED" | "LEAD_ASSIGNED" | "LEAD_CREATED" | "LEAD_HANDED_OFF" | "LEAD_REJECTED" | "LEAD_STAGE_CHANGED" | "TASK_OVERDUE";
 
 export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   ? ColumnType<S, I | undefined, U>
@@ -107,7 +111,7 @@ export type LeadOutcome = "any" | "dormant" | "handed_off" | "rejected";
 
 export type LeadSource = "Branch" | "Dealer" | "DSA" | "Field" | "Referral" | "Telecalling" | "Website";
 
-export type LeadStage = "assigned" | "captured" | "consent_pending" | "contacted" | "documents_pending" | "dormant" | "eligibility_requested" | "first_contact_pending" | "handed_off" | "kyc_in_progress" | "qualified" | "ready_for_handoff" | "rejected";
+export type LeadStage = "assigned" | "captured" | "consent_pending" | "contacted" | "documents_pending" | "dormant" | "eligibility_requested" | "first_contact_pending" | "handed_off" | "kyc_in_progress" | "pending_approval" | "qualified" | "ready_for_handoff" | "rejected";
 
 export type LinkStatus = "active" | "expired" | "revoked" | "used";
 
@@ -588,6 +592,20 @@ export interface LeadIdentities {
   updated_by: string;
 }
 
+export interface LeadApprovals {
+  approval_id: Generated<string>;
+  created_at: Generated<Timestamp>;
+  created_by: string;
+  decided_at: Generated<Timestamp>;
+  decided_by: string;
+  decision: ApprovalDecision;
+  lead_id: string;
+  org_id: Generated<string>;
+  reason: string | null;
+  updated_at: Generated<Timestamp>;
+  updated_by: string;
+}
+
 export interface LeadProductDetails {
   attributes: Generated<Json>;
   created_at: Generated<Timestamp>;
@@ -602,6 +620,7 @@ export interface LeadProductDetails {
 }
 
 export interface Leads {
+  approval_status: Generated<ApprovalStatus>;
   branch_id: string | null;
   channel_created_by: CreationChannel;
   consent_status: Generated<ConsentStatus>;
@@ -978,6 +997,7 @@ export interface DB {
   import_jobs: ImportJobs;
   integration_logs: IntegrationLogs;
   kyc_verifications: KycVerifications;
+  lead_approvals: LeadApprovals;
   lead_identities: LeadIdentities;
   lead_product_details: LeadProductDetails;
   leads: Leads;
