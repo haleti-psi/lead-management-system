@@ -42,6 +42,7 @@ describe('AppShell', () => {
     expect(within(nav).getByText('Reports')).toBeTruthy(); // reports
     expect(within(nav).queryByText('Users')).toBeNull(); // user_mgmt — ADMIN only
     expect(within(nav).queryByText('Configuration')).toBeNull(); // configuration — not RM
+    expect(within(nav).queryByText('Audit')).toBeNull(); // holds audit_trail, but Audit Explorer is DPO/ADMIN-only
   });
 
   it('shows an ADMIN the admin items and hides lead-centric ones', () => {
@@ -51,6 +52,7 @@ describe('AppShell', () => {
     expect(within(nav).getByText('Users')).toBeTruthy(); // user_mgmt
     expect(within(nav).getByText('Configuration')).toBeTruthy(); // configuration
     expect(within(nav).queryByText('Leads')).toBeNull(); // ADMIN lacks view_lead
+    expect(within(nav).getByText('Audit')).toBeTruthy(); // Audit Explorer — DPO/ADMIN-only
   });
 
   it('signs out via the top bar', () => {
