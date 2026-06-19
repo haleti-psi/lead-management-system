@@ -42,6 +42,7 @@ describe('AppShell', () => {
     expect(within(nav).getByText('Reports')).toBeTruthy(); // reports
     expect(within(nav).queryByText('Users')).toBeNull(); // user_mgmt — ADMIN only
     expect(within(nav).queryByText('Configuration')).toBeNull(); // configuration — not RM
+    expect(within(nav).queryByText('Approvals')).toBeNull(); // approve_lead — not RM
   });
 
   it('shows an ADMIN the admin items and hides lead-centric ones', () => {
@@ -51,6 +52,14 @@ describe('AppShell', () => {
     expect(within(nav).getByText('Users')).toBeTruthy(); // user_mgmt
     expect(within(nav).getByText('Configuration')).toBeTruthy(); // configuration
     expect(within(nav).queryByText('Leads')).toBeNull(); // ADMIN lacks view_lead
+    expect(within(nav).queryByText('Approvals')).toBeNull(); // ADMIN lacks approve_lead
+  });
+
+  it('shows BM the Approvals nav item (approve_lead capability)', () => {
+    mocks.user = { userId: 'u-2', orgId: 'o-1', role: 'BM', scope: 'B' };
+    renderShell();
+    const nav = sidebar();
+    expect(within(nav).getByText('Approvals')).toBeTruthy(); // approve_lead
   });
 
   it('signs out via the top bar', () => {

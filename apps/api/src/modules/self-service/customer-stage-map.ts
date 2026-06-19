@@ -19,6 +19,7 @@ export const CUSTOMER_STAGE_MAP: Readonly<Record<LeadStage, StageDisplay>> = {
   [LeadStage.DOCUMENTS_PENDING]: { label: 'Documents Required', description: 'We need a few documents from you before we can proceed.' },
   [LeadStage.KYC_IN_PROGRESS]: { label: 'Verification In Progress', description: 'We are verifying your identity. This may take a short while.' },
   [LeadStage.ELIGIBILITY_REQUESTED]: { label: 'Assessment In Progress', description: "We are assessing your eligibility. We'll update you soon." },
+  [LeadStage.PENDING_APPROVAL]: { label: 'Final Review', description: 'Your application is undergoing a final review before the next step.' },
   [LeadStage.READY_FOR_HANDOFF]: { label: 'Assessment Complete', description: 'Your application has been reviewed and is being prepared for the next step.' },
   [LeadStage.HANDED_OFF]: { label: 'With Lending Team', description: 'Your application has been submitted to our lending partner for processing.' },
   [LeadStage.REJECTED]: { label: 'Not Proceeding', description: 'We are unable to proceed with your application at this time.' },

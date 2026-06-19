@@ -3,7 +3,7 @@
 
 ## Lead — `lead_stage` (BRD §10) — the core machine
 ### States
-`captured`, `consent_pending`, `assigned`, `first_contact_pending`, `contacted`, `qualified`, `documents_pending`, `kyc_in_progress`, `eligibility_requested`, `ready_for_handoff`, `handed_off` (terminal in LMS), `rejected` (terminal unless reopened), `dormant`.
+`captured`, `consent_pending`, `assigned`, `first_contact_pending`, `contacted`, `qualified`, `documents_pending`, `kyc_in_progress`, `eligibility_requested`, `pending_approval` **(ACTIVE — eligible for → dormant via generic path; included in ACTIVE_STAGES)**, `ready_for_handoff`, `handed_off` (terminal in LMS), `rejected` (terminal unless reopened), `dormant`.
 
 ### Valid transitions (From → To · trigger · who · side effects)
 | From | To | Trigger | Who | Side effects (one transaction) |
@@ -14,7 +14,9 @@
 | qualified | documents_pending | checklist generated | RM/BM | customer link may be sent (`DOC_REQUEST`) |
 | documents_pending | kyc_in_progress | mandatory docs uploaded/waived | RM/KYC/BM | KYC queue created |
 | kyc_in_progress | eligibility_requested | KYC sufficient + consent(eligibility/LOS) | RM/BM/KYC | eligibility call; `data_sharing_logs` |
-| eligibility_requested | ready_for_handoff | eligibility received or bypass; docs/KYC ready | system/BM/KYC | handoff-ready flag; `HANDOFF_READY` |
+| eligibility_requested | pending_approval | eligibility received or bypass; docs/KYC ready | system/BM/KYC | handoff-ready flag; approval gate entered |
+| pending_approval | ready_for_handoff | approve (`approve_lead`) | BM/SM/HEAD | `lead_approvals` row; `leads.approval_status='approved'`; audit `stage_transition`; outbox `LEAD_APPROVED` |
+| pending_approval | rejected | reject (`approve_lead`); reason required (5–500 chars) | BM/SM/HEAD | `lead_approvals` row; `leads.approval_status='rejected'`; audit `stage_transition`; outbox `LEAD_REJECTED` |
 | ready_for_handoff | handed_off | guards pass | BM/KYC/RM (delegated) | LOS hand-off; `los_application_id` stored; `LEAD_HANDED_OFF` |
 | any active | rejected | rejection reason+sub-reason | RM/BM/SM | reopen window opens; notification |
 | rejected | prior active | within reopen window + reason | BM/SM/RM | `reopened_count++` (prior stage from `stage_history`) |

@@ -30,6 +30,7 @@ import { TasksPage } from '@/features/engagement/TasksPage';
 import { TemplateListPage } from '@/features/admin/templates/TemplateListPage';
 import { DataRightsPage } from '@/components/compliance/DataRightsPage';
 import { DlaRegistryPage } from '@/pages/compliance/DlaRegistryPage';
+import { ApprovalsPage } from './approvals/ApprovalsPage';
 
 /** FR-113 — the DLA/LSP registry gates its "Add Entry" control by the caller's
  * role, so feed it the authenticated user's role from the auth context. */
@@ -53,6 +54,8 @@ export function App(): JSX.Element {
           <Route path="/" element={<DashboardPage />} />
           {/* FR-050 — Lead list / queues. */}
           <Route path="/leads" element={<LeadListPage />} />
+          {/* FR-055 — Lead approval queue. */}
+          <Route path="/approvals" element={<ApprovalsPage />} />
           {/* FR-051 — Lead 360 view. */}
           <Route path="/leads/:id" element={<LeadDetailPage />} />
           {/* FR-052 — Pipeline board (Kanban stage view). */}

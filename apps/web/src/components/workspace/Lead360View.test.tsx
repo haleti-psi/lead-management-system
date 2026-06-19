@@ -13,6 +13,11 @@ vi.mock('./use-lead360', () => ({
   useLead360: vi.fn(),
 }));
 
+// ── mock useCan so Lead360View's approval panel check doesn't need AuthProvider
+vi.mock('@/lib/auth/capabilities', () => ({
+  useCan: () => () => false,
+}));
+
 import { useLead360 } from './use-lead360';
 import { Lead360View } from './Lead360View';
 import type { Lead360Response } from './lead360.types';
@@ -26,6 +31,7 @@ function makeResponse(overrides: Partial<Lead360Response> = {}): Lead360Response
     leadId: 'f6b7c1de-0000-4000-8000-000000000051',
     leadCode: 'LD-2026-000042',
     stage: 'kyc_in_progress',
+    approvalStatus: 'not_required',
     priority: 'high',
     isHot: false,
     score: null,

@@ -73,6 +73,7 @@ const ACTIVE_STAGES: ReadonlySet<LeadStageType> = new Set([
   LeadStage.DOCUMENTS_PENDING,
   LeadStage.KYC_IN_PROGRESS,
   LeadStage.ELIGIBILITY_REQUESTED,
+  LeadStage.PENDING_APPROVAL,
   LeadStage.READY_FOR_HANDOFF,
 ]);
 
@@ -82,6 +83,8 @@ const RM_BM_KYC: ReadonlySet<RoleCodeType> = new Set([RoleCode.RM, RoleCode.BM, 
 const BM_KYC_RM: ReadonlySet<RoleCodeType> = new Set([RoleCode.BM, RoleCode.KYC, RoleCode.RM]);
 const SYSTEM_BM_KYC: ReadonlySet<RoleCodeType> = new Set([RoleCode.BM, RoleCode.KYC]);
 const ALL_RM_BM_SM_SYSTEM: ReadonlySet<RoleCodeType> = new Set([RoleCode.RM, RoleCode.BM, RoleCode.SM]);
+/** FR-055 — approve_lead: BM (B scope), SM (T scope), HEAD (A scope). */
+const BM_SM_HEAD: ReadonlySet<RoleCodeType> = new Set([RoleCode.BM, RoleCode.SM, RoleCode.HEAD]);
 
 /**
  * The linear progression transitions (state-machines.md §Lead).
@@ -113,8 +116,14 @@ const LINEAR_TRANSITIONS: ReadonlyMap<string, TransitionDescriptor> = new Map([
     { allowedRoles: RM_BM_KYC, guards: ['kyc_sufficient', 'consent_eligibility'] },
   ],
   [
-    `${LeadStage.ELIGIBILITY_REQUESTED}:${LeadStage.READY_FOR_HANDOFF}`,
+    // FR-055: was eligibility_requested → ready_for_handoff; now → pending_approval.
+    `${LeadStage.ELIGIBILITY_REQUESTED}:${LeadStage.PENDING_APPROVAL}`,
     { allowedRoles: SYSTEM_BM_KYC, guards: ['eligibility_received', 'docs_kyc_ready'] },
+  ],
+  [
+    // FR-055: approver (BM/SM/HEAD) approves → ready_for_handoff; no extra guards.
+    `${LeadStage.PENDING_APPROVAL}:${LeadStage.READY_FOR_HANDOFF}`,
+    { allowedRoles: BM_SM_HEAD, guards: [] },
   ],
   [
     `${LeadStage.READY_FOR_HANDOFF}:${LeadStage.HANDED_OFF}`,

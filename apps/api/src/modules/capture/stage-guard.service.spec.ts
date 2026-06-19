@@ -112,13 +112,65 @@ describe('StageGuardService', () => {
       expect(result.failed).toHaveLength(0);
     });
 
-    it('eligibility_requested → ready_for_handoff (BM)', async () => {
+    // FR-055: eligibility_requested now transitions to pending_approval (not ready_for_handoff).
+    it('eligibility_requested → pending_approval (BM)', async () => {
       const result = await service.evaluate({
         fromStage: LeadStage.ELIGIBILITY_REQUESTED,
-        toStage: LeadStage.READY_FOR_HANDOFF,
+        toStage: LeadStage.PENDING_APPROVAL,
         lead: makeLead(LeadStage.ELIGIBILITY_REQUESTED),
         actor: makeUser(RoleCode.BM),
         reason: null,
+        tx: fakeTx,
+      });
+      expect(result.failed).toHaveLength(0);
+    });
+
+    // FR-055: approver transitions pending_approval → ready_for_handoff.
+    it('pending_approval → ready_for_handoff (BM)', async () => {
+      const result = await service.evaluate({
+        fromStage: LeadStage.PENDING_APPROVAL,
+        toStage: LeadStage.READY_FOR_HANDOFF,
+        lead: makeLead(LeadStage.PENDING_APPROVAL),
+        actor: makeUser(RoleCode.BM),
+        reason: null,
+        tx: fakeTx,
+      });
+      expect(result.failed).toHaveLength(0);
+    });
+
+    // FR-055: SM and HEAD can also approve.
+    it('pending_approval → ready_for_handoff (SM)', async () => {
+      const result = await service.evaluate({
+        fromStage: LeadStage.PENDING_APPROVAL,
+        toStage: LeadStage.READY_FOR_HANDOFF,
+        lead: makeLead(LeadStage.PENDING_APPROVAL),
+        actor: makeUser(RoleCode.SM),
+        reason: null,
+        tx: fakeTx,
+      });
+      expect(result.failed).toHaveLength(0);
+    });
+
+    it('pending_approval → ready_for_handoff (HEAD)', async () => {
+      const result = await service.evaluate({
+        fromStage: LeadStage.PENDING_APPROVAL,
+        toStage: LeadStage.READY_FOR_HANDOFF,
+        lead: makeLead(LeadStage.PENDING_APPROVAL),
+        actor: makeUser(RoleCode.HEAD),
+        reason: null,
+        tx: fakeTx,
+      });
+      expect(result.failed).toHaveLength(0);
+    });
+
+    // FR-055: pending_approval → rejected via the generic "any active → rejected" path.
+    it('pending_approval → rejected (BM, with reason)', async () => {
+      const result = await service.evaluate({
+        fromStage: LeadStage.PENDING_APPROVAL,
+        toStage: LeadStage.REJECTED,
+        lead: makeLead(LeadStage.PENDING_APPROVAL),
+        actor: makeUser(RoleCode.BM),
+        reason: 'Credit profile insufficient.',
         tx: fakeTx,
       });
       expect(result.failed).toHaveLength(0);
@@ -310,6 +362,32 @@ describe('StageGuardService', () => {
         tx: fakeTx,
       });
       expect(result.failed).toContain('invalid_target_stage_from_dormant');
+    });
+
+    // FR-055: eligibility_requested → ready_for_handoff is now invalid (re-pointed to pending_approval).
+    it('FR-055: eligibility_requested → ready_for_handoff is now invalid_transition', async () => {
+      const result = await service.evaluate({
+        fromStage: LeadStage.ELIGIBILITY_REQUESTED,
+        toStage: LeadStage.READY_FOR_HANDOFF,
+        lead: makeLead(LeadStage.ELIGIBILITY_REQUESTED),
+        actor: makeUser(RoleCode.BM),
+        reason: null,
+        tx: fakeTx,
+      });
+      expect(result.failed).toContain('invalid_transition');
+    });
+
+    // FR-055: RM cannot approve (missing approve_lead capability).
+    it('FR-055: RM cannot move pending_approval → ready_for_handoff (role_not_permitted)', async () => {
+      const result = await service.evaluate({
+        fromStage: LeadStage.PENDING_APPROVAL,
+        toStage: LeadStage.READY_FOR_HANDOFF,
+        lead: makeLead(LeadStage.PENDING_APPROVAL),
+        actor: makeUser(RoleCode.RM),
+        reason: null,
+        tx: fakeTx,
+      });
+      expect(result.failed).toContain('role_not_permitted');
     });
   });
 

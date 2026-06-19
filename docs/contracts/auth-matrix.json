@@ -4,7 +4,7 @@
     "version": 1,
     "model": "App-level RBAC + ABAC. Authoritative input to EntitlementService.can(user, capability, resource). Authorisation = role capability (capability_matrix) intersect data scope intersect attributes (branch/team/region/product/source/partner/data_classification). NOT Postgres RLS.",
     "roles": ["RM", "BM", "SM", "HEAD", "KYC", "DPO", "PARTNER", "ADMIN", "CUSTOMER"],
-    "capabilities": ["create_lead", "view_lead", "edit_lead", "upload_doc", "verify_doc", "kyc_signoff", "move_stage", "hand_off", "allocate", "bulk_action", "customer_comm", "reports", "export", "consent_ledger", "audit_trail", "user_mgmt", "configuration", "break_glass"],
+    "capabilities": ["create_lead", "view_lead", "edit_lead", "upload_doc", "verify_doc", "kyc_signoff", "move_stage", "hand_off", "approve_lead", "allocate", "bulk_action", "customer_comm", "reports", "export", "consent_ledger", "audit_trail", "user_mgmt", "configuration", "break_glass"],
     "scopes": {
       "O": "own assigned leads", "T": "team", "B": "branch", "R": "region", "A": "all org",
       "P": "partner's own submissions", "C": "customer's own lead (tokenised)", "M": "masked compliance view", "X": "no lead-data access"
@@ -23,9 +23,9 @@
   },
   "capability_matrix": {
     "RM":      { "create_lead": "O", "view_lead": "O", "edit_lead": "O", "upload_doc": "O", "verify_doc": "O", "move_stage": "O", "hand_off": "O", "customer_comm": "O", "reports": "O", "export": "O", "consent_ledger": "O", "audit_trail": "O" },
-    "BM":      { "create_lead": "B", "view_lead": "B", "edit_lead": "B", "upload_doc": "B", "verify_doc": "B", "kyc_signoff": "B", "move_stage": "B", "hand_off": "B", "allocate": "B", "bulk_action": "B", "customer_comm": "B", "reports": "B", "export": "B", "consent_ledger": "B", "audit_trail": "B", "configuration": "B" },
-    "SM":      { "create_lead": "T", "view_lead": "T", "edit_lead": "T", "move_stage": "T", "allocate": "T", "bulk_action": "T", "customer_comm": "T", "reports": "T", "export": "T", "consent_ledger": "T", "audit_trail": "T" },
-    "HEAD":    { "create_lead": "A", "view_lead": "A", "allocate": "A", "bulk_action": "A", "reports": "A", "export": "A", "consent_ledger": "A", "audit_trail": "A", "configuration": "A" },
+    "BM":      { "create_lead": "B", "view_lead": "B", "edit_lead": "B", "upload_doc": "B", "verify_doc": "B", "kyc_signoff": "B", "move_stage": "B", "hand_off": "B", "approve_lead": "B", "allocate": "B", "bulk_action": "B", "customer_comm": "B", "reports": "B", "export": "B", "consent_ledger": "B", "audit_trail": "B", "configuration": "B" },
+    "SM":      { "create_lead": "T", "view_lead": "T", "edit_lead": "T", "move_stage": "T", "approve_lead": "T", "allocate": "T", "bulk_action": "T", "customer_comm": "T", "reports": "T", "export": "T", "consent_ledger": "T", "audit_trail": "T" },
+    "HEAD":    { "create_lead": "A", "view_lead": "A", "approve_lead": "A", "allocate": "A", "bulk_action": "A", "reports": "A", "export": "A", "consent_ledger": "A", "audit_trail": "A", "configuration": "A" },
     "KYC":     { "view_lead": "B", "edit_lead": "B", "upload_doc": "B", "verify_doc": "B", "kyc_signoff": "B", "move_stage": "B", "hand_off": "B", "bulk_action": "B", "customer_comm": "B", "reports": "B", "export": "B", "consent_ledger": "B", "audit_trail": "B", "configuration": "B" },
     "DPO":     { "view_lead": "M", "kyc_signoff": "M", "hand_off": "M", "reports": "M", "export": "M", "consent_ledger": "A", "audit_trail": "A", "configuration": "B", "break_glass": "M" },
     "PARTNER": { "create_lead": "P", "view_lead": "P", "edit_lead": "P", "upload_doc": "P", "customer_comm": "P", "reports": "P", "export": "P", "consent_ledger": "P", "audit_trail": "P" },
