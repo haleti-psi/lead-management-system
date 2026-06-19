@@ -11,7 +11,6 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import type { RoleCode } from '@lms/shared';
 import { Button } from '@/components/ui/button';
 import { Logo } from '@/components/brand/Logo';
 import { useAuth } from '@/hooks/use-auth';
@@ -36,30 +35,20 @@ interface NavItem {
   icon: LucideIcon;
   /** When set, the item only shows if the role has this capability. */
   capability?: Capability;
-  /** When set, the item only shows for these roles — stricter than a capability.
-   *  The Audit Explorer surface is DPO/ADMIN-only even though RM/BM/SM/KYC hold
-   *  `audit_trail` at narrower scopes (audit-explorer.service.ts AUDIT_EXPLORER_ROLES);
-   *  without this, those roles see the link but the API returns 403. */
-  roles?: readonly RoleCode[];
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
   { label: 'Leads', path: '/leads', icon: Users, capability: 'view_lead' },
   { label: 'Reports', path: '/reports', icon: BarChart3, capability: 'reports' },
-  { label: 'Audit', path: '/audit', icon: ShieldCheck, capability: 'audit_trail', roles: ['DPO', 'ADMIN'] },
+  { label: 'Audit', path: '/audit', icon: ShieldCheck, capability: 'audit_trail' },
   { label: 'Configuration', path: '/admin', icon: Settings, capability: 'configuration' },
   { label: 'Users', path: '/users', icon: UserCog, capability: 'user_mgmt' },
 ];
 
 function useVisibleNav(): NavItem[] {
-  const { user } = useAuth();
   const can = useCan();
-  return NAV_ITEMS.filter(
-    (item) =>
-      (!item.capability || can(item.capability)) &&
-      (!item.roles || (user != null && item.roles.includes(user.role))),
-  );
+  return NAV_ITEMS.filter((item) => !item.capability || can(item.capability));
 }
 
 /** Two-letter avatar initials from a role code (the only identity field the
