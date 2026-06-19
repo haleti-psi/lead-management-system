@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 
 import { SLA_POLICY_READER_PORT } from '../../core/sla';
 import {
@@ -43,6 +43,7 @@ import { DispatchCommunicationWorker } from './workers/dispatch-communication.wo
  *
  * CUSTOMER_LINK_PORT: FR-060 seam (same adapter as ComplianceModule).
  */
+@Global()
 @Module({
   controllers: [
     SlaPolicyController,
@@ -90,6 +91,11 @@ import { DispatchCommunicationWorker } from './workers/dispatch-communication.wo
     // FR-103 — exported so other modules can call isAllowed() for opt-out checks.
     PreferenceService,
     PreferenceRepository,
+    // FR-104 — exported (and the module is now @Global) so the single global SlaEngine
+    // resolves the policy reader. Without this, SLA paths (e.g. reassign) throw
+    // "SLA_POLICY_READER_PORT is not bound" → 500 — the Wave-1 cross-module-provider
+    // learning, same pattern as CaptureModule exporting LEAD_SLA_WRITER_PORT.
+    SLA_POLICY_READER_PORT,
   ],
 })
 export class EngagementModule {}
