@@ -1,11 +1,14 @@
 import type { ReactElement } from 'react';
 
 import type {
+  FirstContactSlaRow,
   FunnelConversionRow,
+  RejectionSummaryRow,
   ReportCode,
   ReportRow,
   RmPerformanceRow,
   SourcePerformanceRow,
+  SourceRoiRow,
 } from '@/lib/api/reports';
 
 /**
@@ -20,6 +23,9 @@ export function ReportChart({ code, rows }: { code: ReportCode; rows: ReportRow[
   if (code === 'funnel_conversion') return <FunnelChart rows={rows as FunnelConversionRow[]} />;
   if (code === 'source_performance') return <SourceBars rows={rows as SourcePerformanceRow[]} />;
   if (code === 'rm_performance') return <RmBars rows={rows as RmPerformanceRow[]} />;
+  if (code === 'rejection_summary') return <RejectionBars rows={rows as RejectionSummaryRow[]} />;
+  if (code === 'first_contact_sla') return <SlaComplianceBars rows={rows as FirstContactSlaRow[]} />;
+  if (code === 'source_roi') return <SourceRoiBars rows={rows as SourceRoiRow[]} />;
   return null;
 }
 
@@ -122,6 +128,86 @@ function SourceBars({ rows }: { rows: SourcePerformanceRow[] }): ReactElement {
             value={r.captured}
             pctOfMax={(r.captured / max) * 100}
             badge={r.source_conversion_pct === '–' ? '–' : `${r.source_conversion_pct}%`}
+          />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+/** Rejections aggregated by primary reason (descending), with share-of-total badge. */
+function RejectionBars({ rows }: { rows: RejectionSummaryRow[] }): ReactElement {
+  const byReason = new Map<string, number>();
+  for (const r of rows) {
+    byReason.set(r.primary_reason, (byReason.get(r.primary_reason) ?? 0) + (Number(r.rejected_count) || 0));
+  }
+  const sorted = [...byReason.entries()].sort((a, b) => b[1] - a[1]);
+  const total = sorted.reduce((sum, [, n]) => sum + n, 0);
+  const max = Math.max(1, ...sorted.map(([, n]) => n));
+  return (
+    <section aria-label="Rejections by reason" className="rounded-lg border bg-card p-4">
+      <h2 className="mb-3 text-sm font-semibold">Rejections by reason</h2>
+      <ol className="space-y-2">
+        {sorted.map(([reason, count]) => (
+          <Bar
+            key={reason}
+            label={reason}
+            value={count}
+            pctOfMax={(count / max) * 100}
+            badge={total > 0 ? `${Math.round((count / total) * 100)}%` : '–'}
+          />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+/** First-contact SLA compliance by branch — bar fill is the compliance %, with
+ * total leads as volume context and the exact % as the badge. */
+function SlaComplianceBars({ rows }: { rows: FirstContactSlaRow[] }): ReactElement {
+  const parsed = rows
+    .map((r) => ({
+      id: r.branch_id,
+      label: r.branch_name,
+      total: r.total,
+      pct: r.compliance_pct === '–' ? null : Number(r.compliance_pct),
+      raw: r.compliance_pct,
+    }))
+    .sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
+  return (
+    <section aria-label="First-contact SLA compliance" className="rounded-lg border bg-card p-4">
+      <h2 className="mb-3 text-sm font-semibold">First-contact SLA compliance</h2>
+      <ol className="space-y-2">
+        {parsed.map((r) => (
+          <Bar
+            key={r.id}
+            label={r.label}
+            value={r.total}
+            pctOfMax={r.pct ?? 0}
+            badge={r.pct === null ? '–' : `${r.raw}%`}
+          />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+/** Lead volume by source/campaign (descending), with conversion-rate badge.
+ * Titled by volume (not "ROI") — the report carries no cost data. */
+function SourceRoiBars({ rows }: { rows: SourceRoiRow[] }): ReactElement {
+  const sorted = [...rows].sort((a, b) => b.total_leads - a.total_leads);
+  const max = Math.max(1, ...sorted.map((r) => r.total_leads));
+  return (
+    <section aria-label="Lead volume by source" className="rounded-lg border bg-card p-4">
+      <h2 className="mb-3 text-sm font-semibold">Lead volume by source</h2>
+      <ol className="space-y-2">
+        {sorted.map((r) => (
+          <Bar
+            key={`${r.source}|${r.campaign_code ?? ''}|${r.partner_id ?? ''}`}
+            label={r.campaign_code ? `${r.source} · ${r.campaign_code}` : r.source}
+            value={r.total_leads}
+            pctOfMax={(r.total_leads / max) * 100}
+            badge={r.conversion_rate_pct === '–' ? '–' : `${r.conversion_rate_pct}%`}
           />
         ))}
       </ol>
