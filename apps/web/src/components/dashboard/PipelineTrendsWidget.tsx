@@ -26,7 +26,15 @@ function formatValue(value: string): string {
 
 /** Inline SVG sparkline of daily counts (stretches to width; crisp stroke) with
  * a soft gradient area fill. No chart dependency; low-bandwidth friendly. */
-function Sparkline({ series }: { series: CapturePoint[] }): ReactElement {
+function Sparkline({
+  series,
+  ariaLabel,
+  gradientId,
+}: {
+  series: CapturePoint[];
+  ariaLabel: string;
+  gradientId: string;
+}): ReactElement {
   const W = 240;
   const H = 40;
   const pad = 2;
@@ -48,15 +56,15 @@ function Sparkline({ series }: { series: CapturePoint[] }): ReactElement {
       className="h-10 w-full text-primary"
       preserveAspectRatio="none"
       role="img"
-      aria-label="Captures over the last 14 days"
+      aria-label={ariaLabel}
     >
       <defs>
-        <linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="currentColor" stopOpacity={0.22} />
           <stop offset="100%" stopColor="currentColor" stopOpacity={0} />
         </linearGradient>
       </defs>
-      {xy.length > 1 ? <polygon points={area} fill="url(#sparkfill)" stroke="none" /> : null}
+      {xy.length > 1 ? <polygon points={area} fill={`url(#${gradientId})`} stroke="none" /> : null}
       <polyline
         points={line}
         fill="none"
@@ -72,13 +80,14 @@ function Sparkline({ series }: { series: CapturePoint[] }): ReactElement {
 
 export function PipelineTrendsWidget(): ReactElement {
   const { data, isLoading, isError, refetch } = usePipelineTrends();
-  const total = data ? data.captured_series.reduce((sum, p) => sum + p.count, 0) : 0;
+  const capturesTotal = data ? data.captured_series.reduce((sum, p) => sum + p.count, 0) : 0;
+  const conversionsTotal = data ? data.conversions_series.reduce((sum, p) => sum + p.count, 0) : 0;
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center gap-2 pb-2">
         <TrendingUp className="h-4 w-4 text-muted-foreground" aria-hidden />
-        <CardTitle className="text-sm font-semibold">Pipeline &amp; captures</CardTitle>
+        <CardTitle className="text-sm font-semibold">Pipeline activity</CardTitle>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -86,17 +95,32 @@ export function PipelineTrendsWidget(): ReactElement {
         ) : isError || !data ? (
           <WidgetErrorState widgetName="pipeline_trends" onRetry={refetch} />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-center">
+          <div className="grid gap-4 sm:grid-cols-[auto_1fr_1fr] sm:items-center">
             <div>
               <p className="text-xs text-muted-foreground">Active pipeline value</p>
               <p className="text-2xl font-bold leading-none tabular-nums">{formatValue(data.pipeline_value)}</p>
             </div>
             <div className="min-w-0">
               <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-                <span>Captures · last 14 days</span>
-                <span className="tabular-nums">{total}</span>
+                <span>Captures · 14d</span>
+                <span className="tabular-nums">{capturesTotal}</span>
               </div>
-              <Sparkline series={data.captured_series} />
+              <Sparkline
+                series={data.captured_series}
+                ariaLabel="Captures over the last 14 days"
+                gradientId="sparkfill-captures"
+              />
+            </div>
+            <div className="min-w-0">
+              <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                <span>Conversions · 14d</span>
+                <span className="tabular-nums">{conversionsTotal}</span>
+              </div>
+              <Sparkline
+                series={data.conversions_series}
+                ariaLabel="Conversions over the last 14 days"
+                gradientId="sparkfill-conversions"
+              />
             </div>
           </div>
         )}

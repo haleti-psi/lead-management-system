@@ -233,8 +233,10 @@ describe('LeadListService.boardColumn', () => {
 });
 
 describe('LeadListService.dashboardMetrics', () => {
-  function makeMetricsHarness(pipelineValue = '0', recentCreatedAt: Date[] = []) {
-    const repo = { dashboardMetrics: jest.fn().mockResolvedValue({ pipelineValue, recentCreatedAt }) };
+  function makeMetricsHarness(pipelineValue = '0', recentCreatedAt: Date[] = [], recentConversions: Date[] = []) {
+    const repo = {
+      dashboardMetrics: jest.fn().mockResolvedValue({ pipelineValue, recentCreatedAt, recentConversions }),
+    };
     const audit = { append: jest.fn().mockResolvedValue(undefined) };
     const logger = { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() };
     const service = new LeadListService(
@@ -246,14 +248,16 @@ describe('LeadListService.dashboardMetrics', () => {
     return { service, repo, audit };
   }
 
-  it('returns the scoped pipeline value + a 14-day daily captures series', async () => {
-    const { service, repo } = makeMetricsHarness('1250000.00', [new Date(), new Date()]);
+  it('returns the scoped pipeline value + 14-day captures and conversions series', async () => {
+    const { service, repo } = makeMetricsHarness('1250000.00', [new Date(), new Date()], [new Date()]);
     const result = await service.dashboardMetrics(rm, ownCtx);
 
     expect(repo.dashboardMetrics).toHaveBeenCalledWith(ORG, ownCtx.predicate, expect.any(Date));
     expect(result.pipeline_value).toBe('1250000.00');
     expect(result.captured_series).toHaveLength(14);
     expect(result.captured_series.reduce((sum, b) => sum + b.count, 0)).toBe(2);
+    expect(result.conversions_series).toHaveLength(14);
+    expect(result.conversions_series.reduce((sum, b) => sum + b.count, 0)).toBe(1);
   });
 
   it('denies a non-internal (PARTNER) scope with FORBIDDEN', async () => {

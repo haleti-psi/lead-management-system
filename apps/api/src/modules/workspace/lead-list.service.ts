@@ -85,16 +85,18 @@ function ageingDaysFrom(createdAt: Date): number {
   return Math.floor((Date.now() - createdAt.getTime()) / 86_400_000);
 }
 
-/** Dashboard trend metrics (FR-053): scoped pipeline value + daily captures series. */
+/** Dashboard trend metrics (FR-053): scoped pipeline value + daily series. */
 export interface DashboardMetricsResult {
   /** Σ requested_amount of active (non-terminal) scoped leads, as a string. */
   pipeline_value: string;
   /** Daily captured counts for the trailing window (oldest → newest). */
   captured_series: { date: string; count: number }[];
+  /** Daily handed-off (conversion) counts for the trailing window (oldest → newest). */
+  conversions_series: { date: string; count: number }[];
 }
 
-/** Bucket created-at timestamps into a trailing `days`-day daily series (UTC days). */
-function capturedSeriesFrom(timestamps: Date[], days: number): { date: string; count: number }[] {
+/** Bucket timestamps into a trailing `days`-day daily series (UTC days). */
+function dailySeriesFrom(timestamps: Date[], days: number): { date: string; count: number }[] {
   const counts = new Map<string, number>();
   for (const t of timestamps) {
     const key = t.toISOString().slice(0, 10);
@@ -219,14 +221,15 @@ export class LeadListService {
     }
     const TREND_DAYS = 14;
     const since = new Date(Date.now() - TREND_DAYS * 86_400_000);
-    const { pipelineValue, recentCreatedAt } = await this.repo.dashboardMetrics(
+    const { pipelineValue, recentCreatedAt, recentConversions } = await this.repo.dashboardMetrics(
       user.orgId,
       ctx.predicate,
       since,
     );
     return {
       pipeline_value: pipelineValue,
-      captured_series: capturedSeriesFrom(recentCreatedAt, TREND_DAYS),
+      captured_series: dailySeriesFrom(recentCreatedAt, TREND_DAYS),
+      conversions_series: dailySeriesFrom(recentConversions, TREND_DAYS),
     };
   }
 

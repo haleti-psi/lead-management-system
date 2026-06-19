@@ -4,8 +4,9 @@ import { apiClient } from '@/lib/api';
 
 /**
  * FR-053 — dashboard trend metrics from `GET /api/v1/pipeline-board/trends`:
- * the scoped active-pipeline value and a 14-day daily captures series. Scoped +
- * cached just under the dashboard's refresh cadence.
+ * the scoped active-pipeline value, a 14-day daily captures series, and a 14-day
+ * daily conversions (handed-off) series. Scoped + cached just under the
+ * dashboard's refresh cadence.
  */
 export interface CapturePoint {
   date: string;
@@ -15,6 +16,7 @@ export interface CapturePoint {
 export interface PipelineTrends {
   pipeline_value: string;
   captured_series: CapturePoint[];
+  conversions_series: CapturePoint[];
 }
 
 export function usePipelineTrends(): {

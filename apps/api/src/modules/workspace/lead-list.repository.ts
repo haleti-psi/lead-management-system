@@ -168,15 +168,18 @@ export class LeadListRepository {
 
   /**
    * FR-053/FR-052 — dashboard trend inputs: the scoped active-pipeline value
-   * (Σ requested_amount for non-terminal leads) and the recent `created_at`
-   * timestamps (last ~14 days, capped) which the service buckets into a daily
-   * captures series. Both reuse the lead-list scope SQL. No PII; counts + a sum.
+   * (Σ requested_amount for non-terminal leads), the recent `created_at`
+   * timestamps (daily captures series) and the recent `handed_off` transition
+   * timestamps from `stage_history` (daily conversions series). All reuse the
+   * lead-list scope SQL (the conversions join keeps the scope predicate, so a
+   * caller only ever counts conversions among leads they can see). Last ~14
+   * days, capped. No PII; counts + a sum.
    */
   async dashboardMetrics(
     orgId: string,
     predicate: ScopePredicate | undefined,
     since: Date,
-  ): Promise<{ pipelineValue: string; recentCreatedAt: Date[] }> {
+  ): Promise<{ pipelineValue: string; recentCreatedAt: Date[]; recentConversions: Date[] }> {
     const valueRow = await this.scope
       .applyScope(leadListBase(this.db, orgId), predicate)
       .where('l.stage', 'not in', ['handed_off', 'rejected', 'dormant'])
@@ -191,9 +194,20 @@ export class LeadListRepository {
       .limit(1000)
       .execute();
 
+    const conversions = await this.scope
+      .applyScope(leadListBase(this.db, orgId), predicate)
+      .innerJoin('stage_history as sh', 'sh.lead_id', 'l.lead_id')
+      .where('sh.to_stage', '=', 'handed_off')
+      .where('sh.occurred_at', '>=', since)
+      .select('sh.occurred_at')
+      .orderBy('sh.occurred_at')
+      .limit(1000)
+      .execute();
+
     return {
       pipelineValue: valueRow?.v == null ? '0' : String(valueRow.v),
       recentCreatedAt: recent.map((r) => r.created_at as Date),
+      recentConversions: conversions.map((r) => r.occurred_at as Date),
     };
   }
 

@@ -20,7 +20,7 @@ vi.mock('@/hooks/use-auth', () => ({
 
 vi.mock('@/hooks/use-pipeline-trends', () => ({
   usePipelineTrends: vi.fn(() => ({
-    data: { pipeline_value: '0', captured_series: [] },
+    data: { pipeline_value: '0', captured_series: [], conversions_series: [] },
     isLoading: false,
     isError: false,
     refetch: vi.fn(),
