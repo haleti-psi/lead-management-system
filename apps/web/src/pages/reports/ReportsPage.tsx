@@ -7,6 +7,7 @@ import type { ReportCode, ReportParams } from '@/lib/api/reports';
 import { ReportFilterBar } from './ReportFilterBar';
 import { ReportViewer } from './ReportViewer';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { cn } from '@/lib/utils';
 
 const REPORT_OPTIONS: { code: ReportCode; label: string }[] = [
   // FR-120 core pack
@@ -43,27 +44,36 @@ export function ReportsPage(): ReactElement {
     <div className="space-y-4">
       <PageHeader title="Reports" description="Aggregate reports scoped to your access level." />
 
-      {/* Report selector — tabs */}
-      <div role="tablist" aria-label="Report type" className="flex gap-1 border-b">
-        {REPORT_OPTIONS.map(({ code, label }) => (
-          <button
-            key={code}
-            role="tab"
-            aria-selected={code === activeCode}
-            aria-controls={`report-panel-${code}`}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              code === activeCode
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-            onClick={() => {
-              setActiveCode(code);
-              setParams({});
-            }}
-          >
-            {label}
-          </button>
-        ))}
+      {/* Report selector — a wrapping pill group (single-select; mobile-friendly) */}
+      <div className="rounded-lg border bg-card p-3">
+        <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Report
+        </p>
+        <div role="tablist" aria-label="Report type" className="flex flex-wrap gap-2">
+          {REPORT_OPTIONS.map(({ code, label }) => {
+            const selected = code === activeCode;
+            return (
+              <button
+                key={code}
+                role="tab"
+                aria-selected={selected}
+                aria-controls={`report-panel-${code}`}
+                className={cn(
+                  'rounded-full px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                  selected
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+                onClick={() => {
+                  setActiveCode(code);
+                  setParams({});
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Filter bar */}

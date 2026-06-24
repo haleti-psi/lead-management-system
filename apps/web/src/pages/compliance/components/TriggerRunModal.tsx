@@ -26,9 +26,9 @@ function ApplyConfirm({ open, onConfirm, onCancel }: ApplyConfirmProps): JSX.Ele
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/40" aria-hidden="true" onClick={onCancel} />
-      <div className="relative z-10 w-full max-w-sm rounded-lg bg-white p-6 shadow-xl">
-        <h3 className="mb-2 text-sm font-semibold text-red-700">This action is irreversible</h3>
-        <p className="mb-4 text-sm text-gray-700">
+      <div className="relative z-10 w-full max-w-sm rounded-lg bg-popover p-6 shadow-xl">
+        <h3 className="mb-2 text-sm font-semibold text-destructive">This action is irreversible</h3>
+        <p className="mb-4 text-sm text-muted-foreground">
           All eligible leads will have their data permanently purged or anonymised.
           This cannot be undone.
         </p>
@@ -114,15 +114,15 @@ export function TriggerRunModal({ open, onClose, callerRole }: TriggerRunModalPr
           role="dialog"
           aria-modal="true"
           aria-label="Trigger retention run"
-          className="relative z-10 w-full max-w-lg rounded-lg bg-white p-6 shadow-xl"
+          className="relative z-10 w-full max-w-lg rounded-lg bg-popover p-6 shadow-xl"
         >
           {/* Header */}
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-gray-900">Trigger Retention Run</h2>
+            <h2 className="text-base font-semibold text-foreground">Trigger Retention Run</h2>
             <button
               type="button"
               aria-label="Close"
-              className="rounded p-1 text-gray-500 hover:bg-gray-100"
+              className="rounded p-1 text-muted-foreground hover:bg-accent"
               onClick={onClose}
             >
               <X className="h-4 w-4" />
@@ -131,7 +131,7 @@ export function TriggerRunModal({ open, onClose, callerRole }: TriggerRunModalPr
 
           {/* Mode selector */}
           <fieldset className="mb-4">
-            <legend className="mb-2 text-sm font-medium text-gray-700">Run Mode</legend>
+            <legend className="mb-2 text-sm font-medium text-foreground">Run Mode</legend>
             <div className="flex flex-col gap-2">
               <label className="flex items-center gap-2 text-sm">
                 <input
@@ -161,7 +161,7 @@ export function TriggerRunModal({ open, onClose, callerRole }: TriggerRunModalPr
 
           {/* Optional data_category filter */}
           <div className="mb-5">
-            <label htmlFor="tr-data-category" className="mb-1.5 block text-sm font-medium text-gray-700">
+            <label htmlFor="tr-data-category" className="mb-1.5 block text-sm font-medium text-foreground">
               Data Category (optional — omit to run all)
             </label>
             <select

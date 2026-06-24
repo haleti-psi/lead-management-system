@@ -127,6 +127,7 @@ export function PartnerManagementPage(): JSX.Element {
   return (
     <div className="space-y-4">
       <PageHeader
+        breadcrumbs={[{ label: 'Configuration', to: '/admin' }, { label: 'Partners' }]}
         title="Partner Management"
         description="DSA / dealer onboarding and administration."
         actions={

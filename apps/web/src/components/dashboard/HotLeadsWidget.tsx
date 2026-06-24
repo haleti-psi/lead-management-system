@@ -44,15 +44,17 @@ export function HotLeadsWidget({
             {rows.map((row) => (
               <li key={row.lead_id} className="flex items-center justify-between gap-2 text-sm">
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  {/* PII: only masked values are exposed (name first, then code · mobile) */}
                   <Link
                     to={`/leads/${row.lead_id}`}
                     className="truncate font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    {row.lead_code}
+                    {row.name_masked}
                   </Link>
-                  {/* PII: only masked values are exposed */}
                   <span className="truncate text-xs text-muted-foreground">
-                    {row.name_masked} &bull; {row.mobile_masked}
+                    <span className="font-mono">{row.lead_code}</span>
+                    {' · '}
+                    {row.mobile_masked}
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">

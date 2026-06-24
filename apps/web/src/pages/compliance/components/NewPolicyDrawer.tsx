@@ -31,8 +31,8 @@ function ConfirmDialog({ open, onConfirm, onCancel }: ConfirmDialogProps): JSX.E
   return (
     <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/40" aria-hidden="true" onClick={onCancel} />
-      <div className="relative z-10 w-full max-w-sm rounded-lg bg-white p-6 shadow-xl">
-        <p className="mb-4 text-sm text-gray-700">
+      <div className="relative z-10 w-full max-w-sm rounded-lg bg-popover p-6 shadow-xl">
+        <p className="mb-4 text-sm text-muted-foreground">
           This policy will affect live data on the next retention run. Are you sure?
         </p>
         <div className="flex justify-end gap-3">
@@ -138,15 +138,15 @@ export function NewPolicyDrawer({ open, onClose }: NewPolicyDrawerProps): JSX.El
           role="dialog"
           aria-modal="true"
           aria-label="New retention policy"
-          className="relative z-10 flex w-full max-w-md flex-col bg-white shadow-xl"
+          className="relative z-10 flex w-full max-w-md flex-col bg-popover shadow-xl"
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b px-6 py-4">
-            <h2 className="text-base font-semibold text-gray-900">New Retention Policy</h2>
+            <h2 className="text-base font-semibold text-foreground">New Retention Policy</h2>
             <button
               type="button"
               aria-label="Close drawer"
-              className="rounded p-1 text-gray-500 hover:bg-gray-100"
+              className="rounded p-1 text-muted-foreground hover:bg-accent"
               onClick={onClose}
             >
               <X className="h-4 w-4" />
@@ -172,7 +172,7 @@ export function NewPolicyDrawer({ open, onClose }: NewPolicyDrawerProps): JSX.El
                 ))}
               </select>
               {errors.data_category && (
-                <p className="text-xs text-red-600" role="alert">{errors.data_category.message}</p>
+                <p className="text-xs text-destructive" role="alert">{errors.data_category.message}</p>
               )}
             </div>
 
@@ -207,7 +207,7 @@ export function NewPolicyDrawer({ open, onClose }: NewPolicyDrawerProps): JSX.El
                 })}
               />
               {errors.retain_days && (
-                <p className="text-xs text-red-600" role="alert">{errors.retain_days.message}</p>
+                <p className="text-xs text-destructive" role="alert">{errors.retain_days.message}</p>
               )}
             </div>
 
@@ -225,7 +225,7 @@ export function NewPolicyDrawer({ open, onClose }: NewPolicyDrawerProps): JSX.El
                 ))}
               </select>
               {errors.action && (
-                <p className="text-xs text-red-600" role="alert">{errors.action.message}</p>
+                <p className="text-xs text-destructive" role="alert">{errors.action.message}</p>
               )}
             </div>
 
@@ -235,7 +235,7 @@ export function NewPolicyDrawer({ open, onClose }: NewPolicyDrawerProps): JSX.El
                 id="np-legal-hold"
                 type="checkbox"
                 aria-label="Legal hold"
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-input"
                 {...register('legal_hold')}
               />
               <Label htmlFor="np-legal-hold">Legal Hold</Label>

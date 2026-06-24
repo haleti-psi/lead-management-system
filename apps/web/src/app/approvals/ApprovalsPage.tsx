@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { isApiClientError } from '@/lib/api';
 import { useLeads } from '@/hooks/use-leads';
 import { useLeadApproval, approvalErrorMessage } from '@/hooks/use-lead-approval';
@@ -113,6 +114,7 @@ function ApprovalActions({
   const [rejectOpen, setRejectOpen] = React.useState(false);
   const [reason, setReason] = React.useState('');
   const [validationError, setValidationError] = React.useState<string | null>(null);
+  const [confirm, setConfirm] = React.useState<'approve' | 'reject' | null>(null);
   const reasonRef = React.useRef<HTMLInputElement>(null);
 
   const mutation = useLeadApproval(leadId);
@@ -124,7 +126,7 @@ function ApprovalActions({
     }
   }, [rejectOpen]);
 
-  const handleApprove = (): void => {
+  const submitApprove = (): void => {
     mutation.mutate(
       { decision: 'approve' },
       {
@@ -138,19 +140,9 @@ function ApprovalActions({
     );
   };
 
-  const handleReject = (): void => {
-    const trimmed = reason.trim();
-    if (trimmed.length < 5) {
-      setValidationError('Reason must be at least 5 characters.');
-      return;
-    }
-    if (trimmed.length > 500) {
-      setValidationError('Reason must not exceed 500 characters.');
-      return;
-    }
-    setValidationError(null);
+  const submitReject = (): void => {
     mutation.mutate(
-      { decision: 'reject', reason: trimmed },
+      { decision: 'reject', reason: reason.trim() },
       {
         onSuccess: () => {
           toast.success(`${leadCode} rejected.`);
@@ -162,6 +154,21 @@ function ApprovalActions({
         },
       },
     );
+  };
+
+  /** Validate the reason, then ask for a final confirmation before rejecting. */
+  const requestReject = (): void => {
+    const trimmed = reason.trim();
+    if (trimmed.length < 5) {
+      setValidationError('Reason must be at least 5 characters.');
+      return;
+    }
+    if (trimmed.length > 500) {
+      setValidationError('Reason must not exceed 500 characters.');
+      return;
+    }
+    setValidationError(null);
+    setConfirm('reject');
   };
 
   const handleRejectOpen = (): void => {
@@ -176,74 +183,102 @@ function ApprovalActions({
     setValidationError(null);
   };
 
-  if (!rejectOpen) {
-    return (
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          onClick={handleApprove}
-          disabled={mutation.isPending}
-          aria-label={`Approve lead ${leadCode}`}
-        >
-          Approve
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleRejectOpen}
-          disabled={mutation.isPending}
-          aria-label={`Reject lead ${leadCode}`}
-        >
-          Reject
-        </Button>
-      </div>
-    );
-  }
+  const onConfirm = (): void => {
+    const decision = confirm;
+    setConfirm(null);
+    if (decision === 'approve') submitApprove();
+    else if (decision === 'reject') submitReject();
+  };
 
   return (
-    <div className="flex min-w-[280px] flex-col gap-2">
-      <label htmlFor={`reason-${leadId}`} className="sr-only">
-        Rejection reason for {leadCode}
-      </label>
-      <Input
-        id={`reason-${leadId}`}
-        ref={reasonRef}
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        placeholder="Reason for rejection (5–500 chars)"
-        maxLength={500}
-        aria-required="true"
-        aria-invalid={validationError != null}
-        aria-describedby={validationError ? `reason-error-${leadId}` : undefined}
+    <>
+      {!rejectOpen ? (
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => setConfirm('approve')}
+            disabled={mutation.isPending}
+            aria-label={`Approve lead ${leadCode}`}
+          >
+            Approve
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleRejectOpen}
+            disabled={mutation.isPending}
+            aria-label={`Reject lead ${leadCode}`}
+          >
+            Reject
+          </Button>
+        </div>
+      ) : (
+        <div className="flex min-w-[280px] flex-col gap-2">
+          <label htmlFor={`reason-${leadId}`} className="sr-only">
+            Rejection reason for {leadCode}
+          </label>
+          <Input
+            id={`reason-${leadId}`}
+            ref={reasonRef}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Reason for rejection (5–500 chars)"
+            maxLength={500}
+            aria-required="true"
+            aria-invalid={validationError != null}
+            aria-describedby={validationError ? `reason-error-${leadId}` : undefined}
+          />
+          {validationError ? (
+            <p id={`reason-error-${leadId}`} role="alert" className="text-xs text-destructive">
+              {validationError}
+            </p>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={requestReject}
+              disabled={mutation.isPending}
+              aria-label={`Confirm rejection of lead ${leadCode}`}
+            >
+              {mutation.isPending ? 'Submitting…' : 'Confirm reject'}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleRejectCancel}
+              disabled={mutation.isPending}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirm !== null}
+        title={confirm === 'reject' ? 'Reject this lead?' : 'Approve this lead?'}
+        description={
+          confirm === 'reject' ? (
+            <>
+              Are you sure you want to reject{' '}
+              <strong className="text-foreground">{leadCode}</strong>? This decision is recorded in
+              the audit trail.
+            </>
+          ) : (
+            <>
+              Are you sure you want to approve{' '}
+              <strong className="text-foreground">{leadCode}</strong>? This sends it forward for
+              hand-off and is recorded in the audit trail.
+            </>
+          )
+        }
+        confirmLabel={confirm === 'reject' ? 'Yes, reject' : 'Yes, approve'}
+        destructive={confirm === 'reject'}
+        pending={mutation.isPending}
+        onCancel={() => setConfirm(null)}
+        onConfirm={onConfirm}
       />
-      {validationError ? (
-        <p
-          id={`reason-error-${leadId}`}
-          role="alert"
-          className="text-xs text-destructive"
-        >
-          {validationError}
-        </p>
-      ) : null}
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant="destructive"
-          onClick={handleReject}
-          disabled={mutation.isPending}
-          aria-label={`Confirm rejection of lead ${leadCode}`}
-        >
-          {mutation.isPending ? 'Submitting…' : 'Confirm reject'}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={handleRejectCancel}
-          disabled={mutation.isPending}
-        >
-          Cancel
-        </Button>
-      </div>
-    </div>
+    </>
   );
 }

@@ -7,10 +7,10 @@ import { usePipelineTrends, type CapturePoint } from '@/hooks/use-pipeline-trend
 import { WidgetErrorState } from './WidgetErrorState';
 
 /**
- * FR-053 — Pipeline value + captures-trend widget. Shows the scoped active
- * pipeline value (compact INR) and a 14-day daily captures sparkline (inline
- * SVG — no chart dependency). All four states handled. Visible to lead-viewing
- * roles (gated by the parent grid); the endpoint is scope-filtered server-side.
+ * FR-053 — Pipeline activity widget. Shows the scoped active pipeline value
+ * (compact INR) and an interactive 14-day daily-captures bar chart (no chart
+ * dependency; low-bandwidth friendly). Each bar brightens and reveals a tooltip
+ * on hover/focus. All four states handled.
  */
 const INR_COMPACT = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -18,70 +18,48 @@ const INR_COMPACT = new Intl.NumberFormat('en-IN', {
   notation: 'compact',
   maximumFractionDigits: 1,
 });
+const DAY_FMT = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short' });
 
 function formatValue(value: string): string {
   const n = Number(value);
   return Number.isFinite(n) ? INR_COMPACT.format(n) : '—';
 }
 
-/** Inline SVG sparkline of daily counts (stretches to width; crisp stroke) with
- * a soft gradient area fill. No chart dependency; low-bandwidth friendly. */
-function Sparkline({
-  series,
-  ariaLabel,
-  gradientId,
-}: {
-  series: CapturePoint[];
-  ariaLabel: string;
-  gradientId: string;
-}): ReactElement {
-  const W = 240;
-  const H = 40;
-  const pad = 2;
+function formatDay(date: string): string {
+  const d = new Date(date);
+  return Number.isNaN(d.getTime()) ? date : DAY_FMT.format(d);
+}
+
+/** Interactive daily-captures bars; hover/focus brightens the bar + shows a tooltip. */
+function CapturesBars({ series }: { series: CapturePoint[] }): ReactElement {
+  if (series.length === 0) {
+    return <p className="py-6 text-center text-xs text-muted-foreground">No captures in this period.</p>;
+  }
   const max = Math.max(1, ...series.map((p) => p.count));
-  const n = series.length;
-  const xy = series.map((p, i) => {
-    const x = n <= 1 ? pad : (i / (n - 1)) * (W - pad * 2) + pad;
-    const y = H - pad - (p.count / max) * (H - pad * 2);
-    return [x, y] as const;
-  });
-  const line = xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-  const baseline = (H - pad).toFixed(1);
-  const firstX = (xy[0]?.[0] ?? pad).toFixed(1);
-  const lastX = (xy[xy.length - 1]?.[0] ?? W - pad).toFixed(1);
-  const area = `${firstX},${baseline} ${line} ${lastX},${baseline}`;
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className="h-10 w-full text-primary"
-      preserveAspectRatio="none"
-      role="img"
-      aria-label={ariaLabel}
-    >
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="currentColor" stopOpacity={0.22} />
-          <stop offset="100%" stopColor="currentColor" stopOpacity={0} />
-        </linearGradient>
-      </defs>
-      {xy.length > 1 ? <polygon points={area} fill={`url(#${gradientId})`} stroke="none" /> : null}
-      <polyline
-        points={line}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        vectorEffect="non-scaling-stroke"
-      />
-    </svg>
+    <div className="flex h-20 items-end gap-1" role="img" aria-label="Daily captures over the last 14 days">
+      {series.map((p, i) => (
+        <div
+          key={i}
+          className="group relative flex h-full flex-1 items-end"
+          title={`${formatDay(p.date)}: ${p.count} capture${p.count === 1 ? '' : 's'}`}
+        >
+          <div
+            className="w-full rounded-t-sm bg-primary/25 transition-colors group-hover:bg-primary"
+            style={{ height: `${Math.max(3, (p.count / max) * 100)}%` }}
+          />
+          <span className="pointer-events-none absolute inset-x-0 -top-7 z-10 mx-auto hidden w-max max-w-[8rem] rounded-md bg-popover px-2 py-1 text-[10px] font-medium text-popover-foreground shadow-md group-hover:block">
+            {formatDay(p.date)}: {p.count}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 
 export function PipelineTrendsWidget(): ReactElement {
   const { data, isLoading, isError, refetch } = usePipelineTrends();
-  const capturesTotal = data ? data.captured_series.reduce((sum, p) => sum + p.count, 0) : 0;
-  const conversionsTotal = data ? data.conversions_series.reduce((sum, p) => sum + p.count, 0) : 0;
+  const total = data ? data.captured_series.reduce((sum, p) => sum + p.count, 0) : 0;
 
   return (
     <Card>
@@ -95,33 +73,20 @@ export function PipelineTrendsWidget(): ReactElement {
         ) : isError || !data ? (
           <WidgetErrorState widgetName="pipeline_trends" onRetry={refetch} />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-[auto_1fr_1fr] sm:items-center">
-            <div>
-              <p className="text-xs text-muted-foreground">Active pipeline value</p>
-              <p className="text-2xl font-bold leading-none tabular-nums">{formatValue(data.pipeline_value)}</p>
-            </div>
-            <div className="min-w-0">
-              <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-                <span>Captures · 14d</span>
-                <span className="tabular-nums">{capturesTotal}</span>
+          <div className="space-y-4">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground">Active pipeline value</p>
+                <p className="text-2xl font-bold leading-none tabular-nums">
+                  {formatValue(data.pipeline_value)}
+                </p>
               </div>
-              <Sparkline
-                series={data.captured_series}
-                ariaLabel="Captures over the last 14 days"
-                gradientId="sparkfill-captures"
-              />
-            </div>
-            <div className="min-w-0">
-              <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-                <span>Conversions · 14d</span>
-                <span className="tabular-nums">{conversionsTotal}</span>
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground">Captures · 14 days</p>
+                <p className="text-lg font-semibold leading-none tabular-nums">{total}</p>
               </div>
-              <Sparkline
-                series={data.conversions_series}
-                ariaLabel="Conversions over the last 14 days"
-                gradientId="sparkfill-conversions"
-              />
             </div>
+            <CapturesBars series={data.captured_series} />
           </div>
         )}
       </CardContent>

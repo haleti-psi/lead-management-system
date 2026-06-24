@@ -4,10 +4,12 @@ import { Flame, Save, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Modal } from '@/components/ui/Modal';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { MaskedField } from '@/components/ui/MaskedField';
+import { cn } from '@/lib/utils';
 import { DataTable, type DataTableColumn, type SortState } from '@/components/data/DataTable';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useAuth } from '@/hooks/use-auth';
@@ -269,43 +271,47 @@ export function LeadListPage(): JSX.Element {
         onApplySavedView={(view) => applyPreset(view.filter_json)}
       />
 
-      {/* Free-text search */}
-      <form role="search" onSubmit={submitSearch} className="flex max-w-md items-center gap-2">
-        <div className="relative flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            type="search"
-            aria-label="Search leads"
-            placeholder="Search name, mobile, lead code…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            className="pl-8"
-          />
+      {/* Search + filters panel */}
+      <Card className="space-y-4 p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <form role="search" onSubmit={submitSearch} className="flex w-full max-w-md items-center gap-2">
+            <div className="relative flex-1">
+              <Search
+                className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden
+              />
+              <Input
+                type="search"
+                aria-label="Search leads"
+                placeholder="Search name, mobile, lead code…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className="pl-8"
+              />
+            </div>
+            <Button type="submit" variant="secondary">
+              Search
+            </Button>
+          </form>
+          {hasActiveQuery(filters, q) ? (
+            <Button variant="ghost" size="sm" onClick={clearAll} className="self-start sm:self-auto">
+              <X className="h-4 w-4" aria-hidden />
+              Clear all
+            </Button>
+          ) : null}
         </div>
-        <Button type="submit" variant="secondary">
-          Search
-        </Button>
-      </form>
 
-      {/* Column filters */}
-      <div className="flex flex-wrap gap-2">
-        <FilterSelect label="Stage" value={filters.stage ?? ''} onChange={(v) => setFilter('stage', v)} options={STAGE_OPTIONS} />
-        <FilterSelect label="Product" value={filters.product_code ?? ''} onChange={(v) => setFilter('product_code', v)} options={PRODUCT_OPTIONS} />
-        <FilterSelect label="Priority" value={filters.priority ?? ''} onChange={(v) => setFilter('priority', v)} options={PRIORITY_OPTIONS} />
-        <FilterSelect label="Score" value={filters.score_band ?? ''} onChange={(v) => setFilter('score_band', v)} options={SCORE_BAND_OPTIONS} />
-        <FilterSelect label="SLA" value={filters.sla_state ?? ''} onChange={(v) => setFilter('sla_state', v)} options={SLA_STATE_OPTIONS} />
-        <FilterSelect label="Consent" value={filters.consent_status ?? ''} onChange={(v) => setFilter('consent_status', v)} options={CONSENT_OPTIONS} />
-        <FilterSelect label="KYC" value={filters.kyc_status ?? ''} onChange={(v) => setFilter('kyc_status', v)} options={KYC_OPTIONS} />
-        {hasActiveQuery(filters, q) ? (
-          <Button variant="ghost" size="sm" onClick={clearAll}>
-            <X className="h-4 w-4" aria-hidden />
-            Clear
-          </Button>
-        ) : null}
-      </div>
+        {/* Column filters — pick "All …" to clear a single filter */}
+        <div className="flex flex-wrap items-end gap-3">
+          <FilterSelect label="Stage" value={filters.stage ?? ''} onChange={(v) => setFilter('stage', v)} options={STAGE_OPTIONS} />
+          <FilterSelect label="Product" value={filters.product_code ?? ''} onChange={(v) => setFilter('product_code', v)} options={PRODUCT_OPTIONS} />
+          <FilterSelect label="Priority" value={filters.priority ?? ''} onChange={(v) => setFilter('priority', v)} options={PRIORITY_OPTIONS} />
+          <FilterSelect label="Score" value={filters.score_band ?? ''} onChange={(v) => setFilter('score_band', v)} options={SCORE_BAND_OPTIONS} />
+          <FilterSelect label="SLA" value={filters.sla_state ?? ''} onChange={(v) => setFilter('sla_state', v)} options={SLA_STATE_OPTIONS} />
+          <FilterSelect label="Consent" value={filters.consent_status ?? ''} onChange={(v) => setFilter('consent_status', v)} options={CONSENT_OPTIONS} />
+          <FilterSelect label="KYC" value={filters.kyc_status ?? ''} onChange={(v) => setFilter('kyc_status', v)} options={KYC_OPTIONS} />
+        </div>
+      </Card>
 
       <DataTable
         columns={columns}
@@ -414,12 +420,18 @@ function FilterSelect({
   onChange: (v: string) => void;
   options: ReadonlyArray<SelectOption>;
 }): JSX.Element {
+  const active = value !== '';
   return (
-    <label className="flex items-center gap-1 text-sm">
-      <span className="sr-only">{label}</span>
+    <label className="flex flex-col gap-1 text-xs">
+      <span className="font-medium text-muted-foreground">{label}</span>
       <select
         aria-label={label}
-        className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+        className={cn(
+          'h-9 rounded-md border bg-background px-2 text-sm transition-colors',
+          active
+            ? 'border-primary text-foreground ring-1 ring-primary/30'
+            : 'border-input text-muted-foreground',
+        )}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >

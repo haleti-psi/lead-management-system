@@ -12,6 +12,7 @@ import {
   useProductConfigs,
   type ProductConfigListParams,
 } from '@/hooks/use-product-configs';
+import { cn } from '@/lib/utils';
 import { ProductConfigForm } from '@/components/product-config/ProductConfigForm';
 import { RetireProductConfigDialog } from '@/components/product-config/RetireProductConfigDialog';
 import { PRODUCT_CODE_OPTIONS, PAN_TIMING_OPTIONS } from '@/components/product-config/product-config-form-schema';
@@ -127,6 +128,7 @@ export function ProductConfigPage(): JSX.Element {
   return (
     <div className="space-y-4">
       <PageHeader
+        breadcrumbs={[{ label: 'Configuration', to: '/admin' }, { label: 'Product Configurations' }]}
         title="Product Configurations"
         description="Product eligibility rules and intake configuration (draft → approve → active)."
         actions={
@@ -235,12 +237,18 @@ function FilterSelect({
   onChange: (v: string) => void;
   options: ReadonlyArray<{ value: string; label: string }>;
 }): JSX.Element {
+  const active = value !== '';
   return (
-    <label className="flex items-center gap-1 text-sm">
-      <span className="sr-only">{label}</span>
+    <label className="flex flex-col gap-1 text-xs">
+      <span className="font-medium text-muted-foreground">{label}</span>
       <select
         aria-label={label}
-        className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+        className={cn(
+          'h-9 rounded-md border bg-background px-2 text-sm transition-colors',
+          active
+            ? 'border-primary text-foreground ring-1 ring-primary/30'
+            : 'border-input text-muted-foreground',
+        )}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
