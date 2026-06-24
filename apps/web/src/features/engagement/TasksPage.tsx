@@ -33,9 +33,9 @@ const TASK_STATUS_LABEL: Record<TaskDto['status'], string> = {
 /** Priority badge. */
 function PriorityBadge({ priority }: { priority: TaskDto['priority'] }): ReactElement {
   const colourMap: Record<TaskDto['priority'], string> = {
-    low: 'text-gray-500',
-    normal: 'text-blue-600',
-    high: 'text-orange-600',
+    low: 'text-muted-foreground',
+    normal: 'text-blue-600 dark:text-blue-400',
+    high: 'text-orange-600 dark:text-orange-400',
   };
   const label = priority.charAt(0).toUpperCase() + priority.slice(1);
   return <span className={`text-xs font-medium ${colourMap[priority]}`}>{label}</span>;

@@ -10,6 +10,7 @@ import { MaskedField } from '@/components/ui/MaskedField';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { LoadingSkeleton } from '@/components/common/LoadingSkeleton';
+import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { isApiClientError } from '@/lib/api';
 import { useCan } from '@/lib/auth/capabilities';
@@ -31,6 +32,8 @@ import type { Lead360Response } from './lead360.types';
  */
 export function Lead360View({ leadId }: { leadId: string }): ReactElement {
   const { data, isPending, isError, error, refetch } = useLead360(leadId);
+  // Hooks must run unconditionally (before any early return) — see rules of hooks.
+  const can = useCan();
 
   if (isPending) {
     return <LoadingSkeleton rows={8} />;
@@ -51,8 +54,6 @@ export function Lead360View({ leadId }: { leadId: string }): ReactElement {
       />
     );
   }
-
-  const can = useCan();
 
   return (
     <div className="space-y-4">
@@ -528,6 +529,7 @@ function ApprovalPanel({ leadId, leadCode }: { leadId: string; leadCode: string 
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<'approve' | 'reject' | null>(null);
   const reasonRef = useRef<HTMLInputElement>(null);
   const mutation = useLeadApproval(leadId);
 
@@ -537,7 +539,7 @@ function ApprovalPanel({ leadId, leadCode }: { leadId: string; leadCode: string 
     }
   }, [rejectOpen]);
 
-  const handleApprove = (): void => {
+  const submitApprove = (): void => {
     mutation.mutate(
       { decision: 'approve' },
       {
@@ -547,7 +549,22 @@ function ApprovalPanel({ leadId, leadCode }: { leadId: string; leadCode: string 
     );
   };
 
-  const handleReject = (): void => {
+  const submitReject = (): void => {
+    mutation.mutate(
+      { decision: 'reject', reason: reason.trim() },
+      {
+        onSuccess: () => {
+          toast.success(`${leadCode} rejected.`);
+          setRejectOpen(false);
+          setReason('');
+        },
+        onError: (error) => toast.error(approvalErrorMessage(error)),
+      },
+    );
+  };
+
+  /** Validate the reason, then ask for a final confirmation before rejecting. */
+  const requestReject = (): void => {
     const trimmed = reason.trim();
     if (trimmed.length < 5) {
       setValidationError('Reason must be at least 5 characters.');
@@ -558,17 +575,14 @@ function ApprovalPanel({ leadId, leadCode }: { leadId: string; leadCode: string 
       return;
     }
     setValidationError(null);
-    mutation.mutate(
-      { decision: 'reject', reason: trimmed },
-      {
-        onSuccess: () => {
-          toast.success(`${leadCode} rejected.`);
-          setRejectOpen(false);
-          setReason('');
-        },
-        onError: (error) => toast.error(approvalErrorMessage(error)),
-      },
-    );
+    setConfirm('reject');
+  };
+
+  const onConfirm = (): void => {
+    const decision = confirm;
+    setConfirm(null);
+    if (decision === 'approve') submitApprove();
+    else if (decision === 'reject') submitReject();
   };
 
   return (
@@ -585,7 +599,7 @@ function ApprovalPanel({ leadId, leadCode }: { leadId: string; leadCode: string 
         {!rejectOpen ? (
           <div className="flex items-center gap-2">
             <Button
-              onClick={handleApprove}
+              onClick={() => setConfirm('approve')}
               disabled={mutation.isPending}
               aria-label={`Approve lead ${leadCode}`}
             >
@@ -632,7 +646,7 @@ function ApprovalPanel({ leadId, leadCode }: { leadId: string; leadCode: string 
             <div className="flex items-center gap-2">
               <Button
                 variant="destructive"
-                onClick={handleReject}
+                onClick={requestReject}
                 disabled={mutation.isPending}
                 aria-label={`Confirm rejection of lead ${leadCode}`}
               >
@@ -652,6 +666,31 @@ function ApprovalPanel({ leadId, leadCode }: { leadId: string; leadCode: string 
             </div>
           </div>
         )}
+
+        <ConfirmDialog
+          open={confirm !== null}
+          title={confirm === 'reject' ? 'Reject this lead?' : 'Approve this lead?'}
+          description={
+            confirm === 'reject' ? (
+              <>
+                Are you sure you want to reject{' '}
+                <strong className="text-foreground">{leadCode}</strong>? This decision is recorded in
+                the audit trail.
+              </>
+            ) : (
+              <>
+                Are you sure you want to approve{' '}
+                <strong className="text-foreground">{leadCode}</strong>? This sends it forward for
+                hand-off and is recorded in the audit trail.
+              </>
+            )
+          }
+          confirmLabel={confirm === 'reject' ? 'Yes, reject' : 'Yes, approve'}
+          destructive={confirm === 'reject'}
+          pending={mutation.isPending}
+          onCancel={() => setConfirm(null)}
+          onConfirm={onConfirm}
+        />
       </CardContent>
     </Card>
   );
@@ -665,9 +704,9 @@ function ApprovalPanel({ leadId, leadCode }: { leadId: string; leadCode: string 
  */
 function Field({ label, children }: { label: string; children: ReactNode }): ReactElement {
   return (
-    <dl className="flex items-baseline justify-between gap-4 sm:block">
+    <dl className="space-y-0.5">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-0">{children}</dd>
+      <dd className="text-sm">{children}</dd>
     </dl>
   );
 }

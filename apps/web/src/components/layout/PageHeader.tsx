@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useInRouterContext } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -33,6 +33,9 @@ export function PageHeader({
   actions,
   className,
 }: PageHeaderProps): JSX.Element {
+  // Breadcrumb links need a Router; render them as links only when one is present
+  // (so a page rendered standalone — e.g. in a unit test — degrades to plain text).
+  const inRouter = useInRouterContext();
   return (
     <div className={cn(className)}>
       {breadcrumbs && breadcrumbs.length > 0 ? (
@@ -41,7 +44,7 @@ export function PageHeader({
             {breadcrumbs.map((crumb, i) => (
               <li key={`${crumb.label}-${i}`} className="flex items-center gap-1">
                 {i > 0 ? <ChevronRight className="h-3 w-3 shrink-0" aria-hidden /> : null}
-                {crumb.to ? (
+                {crumb.to && inRouter ? (
                   <Link
                     to={crumb.to}
                     className="rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -49,7 +52,10 @@ export function PageHeader({
                     {crumb.label}
                   </Link>
                 ) : (
-                  <span aria-current="page" className="text-foreground">
+                  <span
+                    aria-current={crumb.to ? undefined : 'page'}
+                    className={crumb.to ? 'text-muted-foreground' : 'text-foreground'}
+                  >
                     {crumb.label}
                   </span>
                 )}

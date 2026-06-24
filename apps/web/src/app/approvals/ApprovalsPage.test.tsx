@@ -118,6 +118,8 @@ describe('ApprovalsPage', () => {
     renderPage();
 
     fireEvent.click(screen.getByRole('button', { name: /approve lead LD-2026-001/i }));
+    // A confirmation popup now cross-verifies the decision before it submits.
+    fireEvent.click(screen.getByRole('button', { name: /yes, approve/i }));
 
     expect(mutateMock).toHaveBeenCalledTimes(1);
     expect(mutateMock).toHaveBeenCalledWith(
@@ -180,6 +182,8 @@ describe('ApprovalsPage', () => {
     const input = screen.getByPlaceholderText(/reason for rejection/i);
     fireEvent.change(input, { target: { value: 'Not eligible for this product' } });
     fireEvent.click(screen.getByRole('button', { name: /confirm rejection/i }));
+    // A confirmation popup now cross-verifies the rejection before it submits.
+    fireEvent.click(screen.getByRole('button', { name: /yes, reject/i }));
 
     expect(mutateMock).toHaveBeenCalledTimes(1);
     expect(mutateMock).toHaveBeenCalledWith(

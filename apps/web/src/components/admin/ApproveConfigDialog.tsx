@@ -34,6 +34,7 @@ export function ApproveConfigDialog({
   const [comment, setComment] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<ApproveConfigResult | null>(null);
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   const commentInvalid = comment.length > COMMENT_MAX;
 
@@ -146,12 +147,55 @@ export function ApproveConfigDialog({
           </Button>
           <Button
             variant={decision === 'rejected' ? 'destructive' : 'default'}
-            onClick={() => void submit()}
+            onClick={() => setConfirmOpen(true)}
             disabled={approve.isPending || commentInvalid}
           >
             {decision === 'rejected' ? 'Reject change' : 'Approve change'}
           </Button>
         </div>
+
+        {/* Final confirmation before the maker-checker decision is submitted. */}
+        {confirmOpen ? (
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Confirm decision"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          >
+            <div className="fixed inset-0 bg-black/50" aria-hidden onClick={() => setConfirmOpen(false)} />
+            <div className="relative z-10 w-full max-w-sm rounded-lg border bg-popover p-6 shadow-xl">
+              <h3 className="text-base font-semibold text-foreground">
+                {decision === 'rejected' ? 'Reject this change?' : 'Approve this change?'}
+              </h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {decision === 'rejected'
+                  ? 'The pending change will be discarded and not activated. This is recorded in the audit trail.'
+                  : 'The pending change will be activated immediately. This is recorded in the audit trail.'}
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmOpen(false)}
+                  disabled={approve.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant={decision === 'rejected' ? 'destructive' : 'default'}
+                  size="sm"
+                  onClick={() => {
+                    setConfirmOpen(false);
+                    void submit();
+                  }}
+                  disabled={approve.isPending}
+                >
+                  {decision === 'rejected' ? 'Yes, reject' : 'Yes, approve'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </Modal>
   );

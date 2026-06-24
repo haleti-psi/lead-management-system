@@ -36,6 +36,8 @@ export interface PaginationState {
 
 /** performance.md: default page size 25, max 100. */
 export const PAGE_SIZES = [25, 50, 100] as const;
+/** Server hard-caps list pages at 100 (performance.md / nfr-thresholds). "All" maps to this ceiling. */
+export const MAX_PAGE_SIZE = 100;
 
 interface DataTableProps<T> {
   columns: DataTableColumn<T>[];
@@ -123,6 +125,8 @@ export function DataTable<T>({
 
   const { page, limit, total } = pagination;
   const lastPage = Math.max(1, Math.ceil(total / limit));
+  // "All" shows every row when the set fits inside the ≤100 server cap; otherwise the cap.
+  const allLimit = total > 0 ? Math.min(total, MAX_PAGE_SIZE) : MAX_PAGE_SIZE;
   const start = total === 0 ? 0 : (page - 1) * limit + 1;
   const end = Math.min(page * limit, total);
   const selectedIds = [...selected];
@@ -140,27 +144,48 @@ export function DataTable<T>({
           ) : null}
         </div>
         <div className="relative">
-          <Button variant="outline" size="sm" onClick={() => setColumnMenuOpen((o) => !o)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setColumnMenuOpen((o) => !o)}
+            aria-expanded={columnMenuOpen}
+            aria-haspopup="menu"
+          >
             <SlidersHorizontal className="h-4 w-4" aria-hidden />
             Columns
           </Button>
           {columnMenuOpen ? (
-            <div className="absolute right-0 z-10 mt-1 w-48 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-1 shadow-md">
-              {columns.map((column) => (
-                <label
-                  key={column.id}
-                  className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
-                >
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    checked={!hidden.has(column.id)}
-                    onChange={() => toggleColumn(column.id)}
-                  />
-                  {column.header}
-                </label>
-              ))}
-            </div>
+            <>
+              {/* Click-away layer so the menu closes on an outside click. */}
+              <button
+                type="button"
+                aria-hidden
+                tabIndex={-1}
+                className="fixed inset-0 z-20 cursor-default"
+                onClick={() => setColumnMenuOpen(false)}
+              />
+              <div className="absolute right-0 z-30 mt-2 w-56 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border bg-popover shadow-lg">
+                <p className="border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Toggle columns
+                </p>
+                <div className="max-h-72 overflow-y-auto p-1">
+                  {columns.map((column) => (
+                    <label
+                      key={column.id}
+                      className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        checked={!hidden.has(column.id)}
+                        onChange={() => toggleColumn(column.id)}
+                      />
+                      {column.header || <span className="text-muted-foreground">(actions)</span>}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </>
           ) : null}
         </div>
       </div>
@@ -277,6 +302,7 @@ export function DataTable<T>({
                     {size}
                   </option>
                 ))}
+                <option value={allLimit}>All</option>
               </select>
             </label>
           ) : null}

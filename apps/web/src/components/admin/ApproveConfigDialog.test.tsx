@@ -46,6 +46,7 @@ describe('ApproveConfigDialog', () => {
     render(<ApproveConfigDialog versionId={VERSION_ID} onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: /approve change/i }));
+    fireEvent.click(screen.getByRole('button', { name: /yes, approve/i }));
 
     await waitFor(() => expect(screen.getByText('Configuration change reviewed')).toBeTruthy());
     expect(mocks.approve).toHaveBeenCalledWith({ versionId: VERSION_ID, body: { action: 'approved' } });
@@ -65,6 +66,7 @@ describe('ApproveConfigDialog', () => {
     fireEvent.click(screen.getByLabelText(/reject/i));
     fireEvent.change(screen.getByLabelText(/comment/i), { target: { value: 'Not approved' } });
     fireEvent.click(screen.getByRole('button', { name: /reject change/i }));
+    fireEvent.click(screen.getByRole('button', { name: /yes, reject/i }));
 
     await waitFor(() =>
       expect(mocks.approve).toHaveBeenCalledWith({
@@ -80,6 +82,7 @@ describe('ApproveConfigDialog', () => {
     render(<ApproveConfigDialog versionId={VERSION_ID} onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: /approve change/i }));
+    fireEvent.click(screen.getByRole('button', { name: /yes, approve/i }));
 
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText(/can't approve a change you made/i)).toBeTruthy();
@@ -91,6 +94,7 @@ describe('ApproveConfigDialog', () => {
     render(<ApproveConfigDialog versionId={VERSION_ID} onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: /approve change/i }));
+    fireEvent.click(screen.getByRole('button', { name: /yes, approve/i }));
 
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText(/already been acted on/i)).toBeTruthy();
@@ -101,6 +105,7 @@ describe('ApproveConfigDialog', () => {
     render(<ApproveConfigDialog versionId={VERSION_ID} onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: /approve change/i }));
+    fireEvent.click(screen.getByRole('button', { name: /yes, approve/i }));
 
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText(/no pending configuration change was found/i)).toBeTruthy();
@@ -111,6 +116,7 @@ describe('ApproveConfigDialog', () => {
     render(<ApproveConfigDialog versionId={VERSION_ID} onClose={vi.fn()} />);
 
     fireEvent.click(screen.getByRole('button', { name: /approve change/i }));
+    fireEvent.click(screen.getByRole('button', { name: /yes, approve/i }));
 
     await waitFor(() => expect(screen.getByText(/no change details were recorded/i)).toBeTruthy());
   });

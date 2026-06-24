@@ -73,11 +73,11 @@ export function AdminHomePage(): JSX.Element {
           <Link
             key={item.to}
             to={item.to}
-            className="group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="group animate-fade-in-up rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Card className="flex h-full items-start gap-3 p-4 transition-colors hover:border-foreground/20 hover:bg-accent/40">
+            <Card className="flex h-full items-start gap-3 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:bg-accent/40 hover:shadow-md">
               <span
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary transition-transform duration-200 group-hover:scale-110"
                 aria-hidden
               >
                 <item.icon className="h-5 w-5" />
