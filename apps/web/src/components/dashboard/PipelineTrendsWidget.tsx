@@ -45,7 +45,7 @@ function CapturesBars({ series }: { series: CapturePoint[] }): ReactElement {
           title={`${formatDay(p.date)}: ${p.count} capture${p.count === 1 ? '' : 's'}`}
         >
           <div
-            className="w-full rounded-t-sm bg-primary/25 transition-colors group-hover:bg-primary"
+            className="w-full rounded-t-sm bg-primary/70 transition-colors group-hover:bg-primary"
             style={{ height: `${Math.max(3, (p.count / max) * 100)}%` }}
           />
           <span className="pointer-events-none absolute inset-x-0 -top-7 z-10 mx-auto hidden w-max max-w-[8rem] rounded-md bg-popover px-2 py-1 text-[10px] font-medium text-popover-foreground shadow-md group-hover:block">

@@ -128,7 +128,8 @@ export function ProductConfigPage(): JSX.Element {
   return (
     <div className="space-y-4">
       <PageHeader
-        breadcrumbs={[{ label: 'Configuration', to: '/admin' }, { label: 'Product Configurations' }]}
+        backTo="/admin"
+        backLabel="Configuration"
         title="Product Configurations"
         description="Product eligibility rules and intake configuration (draft → approve → active)."
         actions={

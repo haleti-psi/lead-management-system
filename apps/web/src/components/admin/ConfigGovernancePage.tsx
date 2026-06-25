@@ -85,7 +85,8 @@ export function ConfigGovernancePage(): JSX.Element {
   return (
     <div className="space-y-4">
       <PageHeader
-        breadcrumbs={[{ label: 'Configuration', to: '/admin' }, { label: 'Approvals' }]}
+        backTo="/admin"
+        backLabel="Configuration"
         title="Configuration Approvals"
         description="Maker-checker review of pending configuration changes — view, then approve, reject, or roll back."
       />

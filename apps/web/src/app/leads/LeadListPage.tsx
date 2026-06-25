@@ -72,6 +72,18 @@ function hasActiveQuery(filters: LeadListFilters, q: string): boolean {
   return q.trim().length > 0 || Object.values(filters).some((v) => v !== undefined && v !== '');
 }
 
+/** Lead score (0–100) band label + colour — Hot ≥75, Warm 50–74, Cold <50. */
+function scoreBandLabel(score: number): string {
+  if (score >= 75) return 'Hot';
+  if (score >= 50) return 'Warm';
+  return 'Cold';
+}
+function scoreColor(score: number): string {
+  if (score >= 75) return 'text-orange-600 dark:text-orange-400';
+  if (score >= 50) return 'text-amber-600 dark:text-amber-400';
+  return 'text-foreground';
+}
+
 /**
  * FR-050 — Lead List & saved work queues. The core role-scoped work-queue screen
  * (mounts at `/leads`, capability `view_lead`). A server-driven, paginated
@@ -211,11 +223,18 @@ export function LeadListPage(): JSX.Element {
       sortable: true,
       cell: (l) =>
         l.score == null ? (
-          <span className="text-muted-foreground">—</span>
+          <span className="text-muted-foreground" title="Not scored yet">
+            —
+          </span>
         ) : (
-          <span className="inline-flex items-center gap-1 tabular-nums">
-            {l.is_hot ? <Flame className="h-3.5 w-3.5 text-orange-500" aria-label="Hot lead" /> : null}
-            {l.score}
+          <span
+            className="inline-flex items-center gap-1.5 tabular-nums"
+            title={`Lead score ${l.score}/100 · ${scoreBandLabel(l.score)}${l.is_hot ? ' · flagged Hot' : ''}`}
+          >
+            {l.is_hot ? (
+              <Flame className="h-3.5 w-3.5 shrink-0 text-orange-500" aria-label="Hot lead" />
+            ) : null}
+            <span className={cn('font-medium', scoreColor(l.score))}>{l.score}</span>
           </span>
         ),
     },
@@ -267,7 +286,9 @@ export function LeadListPage(): JSX.Element {
         queues={queues}
         activeQueueId={activeQueueId}
         savedViews={savedViewsQuery.data?.data ?? []}
-        onApplyQueue={(preset) => applyPreset(preset.filters)}
+        onApplyQueue={(preset) =>
+          activeQueueId === preset.id ? clearAll() : applyPreset(preset.filters)
+        }
         onApplySavedView={(view) => applyPreset(view.filter_json)}
       />
 
@@ -311,6 +332,16 @@ export function LeadListPage(): JSX.Element {
           <FilterSelect label="Consent" value={filters.consent_status ?? ''} onChange={(v) => setFilter('consent_status', v)} options={CONSENT_OPTIONS} />
           <FilterSelect label="KYC" value={filters.kyc_status ?? ''} onChange={(v) => setFilter('kyc_status', v)} options={KYC_OPTIONS} />
         </div>
+
+        <ActiveFilters
+          filters={filters}
+          q={q}
+          onRemove={(key) => setFilter(key, '')}
+          onClearSearch={() => {
+            setSearchInput('');
+            updateQuery((next) => next.delete('q'));
+          }}
+        />
       </Card>
 
       <DataTable
@@ -406,6 +437,75 @@ function Chip({
     >
       {children}
     </button>
+  );
+}
+
+const FILTER_LABELS: Readonly<Record<string, string>> = {
+  stage: 'Stage',
+  product_code: 'Product',
+  priority: 'Priority',
+  score_band: 'Score',
+  consent_status: 'Consent',
+  kyc_status: 'KYC',
+  sla_state: 'SLA',
+  owner_id: 'Owner',
+  branch_id: 'Branch',
+  team_id: 'Team',
+  partner: 'Partner',
+  is_hot: 'Hot',
+  date_from: 'From',
+  date_to: 'To',
+};
+
+function filterValueLabel(key: string, value: unknown): string {
+  if (key === 'is_hot') return 'Yes';
+  return humanise(String(value));
+}
+
+/** Removable chips for every active filter / search — a clear, one-click deselect. */
+function ActiveFilters({
+  filters,
+  q,
+  onRemove,
+  onClearSearch,
+}: {
+  filters: LeadListFilters;
+  q: string;
+  onRemove: (key: keyof LeadListFilters) => void;
+  onClearSearch: () => void;
+}): JSX.Element | null {
+  const entries = Object.entries(filters).filter(
+    ([, v]) => v !== undefined && v !== '' && v !== false,
+  );
+  if (entries.length === 0 && q.trim() === '') return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+      <span className="text-xs font-medium text-muted-foreground">Active:</span>
+      {q.trim() ? <FilterChip label={`Search: “${q.trim()}”`} onRemove={onClearSearch} /> : null}
+      {entries.map(([key, value]) => (
+        <FilterChip
+          key={key}
+          label={`${FILTER_LABELS[key] ?? key}: ${filterValueLabel(key, value)}`}
+          onRemove={() => onRemove(key as keyof LeadListFilters)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }): JSX.Element {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 py-1 pl-2.5 pr-1 text-xs font-medium text-primary">
+      {label}
+      <button
+        type="button"
+        aria-label={`Remove filter ${label}`}
+        onClick={onRemove}
+        className="rounded-full p-0.5 text-primary/70 transition-colors hover:bg-primary/20 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <X className="h-3 w-3" aria-hidden />
+      </button>
+    </span>
   );
 }
 

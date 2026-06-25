@@ -150,7 +150,8 @@ export function TemplateListPage(): ReactElement {
   return (
     <div className="space-y-4 p-6">
       <PageHeader
-        breadcrumbs={[{ label: 'Configuration', to: '/admin' }, { label: 'Templates' }]}
+        backTo="/admin"
+        backLabel="Configuration"
         title="Communication Templates"
         description="SMS / email / WhatsApp message templates (versioned, consent-gated)."
         actions={<Button onClick={() => setShowCreate(true)}>New Template</Button>}

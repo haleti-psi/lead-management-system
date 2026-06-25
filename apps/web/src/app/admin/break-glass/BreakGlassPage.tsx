@@ -125,7 +125,8 @@ export function BreakGlassPage(): JSX.Element {
   return (
     <div className="space-y-4">
       <PageHeader
-        breadcrumbs={[{ label: 'Configuration', to: '/admin' }, { label: 'Break-Glass' }]}
+        backTo="/admin"
+        backLabel="Configuration"
         title="Break-Glass Access"
         description="Time-boxed emergency elevated access — every grant needs four-eyes approval."
         actions={

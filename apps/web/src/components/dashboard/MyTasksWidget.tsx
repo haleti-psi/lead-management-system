@@ -1,6 +1,19 @@
 import type { ReactElement } from 'react';
 import { Link } from 'react-router-dom';
-import { ClipboardList } from 'lucide-react';
+import {
+  CheckCircle2,
+  ClipboardList,
+  FileText,
+  MapPin,
+  Phone,
+  PhoneCall,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
+import { formatDistanceToNowStrict } from 'date-fns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -18,8 +31,8 @@ import { cn } from '@/lib/utils';
 
 /**
  * FR-053 — My tasks widget: open/overdue tasks for the current user (top 20 by
- * due_at), shown as a compact table. "View all" links to the task list with the
- * open filter. Hidden for HEAD role (no individual task view per visibility matrix).
+ * due_at). Each row shows a task-type icon, a priority badge and a relative,
+ * colour-coded due time (overdue in red). Hidden for HEAD role.
  */
 export interface MyTasksWidgetProps {
   rows: TaskRow[] | null;
@@ -28,10 +41,30 @@ export interface MyTasksWidgetProps {
   onRetry?: () => void;
 }
 
-function formatDueAt(isoString: string): string {
+/** Task type → icon (falls back to a generic clipboard). */
+const TYPE_ICON: Readonly<Record<string, LucideIcon>> = {
+  call: Phone,
+  callback: PhoneCall,
+  visit: MapPin,
+  doc_request: FileText,
+  kyc_appt: ShieldCheck,
+  dealer_followup: Users,
+  approval: CheckCircle2,
+  handoff_retry: RefreshCw,
+  nurture: Sparkles,
+};
+
+/** Priority → badge classes (semantic, AA in both themes). */
+const PRIORITY_BADGE: Readonly<Record<string, string>> = {
+  high: 'bg-destructive/10 text-destructive',
+  medium: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  low: 'bg-muted text-muted-foreground',
+};
+
+function formatDueAbsolute(isoString: string): string {
   try {
     return new Intl.DateTimeFormat('en-IN', {
-      dateStyle: 'short',
+      dateStyle: 'medium',
       timeStyle: 'short',
       timeZone: 'Asia/Kolkata',
     }).format(new Date(isoString));
@@ -40,12 +73,11 @@ function formatDueAt(isoString: string): string {
   }
 }
 
-/** Priority → indicator dot colour (semantic). */
-const PRIORITY_DOT: Readonly<Record<string, string>> = {
-  high: 'bg-destructive',
-  medium: 'bg-warning',
-  low: 'bg-muted-foreground/40',
-};
+function dueRelative(isoString: string): { text: string; overdue: boolean } {
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return { text: isoString, overdue: false };
+  return { text: formatDistanceToNowStrict(d, { addSuffix: true }), overdue: d.getTime() < Date.now() };
+}
 
 export function MyTasksWidget({
   rows,
@@ -87,29 +119,46 @@ export function MyTasksWidget({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={row.task_id}>
-                    <TableCell>
-                      <span className="flex items-center gap-2">
+                {rows.map((row) => {
+                  const Icon = TYPE_ICON[row.type] ?? ClipboardList;
+                  const due = dueRelative(row.due_at);
+                  return (
+                    <TableRow key={row.task_id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
+                            aria-hidden
+                          >
+                            <Icon className="h-3.5 w-3.5" />
+                          </span>
+                          <span className="font-medium capitalize">{row.type.replaceAll('_', ' ')}</span>
+                          <span
+                            className={cn(
+                              'rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                              PRIORITY_BADGE[row.priority] ?? PRIORITY_BADGE.low,
+                            )}
+                          >
+                            {row.priority}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {row.lead_code}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right text-xs tabular-nums">
                         <span
                           className={cn(
-                            'h-1.5 w-1.5 shrink-0 rounded-full',
-                            PRIORITY_DOT[row.priority] ?? 'bg-muted-foreground/40',
+                            due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground',
                           )}
-                          aria-hidden
-                        />
-                        <span className="font-medium capitalize">{row.type.replaceAll('_', ' ')}</span>
-                        <span className="sr-only">{row.priority} priority</span>
-                      </span>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {row.lead_code}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground">
-                      {formatDueAt(row.due_at)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          title={formatDueAbsolute(row.due_at)}
+                        >
+                          {due.text}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
