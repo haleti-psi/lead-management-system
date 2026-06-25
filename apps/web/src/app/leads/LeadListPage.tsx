@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Flame, Save, Search, X } from 'lucide-react';
+import { Bookmark, Flame, Save, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -182,6 +182,10 @@ export function LeadListPage(): JSX.Element {
   const queues: QueuePreset[] = myLeadsPreset ? [myLeadsPreset, ...BUILTIN_QUEUES] : [...BUILTIN_QUEUES];
 
   const activeQueueId = matchActiveQueue(queues, filters);
+  const savedViews = savedViewsQuery.data?.data ?? [];
+  const activeSavedViewId =
+    savedViews.find((v) => normFilters(v.filter_json) === normFilters(filters))?.saved_view_id ??
+    null;
 
   const columns: DataTableColumn<LeadListItem>[] = [
     {
@@ -285,11 +289,14 @@ export function LeadListPage(): JSX.Element {
       <SavedViewChips
         queues={queues}
         activeQueueId={activeQueueId}
-        savedViews={savedViewsQuery.data?.data ?? []}
+        savedViews={savedViews}
+        activeSavedViewId={activeSavedViewId}
         onApplyQueue={(preset) =>
           activeQueueId === preset.id ? clearAll() : applyPreset(preset.filters)
         }
-        onApplySavedView={(view) => applyPreset(view.filter_json)}
+        onApplySavedView={(view) =>
+          activeSavedViewId === view.saved_view_id ? clearAll() : applyPreset(view.filter_json)
+        }
       />
 
       {/* Search + filters panel */}
@@ -378,24 +385,41 @@ export function LeadListPage(): JSX.Element {
   );
 }
 
+/** Normalise a filter set to a comparable string (order-independent). */
+function normFilters(f: LeadListFilters): string {
+  return JSON.stringify(
+    Object.entries(f)
+      .filter(([, v]) => v !== undefined && v !== '')
+      .sort(),
+  );
+}
+
 /** Find which queue (if any) the current filters exactly match (highlights the chip). */
 function matchActiveQueue(queues: QueuePreset[], filters: LeadListFilters): string | null {
-  const norm = (f: LeadListFilters): string =>
-    JSON.stringify(Object.entries(f).filter(([, v]) => v !== undefined && v !== '').sort());
-  const current = norm(filters);
-  return queues.find((queue) => norm(queue.filters) === current)?.id ?? null;
+  const current = normFilters(filters);
+  return queues.find((queue) => normFilters(queue.filters) === current)?.id ?? null;
+}
+
+/** Short human description of a saved view's filters (for the chip tooltip). */
+function describeView(filterJson: LeadListFilters): string {
+  const parts = Object.entries(filterJson)
+    .filter(([, v]) => v !== undefined && v !== '' && v !== false)
+    .map(([k, v]) => `${FILTER_LABELS[k] ?? k}: ${filterValueLabel(k, v)}`);
+  return parts.length > 0 ? parts.join(', ') : 'all leads in your scope';
 }
 
 function SavedViewChips({
   queues,
   activeQueueId,
   savedViews,
+  activeSavedViewId,
   onApplyQueue,
   onApplySavedView,
 }: {
   queues: QueuePreset[];
   activeQueueId: string | null;
   savedViews: SavedView[];
+  activeSavedViewId: string | null;
   onApplyQueue: (preset: QueuePreset) => void;
   onApplySavedView: (view: SavedView) => void;
 }): JSX.Element {
@@ -407,7 +431,13 @@ function SavedViewChips({
         </Chip>
       ))}
       {savedViews.map((view) => (
-        <Chip key={view.saved_view_id} onClick={() => onApplySavedView(view)}>
+        <Chip
+          key={view.saved_view_id}
+          active={activeSavedViewId === view.saved_view_id}
+          title={`Saved view · ${describeView(view.filter_json)} · click again to clear`}
+          onClick={() => onApplySavedView(view)}
+        >
+          <Bookmark className="h-3 w-3" aria-hidden />
           {view.name}
         </Chip>
       ))}
@@ -418,22 +448,26 @@ function SavedViewChips({
 function Chip({
   children,
   active = false,
+  title,
   onClick,
 }: {
   children: React.ReactNode;
   active?: boolean;
+  title?: string;
   onClick: () => void;
 }): JSX.Element {
   return (
     <button
       type="button"
       aria-pressed={active}
+      title={title}
       onClick={onClick}
-      className={
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         active
-          ? 'rounded-full border border-primary bg-primary px-3 py-1 text-xs font-medium text-primary-foreground'
-          : 'rounded-full border border-input bg-background px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-      }
+          ? 'border-primary bg-primary text-primary-foreground'
+          : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+      )}
     >
       {children}
     </button>
