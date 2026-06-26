@@ -2,6 +2,7 @@
 **/dist
 **/build
 **/coverage
+**/*.tsbuildinfo
 .git
 .gitignore
 .env
