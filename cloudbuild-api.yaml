@@ -1,0 +1,117 @@
+# Build → migrate (Flyway via Cloud SQL Auth Proxy) → fail-closed canary → smoke /health → promote.
+# Mirrors PS-WMS's cloudbuild-api.yaml (no-traffic candidate + readiness gate) with a Flyway
+# migrate step that applies docs/data-model/migrations before the new revision takes traffic.
+# Image → gcr.io/$PROJECT_ID/lms-api. Invoked by .github/workflows/deploy.yml.
+substitutions:
+  _TAG: 'latest'
+  _REGION: 'asia-southeast1'
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/lms-db-password/versions/latest
+      env: 'FLYWAY_PASSWORD'
+
+steps:
+  # 1) Build the API image (context = repo root)
+  - name: 'gcr.io/cloud-builders/docker'
+    id: build
+    args: ['build', '-f', 'apps/api/Dockerfile',
+           '-t', 'gcr.io/$PROJECT_ID/lms-api:${_TAG}',
+           '-t', 'gcr.io/$PROJECT_ID/lms-api:latest', '.']
+
+  # 2) Push to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: push
+    waitFor: ['build']
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/lms-api']
+
+  # 3) Start the Cloud SQL Auth Proxy as a detached container on the `cloudbuild`
+  #    network so the Flyway step can reach the DB at csql-proxy:5432 (no public IP).
+  - name: 'gcr.io/cloud-builders/docker'
+    id: start-proxy
+    args:
+      - 'run'
+      - '-d'
+      - '--name=csql-proxy'
+      - '--network=cloudbuild'
+      - 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest'
+      - '--address=0.0.0.0'
+      - '--port=5432'
+      - 'wealthmanagement-491511:asia-southeast1:wealth-management'
+
+  # 4) Apply Flyway migrations BEFORE the new revision takes traffic. A failure here
+  #    aborts the build → no deploy (mirrors WMS's migrate-before-traffic policy).
+  - name: 'flyway/flyway:10-alpine'
+    id: migrate
+    waitFor: ['start-proxy']
+    secretEnv: ['FLYWAY_PASSWORD']
+    args:
+      - '-url=jdbc:postgresql://csql-proxy:5432/lms'
+      - '-user=lms_app'
+      - '-locations=filesystem:docs/data-model/migrations'
+      - '-connectRetries=20'
+      - '-baselineOnMigrate=false'
+      - 'migrate'
+
+  # 5) Deploy a NO-TRAFFIC candidate revision (fail-closed); the smoke step promotes it.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: deploy-candidate
+    waitFor: ['push', 'migrate']
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'lms-api'
+      - '--image=gcr.io/$PROJECT_ID/lms-api:${_TAG}'
+      - '--region=${_REGION}'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--cpu=2'
+      - '--memory=2Gi'
+      - '--min-instances=1'
+      - '--max-instances=10'
+      - '--port=8080'
+      - '--timeout=300'
+      - '--no-cpu-throttling'
+      - '--add-cloudsql-instances=wealthmanagement-491511:asia-southeast1:wealth-management'
+      - '--vpc-connector=ps-wms-connector-asia'
+      - '--vpc-egress=private-ranges-only'
+      - '--no-traffic'
+      - '--tag=cand'
+      - '--set-secrets=DATABASE_URL=lms-database-url:latest,JWT_ACCESS_SECRET=lms-jwt-access-secret:latest,JWT_REFRESH_SECRET=lms-jwt-refresh-secret:latest,REDIS_URL=lms-redis-url:latest'
+      - '--set-env-vars'
+      - >-
+        ^||^NODE_ENV=production||GCP_PROJECT=wealthmanagement-491511||GCP_REGION=asia-southeast1||CLOUD_TASKS_LOCATION=asia-southeast1||CLOUD_TASKS_QUEUE=lms-integration||PUBSUB_TOPIC_EVENTS=lms-domain-events||GCS_BUCKET=wealthmanagement-491511-lms-docs||TOKENIZATION_KMS_KEY=projects/wealthmanagement-491511/locations/asia-southeast1/keyRings/lms/cryptoKeys/pii||ALLOWED_ORIGINS=https://lms-91358942094.asia-southeast1.run.app||APP_BASE_URL=https://lms-91358942094.asia-southeast1.run.app||LOS_MOCK=true
+
+  # 6) Smoke-test the candidate's /health, then promote to 100% (or fail, leaving live traffic untouched).
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: smoke-and-promote
+    waitFor: ['deploy-candidate']
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        CAND_URL=$$(gcloud run services describe lms-api --region ${_REGION} --platform managed \
+          --format='json(status.traffic)' \
+          | python3 -c "import json,sys; t=json.load(sys.stdin).get('status',{}).get('traffic',[]); print(next((x['url'] for x in t if x.get('tag')=='cand'),''))")
+        if [ -z "$$CAND_URL" ]; then echo 'ERROR: candidate URL not found'; exit 1; fi
+        echo "Candidate URL: $$CAND_URL"
+        CODE=000
+        for i in $$(seq 1 20); do
+          CODE=$$(curl -s -o /dev/null -w '%{http_code}' "$$CAND_URL/health" || echo 000)
+          echo "health attempt $$i -> $$CODE"
+          [ "$$CODE" = "200" ] && break
+          sleep 5
+        done
+        if [ "$$CODE" != "200" ]; then
+          echo "SMOKE FAILED ($$CODE): candidate NOT promoted; live traffic unchanged."
+          exit 1
+        fi
+        echo 'Smoke passed — promoting candidate to 100% traffic.'
+        gcloud run services update-traffic lms-api --region ${_REGION} --platform managed --to-latest --quiet
+
+images:
+  - 'gcr.io/$PROJECT_ID/lms-api:${_TAG}'
+
+timeout: 1800s

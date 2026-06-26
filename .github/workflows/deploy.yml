@@ -1,0 +1,75 @@
+name: CI/CD Pipeline
+
+# Mirrors PS-WMS: tests on every PR; build + deploy on merge (push) to master.
+# Deploy is gated on the GCP_SA_KEY secret — until it's set, the workflow runs
+# but skips the deploy (so merging is always safe).
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  GCP_REGION: asia-southeast1
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Test & build gate ────────────────────────────────────────────────
+  test:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      # `build` runs the TS compiler for shared + api + web — a reliable gate
+      # that fails the PR on any type error before a deploy can happen.
+      - name: Build (type-checks shared, api, web)
+        run: npm run build
+
+  # ── Build image + migrate + deploy each service via its Cloud Build config ──
+  deploy:
+    name: Deploy lms-${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    environment:
+      name: production
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, web]
+    env:
+      # GitHub Actions blocks secrets.* inside step-level `if:` — mirror to env.
+      HAS_GCP_KEY: ${{ secrets.GCP_SA_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        if: env.HAS_GCP_KEY == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        if: env.HAS_GCP_KEY == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build + migrate + deploy lms-${{ matrix.service }}
+        if: env.HAS_GCP_KEY == 'true'
+        run: |
+          gcloud builds submit \
+            --config="cloudbuild-${{ matrix.service }}.yaml" \
+            --substitutions="_TAG=${{ github.sha }},_REGION=${{ env.GCP_REGION }}" \
+            --project="${{ secrets.GCP_PROJECT_ID }}"
+
+      - name: Skip notice
+        if: env.HAS_GCP_KEY != 'true'
+        run: |
+          echo "::warning::GCP_SA_KEY secret not set — lms-${{ matrix.service }} not deployed."
+          echo "::warning::Add GCP_SA_KEY + GCP_PROJECT_ID repository secrets to enable auto-deploy."

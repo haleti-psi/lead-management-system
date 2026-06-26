@@ -1,0 +1,29 @@
+# nginx config TEMPLATE — rendered at container start by docker-entrypoint.sh.
+# Only ${API_BACKEND_URL} is substituted; nginx's own $vars are left intact.
+server {
+  listen 8080;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  # Proxy API calls to the lms-api Cloud Run service (same-origin → no CORS).
+  # The web app calls relative /api/v1 (apiClient.ts), so this forwards them on.
+  location /api/ {
+    proxy_pass ${API_BACKEND_URL};
+    proxy_ssl_server_name on;                 # Cloud Run requires SNI
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+
+  # SPA client-side routing
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+
+  # immutable hashed assets
+  location /assets/ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+  }
+}

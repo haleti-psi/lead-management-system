@@ -1,0 +1,48 @@
+# Build + deploy the LMS web frontend onto the existing `lms` Cloud Run service.
+# Mirrors the PS-WMS frontend deploy. Image → gcr.io/$PROJECT_ID/lms-web.
+# Invoked by .github/workflows/deploy.yml (and runnable manually via `gcloud builds submit`).
+substitutions:
+  _TAG: 'latest'
+  _REGION: 'asia-southeast1'
+  _API_BACKEND_URL: 'https://lms-api-91358942094.asia-southeast1.run.app'
+
+steps:
+  # Build the web image (context = repo root)
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'apps/web/Dockerfile',
+           '-t', 'gcr.io/$PROJECT_ID/lms-web:${_TAG}',
+           '-t', 'gcr.io/$PROJECT_ID/lms-web:latest', '.']
+
+  # Push to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/lms-web']
+
+  # Deploy to the existing `lms` Cloud Run service
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'lms'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/lms-web:${_TAG}'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '8080'
+      - '--cpu'
+      - '1'
+      - '--memory'
+      - '512Mi'
+      - '--min-instances'
+      - '1'
+      - '--max-instances'
+      - '10'
+      - '--set-env-vars'
+      - 'API_BACKEND_URL=${_API_BACKEND_URL}'
+
+images:
+  - 'gcr.io/$PROJECT_ID/lms-web:${_TAG}'
