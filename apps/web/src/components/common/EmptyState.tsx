@@ -15,11 +15,18 @@ export function EmptyState({
   action?: ReactNode;
 }): JSX.Element {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-12 text-center" role="status">
-      <div className="text-muted-foreground">{icon ?? <Inbox className="h-8 w-8" aria-hidden />}</div>
-      <p className="font-medium">{title}</p>
-      {message ? <p className="max-w-sm text-sm text-muted-foreground">{message}</p> : null}
-      {action ? <div className="mt-2">{action}</div> : null}
+    <div
+      className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed bg-card/40 px-6 py-12 text-center"
+      role="status"
+    >
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        {icon ?? <Inbox className="h-6 w-6" aria-hidden />}
+      </span>
+      <div className="space-y-1">
+        <p className="font-semibold text-foreground">{title}</p>
+        {message ? <p className="mx-auto max-w-sm text-sm text-muted-foreground">{message}</p> : null}
+      </div>
+      {action ? <div className="mt-1">{action}</div> : null}
     </div>
   );
 }

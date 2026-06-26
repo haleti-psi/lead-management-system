@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Flame, Save, Search, X } from 'lucide-react';
+import { Bookmark, Flame, Save, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -70,6 +70,18 @@ function readFilters(sp: URLSearchParams): LeadListFilters {
 /** Are any filters / search currently active? (drives the "Clear" affordance.) */
 function hasActiveQuery(filters: LeadListFilters, q: string): boolean {
   return q.trim().length > 0 || Object.values(filters).some((v) => v !== undefined && v !== '');
+}
+
+/** Lead score (0–100) band label + colour — Hot ≥75, Warm 50–74, Cold <50. */
+function scoreBandLabel(score: number): string {
+  if (score >= 75) return 'Hot';
+  if (score >= 50) return 'Warm';
+  return 'Cold';
+}
+function scoreColor(score: number): string {
+  if (score >= 75) return 'text-orange-600 dark:text-orange-400';
+  if (score >= 50) return 'text-amber-600 dark:text-amber-400';
+  return 'text-foreground';
 }
 
 /**
@@ -170,6 +182,10 @@ export function LeadListPage(): JSX.Element {
   const queues: QueuePreset[] = myLeadsPreset ? [myLeadsPreset, ...BUILTIN_QUEUES] : [...BUILTIN_QUEUES];
 
   const activeQueueId = matchActiveQueue(queues, filters);
+  const savedViews = savedViewsQuery.data?.data ?? [];
+  const activeSavedViewId =
+    savedViews.find((v) => normFilters(v.filter_json) === normFilters(filters))?.saved_view_id ??
+    null;
 
   const columns: DataTableColumn<LeadListItem>[] = [
     {
@@ -211,11 +227,18 @@ export function LeadListPage(): JSX.Element {
       sortable: true,
       cell: (l) =>
         l.score == null ? (
-          <span className="text-muted-foreground">—</span>
+          <span className="text-muted-foreground" title="Not scored yet">
+            —
+          </span>
         ) : (
-          <span className="inline-flex items-center gap-1 tabular-nums">
-            {l.is_hot ? <Flame className="h-3.5 w-3.5 text-orange-500" aria-label="Hot lead" /> : null}
-            {l.score}
+          <span
+            className="inline-flex items-center gap-1.5 tabular-nums"
+            title={`Lead score ${l.score}/100 · ${scoreBandLabel(l.score)}${l.is_hot ? ' · flagged Hot' : ''}`}
+          >
+            {l.is_hot ? (
+              <Flame className="h-3.5 w-3.5 shrink-0 text-orange-500" aria-label="Hot lead" />
+            ) : null}
+            <span className={cn('font-medium', scoreColor(l.score))}>{l.score}</span>
           </span>
         ),
     },
@@ -266,9 +289,14 @@ export function LeadListPage(): JSX.Element {
       <SavedViewChips
         queues={queues}
         activeQueueId={activeQueueId}
-        savedViews={savedViewsQuery.data?.data ?? []}
-        onApplyQueue={(preset) => applyPreset(preset.filters)}
-        onApplySavedView={(view) => applyPreset(view.filter_json)}
+        savedViews={savedViews}
+        activeSavedViewId={activeSavedViewId}
+        onApplyQueue={(preset) =>
+          activeQueueId === preset.id ? clearAll() : applyPreset(preset.filters)
+        }
+        onApplySavedView={(view) =>
+          activeSavedViewId === view.saved_view_id ? clearAll() : applyPreset(view.filter_json)
+        }
       />
 
       {/* Search + filters panel */}
@@ -311,6 +339,16 @@ export function LeadListPage(): JSX.Element {
           <FilterSelect label="Consent" value={filters.consent_status ?? ''} onChange={(v) => setFilter('consent_status', v)} options={CONSENT_OPTIONS} />
           <FilterSelect label="KYC" value={filters.kyc_status ?? ''} onChange={(v) => setFilter('kyc_status', v)} options={KYC_OPTIONS} />
         </div>
+
+        <ActiveFilters
+          filters={filters}
+          q={q}
+          onRemove={(key) => setFilter(key, '')}
+          onClearSearch={() => {
+            setSearchInput('');
+            updateQuery((next) => next.delete('q'));
+          }}
+        />
       </Card>
 
       <DataTable
@@ -347,24 +385,41 @@ export function LeadListPage(): JSX.Element {
   );
 }
 
+/** Normalise a filter set to a comparable string (order-independent). */
+function normFilters(f: LeadListFilters): string {
+  return JSON.stringify(
+    Object.entries(f)
+      .filter(([, v]) => v !== undefined && v !== '')
+      .sort(),
+  );
+}
+
 /** Find which queue (if any) the current filters exactly match (highlights the chip). */
 function matchActiveQueue(queues: QueuePreset[], filters: LeadListFilters): string | null {
-  const norm = (f: LeadListFilters): string =>
-    JSON.stringify(Object.entries(f).filter(([, v]) => v !== undefined && v !== '').sort());
-  const current = norm(filters);
-  return queues.find((queue) => norm(queue.filters) === current)?.id ?? null;
+  const current = normFilters(filters);
+  return queues.find((queue) => normFilters(queue.filters) === current)?.id ?? null;
+}
+
+/** Short human description of a saved view's filters (for the chip tooltip). */
+function describeView(filterJson: LeadListFilters): string {
+  const parts = Object.entries(filterJson)
+    .filter(([, v]) => v !== undefined && v !== '' && v !== false)
+    .map(([k, v]) => `${FILTER_LABELS[k] ?? k}: ${filterValueLabel(k, v)}`);
+  return parts.length > 0 ? parts.join(', ') : 'all leads in your scope';
 }
 
 function SavedViewChips({
   queues,
   activeQueueId,
   savedViews,
+  activeSavedViewId,
   onApplyQueue,
   onApplySavedView,
 }: {
   queues: QueuePreset[];
   activeQueueId: string | null;
   savedViews: SavedView[];
+  activeSavedViewId: string | null;
   onApplyQueue: (preset: QueuePreset) => void;
   onApplySavedView: (view: SavedView) => void;
 }): JSX.Element {
@@ -376,7 +431,13 @@ function SavedViewChips({
         </Chip>
       ))}
       {savedViews.map((view) => (
-        <Chip key={view.saved_view_id} onClick={() => onApplySavedView(view)}>
+        <Chip
+          key={view.saved_view_id}
+          active={activeSavedViewId === view.saved_view_id}
+          title={`Saved view · ${describeView(view.filter_json)} · click again to clear`}
+          onClick={() => onApplySavedView(view)}
+        >
+          <Bookmark className="h-3 w-3" aria-hidden />
           {view.name}
         </Chip>
       ))}
@@ -387,25 +448,98 @@ function SavedViewChips({
 function Chip({
   children,
   active = false,
+  title,
   onClick,
 }: {
   children: React.ReactNode;
   active?: boolean;
+  title?: string;
   onClick: () => void;
 }): JSX.Element {
   return (
     <button
       type="button"
       aria-pressed={active}
+      title={title}
       onClick={onClick}
-      className={
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         active
-          ? 'rounded-full border border-primary bg-primary px-3 py-1 text-xs font-medium text-primary-foreground'
-          : 'rounded-full border border-input bg-background px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-      }
+          ? 'border-primary bg-primary text-primary-foreground'
+          : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+      )}
     >
       {children}
     </button>
+  );
+}
+
+const FILTER_LABELS: Readonly<Record<string, string>> = {
+  stage: 'Stage',
+  product_code: 'Product',
+  priority: 'Priority',
+  score_band: 'Score',
+  consent_status: 'Consent',
+  kyc_status: 'KYC',
+  sla_state: 'SLA',
+  owner_id: 'Owner',
+  branch_id: 'Branch',
+  team_id: 'Team',
+  partner: 'Partner',
+  is_hot: 'Hot',
+  date_from: 'From',
+  date_to: 'To',
+};
+
+function filterValueLabel(key: string, value: unknown): string {
+  if (key === 'is_hot') return 'Yes';
+  return humanise(String(value));
+}
+
+/** Removable chips for every active filter / search — a clear, one-click deselect. */
+function ActiveFilters({
+  filters,
+  q,
+  onRemove,
+  onClearSearch,
+}: {
+  filters: LeadListFilters;
+  q: string;
+  onRemove: (key: keyof LeadListFilters) => void;
+  onClearSearch: () => void;
+}): JSX.Element | null {
+  const entries = Object.entries(filters).filter(
+    ([, v]) => v !== undefined && v !== '' && v !== false,
+  );
+  if (entries.length === 0 && q.trim() === '') return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+      <span className="text-xs font-medium text-muted-foreground">Active:</span>
+      {q.trim() ? <FilterChip label={`Search: “${q.trim()}”`} onRemove={onClearSearch} /> : null}
+      {entries.map(([key, value]) => (
+        <FilterChip
+          key={key}
+          label={`${FILTER_LABELS[key] ?? key}: ${filterValueLabel(key, value)}`}
+          onRemove={() => onRemove(key as keyof LeadListFilters)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }): JSX.Element {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 py-1 pl-2.5 pr-1 text-xs font-medium text-primary">
+      {label}
+      <button
+        type="button"
+        aria-label={`Remove filter ${label}`}
+        onClick={onRemove}
+        className="rounded-full p-0.5 text-primary/70 transition-colors hover:bg-primary/20 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <X className="h-3 w-3" aria-hidden />
+      </button>
+    </span>
   );
 }
 

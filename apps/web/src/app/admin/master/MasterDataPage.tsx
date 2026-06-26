@@ -89,7 +89,8 @@ export function MasterDataPage(): JSX.Element {
   return (
     <div className="space-y-4">
       <PageHeader
-        breadcrumbs={[{ label: 'Configuration', to: '/admin' }, { label: 'Master Data' }]}
+        backTo="/admin"
+        backLabel="Configuration"
         title="Master Data"
         description="Branches, products, sources and other reference lists."
         actions={

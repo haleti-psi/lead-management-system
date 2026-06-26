@@ -55,7 +55,7 @@ function Bar({
     <li className="flex items-center gap-3 text-sm">
       <span className="w-28 shrink-0 truncate text-muted-foreground">{label}</span>
       <div className="relative h-6 flex-1 overflow-hidden rounded bg-muted">
-        <div className="h-full rounded bg-primary/25" style={{ width: `${Math.max(2, pctOfMax)}%` }} />
+        <div className="h-full rounded bg-primary" style={{ width: `${Math.max(2, pctOfMax)}%` }} />
       </div>
       <span className="w-12 shrink-0 text-right font-medium tabular-nums">{value}</span>
       {badge !== undefined ? (

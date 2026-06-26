@@ -1,12 +1,12 @@
 # Deployment config consumed by the deploy-app / local-deployment skills.
-# Architecture-known values are filled in. Values marked TODO are deployment-account
-# specifics — fill them before the first cloud deploy (or run /project-config-init).
+# RESOLVED for deployment into the shared `wealthmanagement-491511` project,
+# mirroring PS-WMS (same region, reused VPC connector / Redis / Cloud SQL instance).
 # Secrets live in Secret Manager; only their NAMES appear here, never values.
 
 project_name: lead-management-system
 project_type: monorepo
 
-# Friendly group → service dirs (deploy a whole stack with one target)
+# Friendly group → service dirs (deploy the whole stack with one target)
 app_groups:
   lms: [apps/api, apps/web]
 
@@ -15,54 +15,79 @@ services:
     type: api
     framework: nestjs
     dockerfile: apps/api/Dockerfile
-    cloud_run_service: lms-api
+    cloud_run_service: lms-api            # NEW backend service
     port: 8080
     gcp_project: default
     region: default
     custom_domain: null
     nginx_proxy: false
-    cloud_sql_instance: lms-pg            # → gcloud.cloud_sql.instances[].name
-    secrets:                              # ENV_NAME: secret-manager-name (TODO: confirm names)
+    cloud_sql_instance: wealth-management # REUSE the shared WMS instance (new `lms` DB on it)
+    # Cloud Run sizing — mirrors ps-wms-api
+    min_instances: 1
+    max_instances: 10
+    cpu: '2'
+    memory: 2Gi
+    vpc_connector: ps-wms-connector-asia  # REUSE — reaches Memorystore over the VPC
+    vpc_egress: private-ranges-only
+    secrets:                              # ENV_NAME: secret-manager-name (lms-* — namespaced; WMS owns the bare names)
       DATABASE_URL: lms-database-url
       JWT_ACCESS_SECRET: lms-jwt-access-secret
       JWT_REFRESH_SECRET: lms-jwt-refresh-secret
-      TOKENIZATION_KMS_KEY: lms-tokenization-kms-key
+      REDIS_URL: lms-redis-url
     env_vars:
       NODE_ENV: production
-      GCP_REGION: asia-south1
-      CLOUD_TASKS_LOCATION: asia-south1
+      GCP_PROJECT: wealthmanagement-491511
+      GCP_REGION: asia-southeast1
+      CLOUD_TASKS_LOCATION: asia-southeast1
+      CLOUD_TASKS_QUEUE: lms-integration
+      PUBSUB_TOPIC_EVENTS: lms-domain-events
+      GCS_BUCKET: wealthmanagement-491511-lms-docs
+      TOKENIZATION_KMS_KEY: projects/wealthmanagement-491511/locations/asia-southeast1/keyRings/lms/cryptoKeys/pii
+      # web is same-origin via nginx proxy, but the API still validates these:
+      ALLOWED_ORIGINS: https://lms-91358942094.asia-southeast1.run.app
+      APP_BASE_URL: https://lms-91358942094.asia-southeast1.run.app
+      LOS_MOCK: 'true'                    # mock external adapters (mirror WMS provider=MOCK)
 
   - app_dir: apps/web
     type: ui
     framework: vite-react
     dockerfile: apps/web/Dockerfile
-    cloud_run_service: lms-web
+    cloud_run_service: lms                # REUSE the existing placeholder service + its URL
     port: 8080
     gcp_project: default
     region: default
     custom_domain: null
-    nginx_proxy: false
+    nginx_proxy: true                     # nginx proxies /api → lms-api (WMS pattern; web calls relative /api/v1)
     cloud_sql_instance: null
+    min_instances: 1
+    max_instances: 10
+    cpu: '1'
+    memory: 512Mi
     secrets: {}
     env_vars:
-      NODE_ENV: production
+      # Injected into the nginx config at container start (see apps/web/docker-entrypoint.sh)
+      API_BACKEND_URL: https://lms-api-91358942094.asia-southeast1.run.app
 
 gcloud:
   projects:
-    default: TODO-gcp-project-id                       # gcloud config get-value project
-  region: asia-south1
+    default: wealthmanagement-491511                      # project number 91358942094
+  region: asia-southeast1
   artifact_registry:
-    default: TODO-asia-south1-docker.pkg.dev/PROJECT/lms   # region-docker.pkg.dev/project/repo
+    default: gcr.io/wealthmanagement-491511               # mirror WMS — images at gcr.io/$PROJECT/<service>
   cloud_sql:
     instances:
-      - name: lms-pg
-        connection_string: TODO-PROJECT:asia-south1:lms-pg
+      - name: wealth-management
+        connection_string: wealthmanagement-491511:asia-southeast1:wealth-management
   compute_service_account:
-    email: TODO-PROJECTNUMBER-compute@developer.gserviceaccount.com
+    email: 91358942094-compute@developer.gserviceaccount.com   # already has secretAccessor + cloudsql.client
   cloud_build:
-    gcs_staging: TODO-gs://PROJECT_cloudbuild/source
+    gcs_staging: gs://wealthmanagement-491511_cloudbuild/source
+  vpc_connector: ps-wms-connector-asia
+  # Reused Memorystore (Redis 7, default network) — LMS uses logical DB index 1 to avoid WMS key collisions:
+  #   REDIS_URL = redis://10.204.48.187:6379/1   (stored in secret lms-redis-url)
+  github_actions_service_account: github-actions-deployer@wealthmanagement-491511.iam.gserviceaccount.com
 
-# Seed/test credentials for deploy sanity checks (fill from seed data, never real creds)
+# Seed/test credentials — reuse the local demo seed (apps/api/_seed.cjs): bm / rm, password Demo@12345
 test_credentials:
-  username: null
-  password: null
+  username: bm
+  password: Demo@12345

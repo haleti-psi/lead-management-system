@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type ReactElement, type ReactNode } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Clock, Copy, Gauge, History, Package } from 'lucide-react';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -153,7 +154,10 @@ function ProductSourceCard({ lead }: { lead: Lead360Response }): ReactElement {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Product &amp; source</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Package className="h-4 w-4 text-muted-foreground" aria-hidden />
+          Product &amp; source
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         <Field label="Product">{productDetail?.productCode ?? <Muted>—</Muted>}</Field>
@@ -183,7 +187,10 @@ function StageTrackerCard({ history }: { history: Lead360Response['stageHistory'
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Stage history</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <History className="h-4 w-4 text-muted-foreground" aria-hidden />
+          Stage history
+        </CardTitle>
       </CardHeader>
       <CardContent>
         {history.length === 0 ? (
@@ -216,14 +223,33 @@ function ScoreCard({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Score</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Gauge className="h-4 w-4 text-muted-foreground" aria-hidden />
+          Score
+        </CardTitle>
       </CardHeader>
       <CardContent className="text-sm">
         {score === null ? (
           <EmptyState title="Not scored yet" />
         ) : (
           <>
-            <p className="text-2xl font-semibold">{score}</p>
+            <p className="flex items-baseline gap-2">
+              <span
+                className={cn(
+                  'text-2xl font-bold tabular-nums',
+                  score >= 75
+                    ? 'text-orange-600 dark:text-orange-400'
+                    : score >= 50
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-foreground',
+                )}
+              >
+                {score}
+              </span>
+              <span className="text-xs font-medium text-muted-foreground">
+                / 100 · {score >= 75 ? 'Hot' : score >= 50 ? 'Warm' : 'Cold'}
+              </span>
+            </p>
             {scoreReasons ? (
               <ul className="mt-2 space-y-1">
                 {Object.entries(scoreReasons).map(([factor, value]) => (
@@ -245,7 +271,10 @@ function SLACard({ lead }: { lead: Lead360Response }): ReactElement {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">SLA</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Clock className="h-4 w-4 text-muted-foreground" aria-hidden />
+          SLA
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         <Field label="First contact due">
@@ -268,7 +297,10 @@ function DuplicateMatchesList({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Open duplicate matches</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Copy className="h-4 w-4 text-muted-foreground" aria-hidden />
+          Open duplicate matches
+        </CardTitle>
       </CardHeader>
       <CardContent>
         {matches.length === 0 ? (

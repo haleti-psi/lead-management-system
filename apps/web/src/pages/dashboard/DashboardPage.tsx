@@ -2,20 +2,20 @@ import type { ReactElement } from 'react';
 
 import { useDashboard } from '@/hooks/use-dashboard';
 import { DashboardGrid } from '@/components/dashboard/DashboardGrid';
-import { PageHeader } from '@/components/layout/PageHeader';
+import { WelcomeBanner } from '@/components/dashboard/WelcomeBanner';
 
 /**
  * FR-053 — Dashboard home page. Fetches `GET /dashboard` via `useDashboard`
  * hook and passes data to `DashboardGrid`. All four states (loading, error,
- * empty, success) are handled in `DashboardGrid`. `PageHeader` is the shell
- * top bar's page title ("Home" / "Dashboard" per AppShell nav).
+ * empty, success) are handled in `DashboardGrid`. A personalised `WelcomeBanner`
+ * (presentation only) tops the page in both desktop and mobile views.
  */
 export function DashboardPage(): ReactElement {
   const { data, isLoading, isError, refetch } = useDashboard();
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Home" description="Your role-scoped overview" />
+      <WelcomeBanner />
       <DashboardGrid
         data={data}
         isLoading={isLoading}

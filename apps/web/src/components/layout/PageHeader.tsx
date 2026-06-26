@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link, useInRouterContext } from 'react-router-dom';
-import { ChevronRight } from 'lucide-react';
+import { ArrowLeft, ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
@@ -21,6 +21,10 @@ export interface PageHeaderProps {
   title: string;
   description?: string;
   breadcrumbs?: Breadcrumb[];
+  /** Optional back-arrow link shown above the title (preferred over breadcrumbs
+   * for drill-in sections, e.g. Configuration consoles). */
+  backTo?: string;
+  backLabel?: string;
   /** Right-aligned actions (buttons, badges) — wraps below the title on mobile. */
   actions?: ReactNode;
   className?: string;
@@ -30,14 +34,25 @@ export function PageHeader({
   title,
   description,
   breadcrumbs,
+  backTo,
+  backLabel,
   actions,
   className,
 }: PageHeaderProps): JSX.Element {
-  // Breadcrumb links need a Router; render them as links only when one is present
-  // (so a page rendered standalone — e.g. in a unit test — degrades to plain text).
+  // Router-dependent links render only when a Router is present (so a page
+  // rendered standalone — e.g. in a unit test — doesn't crash).
   const inRouter = useInRouterContext();
   return (
     <div className={cn(className)}>
+      {backTo && inRouter ? (
+        <Link
+          to={backTo}
+          className="mb-2 inline-flex items-center gap-1 rounded-sm text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          {backLabel ? `Back to ${backLabel}` : 'Back'}
+        </Link>
+      ) : null}
       {breadcrumbs && breadcrumbs.length > 0 ? (
         <nav aria-label="Breadcrumb" className="mb-2">
           <ol className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
