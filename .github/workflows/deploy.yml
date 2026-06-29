@@ -8,6 +8,7 @@ on:
     branches: [master, main]
   pull_request:
     branches: [master, main]
+  workflow_dispatch: {}   # manual "Run workflow" button in the Actions tab
 
 env:
   GCP_REGION: asia-southeast1
@@ -37,7 +38,7 @@ jobs:
     name: Deploy lms-${{ matrix.service }}
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     environment:
       name: production
     strategy:
