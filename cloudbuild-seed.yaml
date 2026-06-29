@@ -1,0 +1,40 @@
+# One-time seed of the cloud `lms` DB with demo login users (bm/rm) + roles/regions/branches.
+# Runs IN Cloud Build so it can read the DB password from Secret Manager (the build
+# service account has secretAccessor) and reach Cloud SQL via the Auth Proxy — no local
+# DB password needed. Reuses apps/api/_seed.cjs (idempotent: ON CONFLICT). Run with:
+#   gcloud builds submit --config=cloudbuild-seed.yaml --project wealthmanagement-491511 .
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/lms-db-password/versions/latest
+      env: 'DB_PASSWORD'
+
+steps:
+  # Cloud SQL Auth Proxy on the cloudbuild network (same pattern as the migrate step).
+  - name: 'gcr.io/cloud-builders/docker'
+    id: start-proxy
+    args:
+      - 'run'
+      - '-d'
+      - '--name=csql-proxy'
+      - '--network=cloudbuild'
+      - 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest'
+      - '--address=0.0.0.0'
+      - '--port=5432'
+      - 'wealthmanagement-491511:asia-southeast1:wealth-management'
+
+  # Run the seed using our own lms-api image (it already has node + pg + argon2 at
+  # /repo/node_modules); CWD=/workspace so _seed.cjs finds docs/contracts/auth-matrix.json.
+  - name: 'gcr.io/$PROJECT_ID/lms-api:latest'
+    id: seed
+    waitFor: ['start-proxy']
+    secretEnv: ['DB_PASSWORD']
+    entrypoint: sh
+    args:
+      - '-c'
+      - |
+        set -e
+        export SEED_DATABASE_URL="postgresql://lms_app:$${DB_PASSWORD}@csql-proxy:5432/lms"
+        cd /workspace
+        NODE_PATH=/repo/node_modules node apps/api/_seed.cjs
+
+timeout: 600s
