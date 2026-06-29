@@ -64,11 +64,27 @@ jobs:
       - name: Build + migrate + deploy lms-${{ matrix.service }}
         if: env.HAS_GCP_KEY == 'true'
         run: |
-          gcloud builds submit \
+          set -e
+          # Submit async + poll status. The deployer SA can't read Cloud Build's
+          # default logs bucket (it lives outside the project), so streaming logs
+          # fails; polling builds.describe needs only cloudbuild.builds.get, which
+          # the SA has. Full logs remain in the Cloud Build console (link below).
+          BUILD_ID=$(gcloud builds submit \
             --config="cloudbuild-${{ matrix.service }}.yaml" \
             --substitutions="_TAG=${{ github.sha }},_REGION=${{ env.GCP_REGION }}" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
-            --suppress-logs
+            --async --format='value(id)')
+          echo "Submitted build: $BUILD_ID"
+          echo "Logs: https://console.cloud.google.com/cloud-build/builds/$BUILD_ID?project=${{ secrets.GCP_PROJECT_ID }}"
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --project="${{ secrets.GCP_PROJECT_ID }}" --format='value(status)')
+            echo "build status: $STATUS"
+            case "$STATUS" in
+              SUCCESS) echo "Build succeeded."; break ;;
+              FAILURE|TIMEOUT|CANCELLED|EXPIRED|INTERNAL_ERROR) echo "Build ended: $STATUS"; exit 1 ;;
+            esac
+            sleep 10
+          done
 
       - name: Skip notice
         if: env.HAS_GCP_KEY != 'true'
