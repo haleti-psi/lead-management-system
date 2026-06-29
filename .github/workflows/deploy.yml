@@ -67,7 +67,8 @@ jobs:
           gcloud builds submit \
             --config="cloudbuild-${{ matrix.service }}.yaml" \
             --substitutions="_TAG=${{ github.sha }},_REGION=${{ env.GCP_REGION }}" \
-            --project="${{ secrets.GCP_PROJECT_ID }}"
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --suppress-logs
 
       - name: Skip notice
         if: env.HAS_GCP_KEY != 'true'
