@@ -1,0 +1,38 @@
+# One-time seed of demo LEADS (+ tasks / consents / stage-history) into the cloud `lms` DB.
+# Creates ~30 leads via the LIVE API (so they go through LeadService/stage guards), then
+# spreads stage/owner/date and adds child rows via direct SQL through the Cloud SQL Auth Proxy.
+# NOTE: wipes existing leads first (demo data only). Run:
+#   gcloud builds submit --config=cloudbuild-seed-leads.yaml --project wealthmanagement-491511 .
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/lms-db-password/versions/latest
+      env: 'DB_PASSWORD'
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    id: start-proxy
+    args:
+      - 'run'
+      - '-d'
+      - '--name=csql-proxy'
+      - '--network=cloudbuild'
+      - 'gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest'
+      - '--address=0.0.0.0'
+      - '--port=5432'
+      - 'wealthmanagement-491511:asia-southeast1:wealth-management'
+
+  - name: 'gcr.io/$PROJECT_ID/lms-api:latest'
+    id: seed-leads
+    waitFor: ['start-proxy']
+    secretEnv: ['DB_PASSWORD']
+    entrypoint: sh
+    args:
+      - '-c'
+      - |
+        set -e
+        export SEED_DATABASE_URL="postgresql://lms_app:$${DB_PASSWORD}@csql-proxy:5432/lms"
+        export SEED_API_URL="https://lms-api-91358942094.asia-southeast1.run.app"
+        cd /workspace
+        NODE_PATH=/repo/node_modules node apps/api/_seed_leads.cjs
+
+timeout: 600s
