@@ -7,7 +7,7 @@ const SYS = '00000000-0000-0000-0000-000000000000';
 const BM  = '00000000-0000-0000-0000-0000000000e2';
 const RM  = '00000000-0000-0000-0000-0000000000e1';
 const TEAM = '00000000-0000-0000-0000-0000000000c3';
-const API = 'http://localhost:8080';
+const API = process.env.SEED_API_URL || 'http://localhost:8080';
 
 // name, mobile, product, source, amount, ctype, stage, owner, daysAgo
 const R = (name, mobile, product, source, amount, ctype, stage, owner, daysAgo) =>
@@ -57,7 +57,7 @@ const slug = (n) => n.toLowerCase().replace(/[^a-z]+/g, '.');
 const daysFromNow = (d) => new Date(Date.now() - d * 86400000);
 
 (async () => {
-  const pool = new Pool({ connectionString: 'postgresql://app:app@localhost:55432/lms_dev' });
+  const pool = new Pool({ connectionString: process.env.SEED_DATABASE_URL || 'postgresql://app:app@localhost:55432/lms_dev' });
 
   // 1) login
   const lr = await fetch(`${API}/api/v1/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'bm', password: 'Demo@12345' }) });

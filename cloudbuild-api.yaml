@@ -53,63 +53,70 @@ steps:
       - '-baselineOnMigrate=false'
       - 'migrate'
 
-  # 5) Deploy a NO-TRAFFIC candidate revision (fail-closed); the smoke step promotes it.
+  # 5) Deploy → smoke /health → promote. First-ever deploy is DIRECT (Cloud Run
+  #    rejects --no-traffic when creating a new service); every later deploy uses
+  #    the fail-closed canary (no-traffic candidate → smoke → promote), like PS-WMS.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: deploy-candidate
+    id: deploy
     waitFor: ['push', 'migrate']
-    entrypoint: gcloud
-    args:
-      - 'run'
-      - 'deploy'
-      - 'lms-api'
-      - '--image=gcr.io/$PROJECT_ID/lms-api:${_TAG}'
-      - '--region=${_REGION}'
-      - '--platform=managed'
-      - '--allow-unauthenticated'
-      - '--cpu=2'
-      - '--memory=2Gi'
-      - '--min-instances=1'
-      - '--max-instances=10'
-      - '--port=8080'
-      - '--timeout=300'
-      - '--no-cpu-throttling'
-      - '--add-cloudsql-instances=wealthmanagement-491511:asia-southeast1:wealth-management'
-      - '--vpc-connector=ps-wms-connector-asia'
-      - '--vpc-egress=private-ranges-only'
-      - '--no-traffic'
-      - '--tag=cand'
-      - '--set-secrets=DATABASE_URL=lms-database-url:latest,JWT_ACCESS_SECRET=lms-jwt-access-secret:latest,JWT_REFRESH_SECRET=lms-jwt-refresh-secret:latest,REDIS_URL=lms-redis-url:latest'
-      - '--set-env-vars'
-      - >-
-        ^||^NODE_ENV=production||GCP_PROJECT=wealthmanagement-491511||GCP_REGION=asia-southeast1||CLOUD_TASKS_LOCATION=asia-southeast1||CLOUD_TASKS_QUEUE=lms-integration||PUBSUB_TOPIC_EVENTS=lms-domain-events||GCS_BUCKET=wealthmanagement-491511-lms-docs||TOKENIZATION_KMS_KEY=projects/wealthmanagement-491511/locations/asia-southeast1/keyRings/lms/cryptoKeys/pii||ALLOWED_ORIGINS=https://lms-91358942094.asia-southeast1.run.app||APP_BASE_URL=https://lms-91358942094.asia-southeast1.run.app||LOS_MOCK=true
-
-  # 6) Smoke-test the candidate's /health, then promote to 100% (or fail, leaving live traffic untouched).
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    id: smoke-and-promote
-    waitFor: ['deploy-candidate']
     entrypoint: bash
     args:
       - '-c'
       - |
         set -euo pipefail
-        CAND_URL=$$(gcloud run services describe lms-api --region ${_REGION} --platform managed \
-          --format='json(status.traffic)' \
-          | python3 -c "import json,sys; t=json.load(sys.stdin).get('status',{}).get('traffic',[]); print(next((x['url'] for x in t if x.get('tag')=='cand'),''))")
-        if [ -z "$$CAND_URL" ]; then echo 'ERROR: candidate URL not found'; exit 1; fi
-        echo "Candidate URL: $$CAND_URL"
+        SECRETS='DATABASE_URL=lms-database-url:latest,JWT_ACCESS_SECRET=lms-jwt-access-secret:latest,JWT_REFRESH_SECRET=lms-jwt-refresh-secret:latest,REDIS_URL=lms-redis-url:latest'
+        ENVVARS='^||^NODE_ENV=production||GCP_PROJECT=wealthmanagement-491511||GCP_REGION=asia-southeast1||CLOUD_TASKS_LOCATION=asia-southeast1||CLOUD_TASKS_QUEUE=lms-integration||PUBSUB_TOPIC_EVENTS=lms-domain-events||GCS_BUCKET=wealthmanagement-491511-lms-docs||TOKENIZATION_KMS_KEY=projects/wealthmanagement-491511/locations/asia-southeast1/keyRings/lms/cryptoKeys/pii||ALLOWED_ORIGINS=https://lms-91358942094.asia-southeast1.run.app||APP_BASE_URL=https://lms-91358942094.asia-southeast1.run.app||LOS_MOCK=true'
+
+        if gcloud run services describe lms-api --region ${_REGION} --platform managed >/dev/null 2>&1; then
+          CANARY=1; echo 'Service exists -> fail-closed canary deploy.'
+        else
+          CANARY=0; echo 'First deploy -> direct (Cloud Run forbids --no-traffic on create).'
+        fi
+
+        EXTRA=''
+        if [ "$$CANARY" = '1' ]; then EXTRA='--no-traffic --tag=cand'; fi
+
+        gcloud run deploy lms-api \
+          --image=gcr.io/$PROJECT_ID/lms-api:${_TAG} \
+          --region=${_REGION} --platform=managed --allow-unauthenticated \
+          --cpu=2 --memory=2Gi --min-instances=1 --max-instances=10 \
+          --port=8080 --timeout=300 --no-cpu-throttling \
+          --add-cloudsql-instances=wealthmanagement-491511:asia-southeast1:wealth-management \
+          --vpc-connector=ps-wms-connector-asia --vpc-egress=private-ranges-only \
+          $$EXTRA \
+          --set-secrets="$$SECRETS" \
+          --set-env-vars="$$ENVVARS"
+
+        if [ "$$CANARY" = '1' ]; then
+          TEST_URL=$$(gcloud run services describe lms-api --region ${_REGION} --platform managed \
+            --format='json(status.traffic)' \
+            | python3 -c "import json,sys; t=json.load(sys.stdin).get('status',{}).get('traffic',[]); print(next((x['url'] for x in t if x.get('tag')=='cand'),''))")
+        else
+          TEST_URL=$$(gcloud run services describe lms-api --region ${_REGION} --platform managed --format='value(status.url)')
+        fi
+        if [ -z "$$TEST_URL" ]; then echo 'ERROR: test URL not found'; exit 1; fi
+        echo "Smoke-testing $$TEST_URL/health"
+
         CODE=000
         for i in $$(seq 1 20); do
-          CODE=$$(curl -s -o /dev/null -w '%{http_code}' "$$CAND_URL/health" || echo 000)
+          CODE=$$(curl -s -o /dev/null -w '%{http_code}' "$$TEST_URL/health" || echo 000)
           echo "health attempt $$i -> $$CODE"
-          [ "$$CODE" = "200" ] && break
+          if [ "$$CODE" = '200' ]; then break; fi
           sleep 5
         done
-        if [ "$$CODE" != "200" ]; then
-          echo "SMOKE FAILED ($$CODE): candidate NOT promoted; live traffic unchanged."
+        if [ "$$CODE" != '200' ]; then
+          echo "SMOKE FAILED ($$CODE)."
+          if [ "$$CANARY" = '1' ]; then echo 'Candidate NOT promoted; live traffic unchanged.'; fi
           exit 1
         fi
-        echo 'Smoke passed — promoting candidate to 100% traffic.'
-        gcloud run services update-traffic lms-api --region ${_REGION} --platform managed --to-latest --quiet
+
+        if [ "$$CANARY" = '1' ]; then
+          echo 'Smoke passed -> promoting candidate to 100%.'
+          gcloud run services update-traffic lms-api --region ${_REGION} --platform managed --to-latest --quiet
+        else
+          echo 'Smoke passed -> first deploy already serving 100%.'
+        fi
+        echo 'Deploy OK.'
 
 images:
   - 'gcr.io/$PROJECT_ID/lms-api:${_TAG}'

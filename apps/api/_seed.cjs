@@ -19,7 +19,7 @@ const BM_USER = '00000000-0000-0000-0000-0000000000e2';
 const RM_USER = '00000000-0000-0000-0000-0000000000e1';
 
 (async () => {
-  const pool = new Pool({ connectionString: 'postgresql://app:app@localhost:55432/lms_dev' });
+  const pool = new Pool({ connectionString: process.env.SEED_DATABASE_URL || 'postgresql://app:app@localhost:55432/lms_dev' });
   const matrix = JSON.parse(fs.readFileSync('docs/contracts/auth-matrix.json', 'utf8')).capability_matrix;
 
   // role_permissions from the auth-matrix capability_matrix
