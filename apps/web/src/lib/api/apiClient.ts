@@ -266,6 +266,29 @@ async function rawFetchPage<T>(path: string, opts: RequestOptions | undefined): 
   return { data: (envelope.data ?? []) as T[], pagination: envelope.meta.pagination };
 }
 
+/** POST multipart/form-data (file upload). No JSON Content-Type — the browser
+ * sets the multipart boundary. Auth + envelope parsing apply (refresh-retry via
+ * `withAuthRetry` at the call site). */
+async function rawFetchForm<T>(path: string, form: FormData, opts: RequestOptions | undefined): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(buildUrl(path, opts?.query), {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...opts?.headers,
+      },
+      body: form,
+      signal: opts?.signal,
+    });
+  } catch (cause) {
+    throw fromNetwork(cause);
+  }
+  return parse<T>(res);
+}
+
 export const apiClient = {
   get: <T>(path: string, opts?: RequestOptions): Promise<T> => request<T>('GET', path, undefined, opts),
   getPage: <T>(path: string, opts?: RequestOptions): Promise<PageResult<T>> =>
@@ -275,6 +298,9 @@ export const apiClient = {
     requestEnvelope<T>('GET', path, undefined, opts),
   post: <T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> =>
     request<T>('POST', path, body, opts),
+  /** POST a multipart/form-data body (file upload), with a single 401-refresh-retry. */
+  postForm: <T>(path: string, form: FormData, opts?: RequestOptions): Promise<T> =>
+    withAuthRetry(opts, (o) => rawFetchForm<T>(path, form, o)),
   put: <T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> =>
     request<T>('PUT', path, body, opts),
   patch: <T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> =>
