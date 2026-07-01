@@ -111,11 +111,21 @@ export function useWebhooks(
   });
 }
 
+export interface CreateWebhookVars {
+  body: CreateWebhookBody;
+  /** Stable across a user-driven retry so the server replays (IDEMPOTENT_REPLAY)
+   * instead of inserting a duplicate subscription. */
+  idempotencyKey: string;
+}
+
 /** `POST /admin/webhooks` — register a webhook subscription. */
-export function useCreateWebhook(): UseMutationResult<Webhook, unknown, CreateWebhookBody> {
+export function useCreateWebhook(): UseMutationResult<Webhook, unknown, CreateWebhookVars> {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreateWebhookBody) => apiClient.post<Webhook>('/admin/webhooks', body),
+    mutationFn: ({ body, idempotencyKey }: CreateWebhookVars) =>
+      apiClient.post<Webhook>('/admin/webhooks', body, {
+        headers: { 'Idempotency-Key': idempotencyKey },
+      }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['admin-webhooks'] }),
   });
 }

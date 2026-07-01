@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from 'react';
+import { useRef, useState, type ReactElement } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
@@ -10,6 +10,11 @@ import { useCan } from '@/lib/auth/capabilities';
 import { isApiClientError } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { useLeadImport, type ImportJobResult } from '@/hooks/use-lead-import';
+
+/** Accepted upload types — kept in sync between the file picker (`accept`, which
+ * only the OS dialog honours) and the drop handler (which must validate itself). */
+const ACCEPT = '.csv,.xlsx,.xls';
+const ACCEPT_EXT = ACCEPT.split(',');
 
 /**
  * FR-010 §UI — bulk lead import (capability `bulk_action`). Upload a CSV/Excel
@@ -23,6 +28,23 @@ export function ImportLeadsPage(): ReactElement {
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [job, setJob] = useState<ImportJobResult | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // `accept` does not constrain dropped files, so validate the extension here too.
+  const acceptFile = (candidate: File | null): void => {
+    if (!candidate) return;
+    if (!ACCEPT_EXT.some((ext) => candidate.name.toLowerCase().endsWith(ext))) {
+      toast.error('Only CSV or Excel files (.csv, .xlsx, .xls) are supported.');
+      return;
+    }
+    setFile(candidate);
+  };
+
+  // Reset the DOM value too, so re-picking the same file still fires `onChange`.
+  const clearFile = (): void => {
+    setFile(null);
+    if (inputRef.current) inputRef.current.value = '';
+  };
 
   if (!can('bulk_action')) {
     return (
@@ -72,7 +94,7 @@ export function ImportLeadsPage(): ReactElement {
                 list as rows are validated and created.
               </p>
             </div>
-            <dl className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>
                 Job ID <span className="font-mono text-foreground">{job.import_job_id}</span>
               </span>
@@ -87,7 +109,7 @@ export function ImportLeadsPage(): ReactElement {
                   Rows <span className="font-medium tabular-nums text-foreground">{job.total_rows}</span>
                 </span>
               ) : null}
-            </dl>
+            </div>
             <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
               <Button variant="outline" onClick={() => setJob(null)}>
                 Import another file
@@ -120,8 +142,7 @@ export function ImportLeadsPage(): ReactElement {
               onDrop={(e) => {
                 e.preventDefault();
                 setDragOver(false);
-                const dropped = e.dataTransfer.files?.[0];
-                if (dropped) setFile(dropped);
+                acceptFile(e.dataTransfer.files?.[0] ?? null);
               }}
             >
               <span
@@ -137,11 +158,12 @@ export function ImportLeadsPage(): ReactElement {
                 {file ? `${Math.max(1, Math.round(file.size / 1024))} KB` : '.csv, .xlsx or .xls'}
               </span>
               <input
+                ref={inputRef}
                 type="file"
-                accept=".csv,.xlsx,.xls"
+                accept={ACCEPT}
                 className="sr-only"
                 aria-label="Choose a file to import"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => acceptFile(e.target.files?.[0] ?? null)}
               />
             </label>
 
@@ -151,7 +173,7 @@ export function ImportLeadsPage(): ReactElement {
               </p>
               <div className="flex items-center gap-2 self-end">
                 {file ? (
-                  <Button variant="ghost" onClick={() => setFile(null)} disabled={importMut.isPending}>
+                  <Button variant="ghost" onClick={clearFile} disabled={importMut.isPending}>
                     Clear
                   </Button>
                 ) : null}

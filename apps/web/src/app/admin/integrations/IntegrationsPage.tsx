@@ -28,10 +28,11 @@ import {
   type Webhook,
 } from '@/hooks/use-integrations';
 
-/** "los_push" → "Los push" for display of an opaque enum value. */
+/** "los_push" / "LEAD_CREATED" → "Los push" / "Lead created" — normalise an
+ * opaque enum value (lowercase then sentence-case, so UPPER_SNAKE isn't shouted). */
 function humanize(value: string): string {
   const spaced = value.replace(/_/g, ' ');
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  return spaced.toLowerCase().replace(/^./, (c) => c.toUpperCase());
 }
 
 interface Option {
@@ -262,13 +263,15 @@ type WebhookValues = z.infer<typeof WebhookSchema>;
 
 function CreateWebhookForm({ onClose }: { onClose: () => void }): JSX.Element {
   const create = useCreateWebhook();
+  // One key per form mount → a user-driven retry replays instead of duplicating.
+  const [idempotencyKey] = React.useState(() => crypto.randomUUID());
   return (
     <EntityForm<WebhookValues>
       schema={WebhookSchema}
       defaultValues={{ eventCode: '', targetUrl: '', secretRef: '' }}
       submitLabel="Register webhook"
       onSubmit={async (values) => {
-        await create.mutateAsync(values);
+        await create.mutateAsync({ body: values, idempotencyKey });
         toast.success('Webhook registered.');
         onClose();
       }}
