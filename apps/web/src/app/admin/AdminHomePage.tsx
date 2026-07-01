@@ -7,6 +7,7 @@ import {
   PackageOpen,
   ShieldAlert,
   Users,
+  Webhook,
   type LucideIcon,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -61,6 +62,12 @@ const ADMIN_LINKS: readonly AdminLink[] = [
     description: 'Manage SMS / email / WhatsApp message templates.',
     to: '/admin/templates',
     icon: MessageSquare,
+  },
+  {
+    label: 'Integrations',
+    description: 'External integration activity log and webhook subscriptions.',
+    to: '/admin/integrations',
+    icon: Webhook,
   },
 ];
 

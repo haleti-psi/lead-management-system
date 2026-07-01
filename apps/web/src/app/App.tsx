@@ -17,11 +17,13 @@ import { PartnerManagementPage } from './admin/partners/PartnerManagementPage';
 import { PartnerLeadsPage } from './partner/PartnerLeadsPage';
 import { PartnerQualityPage } from './partner/PartnerQualityPage';
 import { LeadListPage } from './leads/LeadListPage';
+import { ImportLeadsPage } from './leads/import/ImportLeadsPage';
 import { AdminHomePage } from './admin/AdminHomePage';
 import { UserAdminPage } from './admin/users/UserAdminPage';
 import { MasterDataPage } from './admin/master/MasterDataPage';
 import { ProductConfigPage } from './admin/products/ProductConfigPage';
 import { BreakGlassPage } from './admin/break-glass/BreakGlassPage';
+import { IntegrationsPage } from './admin/integrations/IntegrationsPage';
 import { ConfigGovernancePage } from '@/components/admin/ConfigGovernancePage';
 import { AuditExplorerPage } from '@/pages/audit/AuditExplorerPage';
 import { ReportsPage } from '@/pages/reports/ReportsPage';
@@ -54,6 +56,8 @@ export function App(): JSX.Element {
           <Route path="/" element={<DashboardPage />} />
           {/* FR-050 — Lead list / queues. */}
           <Route path="/leads" element={<LeadListPage />} />
+          {/* FR-010 — Bulk lead import (CSV/Excel). */}
+          <Route path="/import" element={<ImportLeadsPage />} />
           {/* FR-055 — Lead approval queue. */}
           <Route path="/approvals" element={<ApprovalsPage />} />
           {/* FR-051 — Lead 360 view. */}
@@ -84,6 +88,8 @@ export function App(): JSX.Element {
           <Route path="/admin/config" element={<ConfigGovernancePage />} />
           <Route path="/admin/templates" element={<TemplateListPage />} />
           <Route path="/admin/break-glass" element={<BreakGlassPage />} />
+          {/* FR-140 — Integration monitor + webhook subscriptions. */}
+          <Route path="/admin/integrations" element={<IntegrationsPage />} />
           {/* FR-130 — User administration. */}
           <Route path="/users" element={<UserAdminPage />} />
         </Route>

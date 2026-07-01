@@ -8,6 +8,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Upload,
   UserCog,
   Users,
   type LucideIcon,
@@ -44,6 +45,9 @@ const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Approvals', path: '/approvals', icon: CheckCircle2, capability: 'approve_lead' },
   { label: 'Reports', path: '/reports', icon: BarChart3, capability: 'reports' },
   { label: 'Audit', path: '/audit', icon: ShieldCheck, capability: 'audit_trail' },
+  // Import sits below the daily-use items so it doesn't displace Audit from the
+  // 5-slot mobile bottom nav for roles that hold both (BM/SM/HEAD).
+  { label: 'Import', path: '/import', icon: Upload, capability: 'bulk_action' },
   { label: 'Configuration', path: '/admin', icon: Settings, capability: 'configuration' },
   { label: 'Users', path: '/users', icon: UserCog, capability: 'user_mgmt' },
 ];
